@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+slot_map.json
+proxy_routes.json
+logs/
+.pytest_cache/
+*.egg-info/

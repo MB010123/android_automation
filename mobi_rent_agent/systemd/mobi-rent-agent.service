@@ -1,0 +1,18 @@
+[Unit]
+Description=Mobi-Rent Hardware Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mobirent
+WorkingDirectory=/opt/mobi-rent-agent
+EnvironmentFile=/opt/mobi-rent-agent/.env
+ExecStart=/opt/mobi-rent-agent/.venv/bin/python /opt/mobi-rent-agent/main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

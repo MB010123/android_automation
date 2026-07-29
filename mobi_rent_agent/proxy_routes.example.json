@@ -1,0 +1,8 @@
+{
+  "1": {
+    "host": "proxy-slot-01.example.net",
+    "port": 1080,
+    "username": "slot01",
+    "password": "REPLACE_ME"
+  }
+}

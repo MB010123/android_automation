@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.env.*
+
+# Runtime data
+*.log
+mobi_rent_agent/logs/
+
+# Local/private configuration
+slot_map.json
+mobi_rent_agent/slot_map.json
+mobi_rent_agent/proxy_routes.json
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
