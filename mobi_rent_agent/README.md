@@ -434,7 +434,7 @@ gone. Guaranteed recovery from that condition requires a separately
 controllable USB hub or chassis power API; the current hardware interface
 must be confirmed before adding that adapter.
 
-## Pixel 6 chassis validation
+## Pixel 6 / 6a chassis validation
 
 Software cannot remove RF coupling caused by twenty internal antennas in a
 closed chassis. Before enabling automatic recovery in production:
@@ -445,8 +445,50 @@ closed chassis. Before enabling automatic recovery in production:
 3. tune failure thresholds from measured behavior; and
 4. reconsider the chassis if sustained registration degrades under load.
 
-Pixel 6 launched with Android 12; use the supplier-supported Android
-12-or-newer image rather than assuming Android 11 compatibility.
+Pixel 6 launched with Android 12; Pixel 6a launched with Android 12 and is
+supported through Android 16. Use the current OTA'd image rather than
+assuming an older Android version. Nothing in this agent depends on a
+specific Android release — it only shells out to `adb` and reads standard
+`dumpsys`/`getprop` output — but the on-device companion (Phase 2 eSIM +
+VPN routing, see below) has not been built yet, so only Phase 1 heartbeat
+and the ADB-only parts of Phase 2 health monitoring can be validated
+end-to-end today.
+
+### Next step: Pixel 6a (Android 16) end-to-end bring-up checklist
+
+This host already has `adb` (`/usr/bin/adb`, platform-tools 34.0.5), the
+project's `.venv`, and a filled-in `mobi_rent_agent/.env` and
+`slot_map.json` (slot `1`). When the physical Pixel 6a is available:
+
+1. On the phone: **Settings > About phone > tap Build number 7x**, then
+   **Settings > System > Developer options > USB debugging > On**.
+2. Connect it to this host with a USB **data** cable (not charge-only).
+3. Run `adb kill-server && adb start-server && adb devices -l` and accept
+   the **Allow USB debugging** prompt on the phone (check "Always allow
+   from this computer" since this is a dedicated rental slot).
+4. Confirm the device shows state `device`, not `unauthorized`/`offline`.
+5. Compare the serial shown by `adb devices -l` against the one already in
+   `mobi_rent_agent/slot_map.json` (currently mapped to slot `1`) and
+   update it if this is a different unit.
+6. From `mobi_rent_agent/`, run `source .venv/bin/activate && python main.py`
+   in the foreground and confirm in `logs/agent.log` / the terminal that:
+   - startup does not report a config or slot-map error;
+   - the slot transitions to `online` in the heartbeat log line;
+   - the backend (Supabase `hardware_queue` table or the dedicated
+     `HEARTBEAT_ENDPOINT`) receives a row with `status: "online"` for
+     slot 1.
+7. Unplug the phone and confirm the next cycle reports `networkerror`;
+   reconnect and re-authorize and confirm it returns to `online`.
+8. Only after step 7 passes, consider enabling `HEALTH_MONITOR_ENABLED=true`
+   (ADB-only; no companion required) per the [Phase 2 health and
+   recovery](#phase-2-health-and-recovery) section.
+
+Provisioning (eSIM) and full-device SOCKS5 routing additionally require the
+privileged on-device companion described in [On-device companion
+requirement](#on-device-companion-requirement) and [Phase 2
+SOCKS5 isolation](#phase-2-socks5-isolation). That companion app does not
+exist in this repository yet — it is the actual blocker for testing those
+two features end-to-end, independent of the daemon code here being ready.
 
 ## Run on boot (systemd)
 
