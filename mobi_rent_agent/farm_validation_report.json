@@ -1,0 +1,1762 @@
+[
+  {
+    "slot": 1,
+    "serial": "1C101FDF6009EZ",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 1
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "57100a7122d4d337",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 1,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "57100a7122d4d337",
+        "slot_id": 1,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 98,
+        "charging": false,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-1",
+        "slot_id": 1,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 1,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 2,
+    "serial": "1C141FDF600GXF",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 2
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "bdd99df2adbc8410",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 2,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "bdd99df2adbc8410",
+        "slot_id": 2,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 99,
+        "charging": false,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-2",
+        "slot_id": 2,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 2,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 3,
+    "serial": "1A271FDF600BX2",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 3
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "80887168de5e1f3d",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 3,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "80887168de5e1f3d",
+        "slot_id": 3,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-3",
+        "slot_id": 3,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 3,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 4,
+    "serial": "1C071FDF6004MS",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 4
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "d316360a22ff234e",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 4,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "d316360a22ff234e",
+        "slot_id": 4,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-4",
+        "slot_id": 4,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 4,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 5,
+    "serial": "1B301FDF6004HF",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 5
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "e7779535f720b86a",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 5,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "e7779535f720b86a",
+        "slot_id": 5,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 99,
+        "charging": false,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-5",
+        "slot_id": 5,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 5,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 6,
+    "serial": "1C021FDF600GKL",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 6
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "f7e9b6d15e0abcd1",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 6,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "f7e9b6d15e0abcd1",
+        "slot_id": 6,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-6",
+        "slot_id": 6,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 6,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 7,
+    "serial": "25261FDF60017D",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 7
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "0ffa31427315682e",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 7,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "0ffa31427315682e",
+        "slot_id": 7,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-7",
+        "slot_id": 7,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 7,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 8,
+    "serial": "19161FDF6OO411",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 8
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "7be11f954fee2ebc",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 8,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "7be11f954fee2ebc",
+        "slot_id": 8,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-8",
+        "slot_id": 8,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 8,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 9,
+    "serial": "19281FDF6OO1T4",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 9
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "7a83536d8b2324fb",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 9,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "7a83536d8b2324fb",
+        "slot_id": 9,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-9",
+        "slot_id": 9,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 9,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 10,
+    "serial": "19161FDF6004AD",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 10
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "ca332dc78c4d7bdd",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 10,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "ca332dc78c4d7bdd",
+        "slot_id": 10,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-10",
+        "slot_id": 10,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 10,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 11,
+    "serial": "25061FDF6006KF",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 11
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "23dde9660a9a5a4c",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 11,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "23dde9660a9a5a4c",
+        "slot_id": 11,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-11",
+        "slot_id": 11,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 11,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 12,
+    "serial": "21051FDF600EM9",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 12
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "add1b0d5195fcf27",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 12,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "add1b0d5195fcf27",
+        "slot_id": 12,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-12",
+        "slot_id": 12,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 12,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 13,
+    "serial": "1B131FDF60090W",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 13
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "f4f906fad1970c38",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 13,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "f4f906fad1970c38",
+        "slot_id": 13,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-13",
+        "slot_id": 13,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 13,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 14,
+    "serial": "1A181FDF6006KN",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 14
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "c904fc70bd1e46df",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 14,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "c904fc70bd1e46df",
+        "slot_id": 14,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-14",
+        "slot_id": 14,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 14,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 15,
+    "serial": "1C111FDF600CNB",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 15
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "5b9b0322e39d9bbe",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 15,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "5b9b0322e39d9bbe",
+        "slot_id": 15,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-15",
+        "slot_id": 15,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 15,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 16,
+    "serial": "23101FDF60058N",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 16
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "82d008e376b903c6",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 16,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "82d008e376b903c6",
+        "slot_id": 16,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-16",
+        "slot_id": 16,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 16,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 17,
+    "serial": "19161FDF6005B9",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 17
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "bebfd05794379be7",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 17,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "bebfd05794379be7",
+        "slot_id": 17,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-17",
+        "slot_id": 17,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 17,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 18,
+    "serial": "19141FDF6OO8T9",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 18
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "77c1624576cf6f5c",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 18,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "77c1624576cf6f5c",
+        "slot_id": 18,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-18",
+        "slot_id": 18,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 18,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 19,
+    "serial": "18171FDF6005WG",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 19
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "7dc15558ec1da30d",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 19,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "7dc15558ec1da30d",
+        "slot_id": 19,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-19",
+        "slot_id": 19,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 19,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  },
+  {
+    "slot": 20,
+    "serial": "1C071FDF6006YS",
+    "checks": {
+      "adb_online": true,
+      "companion_installed": true,
+      "version_0_1_0": true,
+      "process_running": true,
+      "foreground_service": true,
+      "slot_assigned": true,
+      "ping": true,
+      "identity": true,
+      "slot_correct": true,
+      "device_id_stable": true,
+      "health": true,
+      "euicc_detected": true,
+      "no_real_esim": true,
+      "esim_dry_run": true,
+      "socks_dry_run": true,
+      "vpn_dry_run": true
+    },
+    "responses": {
+      "assign_slot": {
+        "success": true,
+        "slot_id": 20
+      },
+      "ping": {
+        "success": true,
+        "pong": true
+      },
+      "identity": {
+        "success": true,
+        "device_id": "86443b99f7ac5eb3",
+        "model": "Pixel 6",
+        "manufacturer": "Google",
+        "android_version": "16",
+        "sdk_int": 36,
+        "adb_serial": null,
+        "slot_id": 20,
+        "app_version": "0.1.0",
+        "euicc_supported": true
+      },
+      "health": {
+        "success": true,
+        "device_id": "86443b99f7ac5eb3",
+        "slot_id": 20,
+        "network_connected": false,
+        "transport": "none",
+        "battery_percent": 100,
+        "charging": true,
+        "sim_ready": false,
+        "esim_state": "dry_run",
+        "app_healthy": true
+      },
+      "esim": {
+        "success": true,
+        "esim_state": "dry_run",
+        "euicc_supported": true,
+        "euicc_enabled": true,
+        "real_esim_enabled": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+      },
+      "provision": {
+        "success": false,
+        "job_id": "farm-validate-slot-20",
+        "slot_id": 20,
+        "device_code": -1,
+        "esim_state": "dry_run",
+        "error": "dry_run: real eSIM install disabled"
+      },
+      "socks": {
+        "success": true,
+        "active": false,
+        "dry_run": true,
+        "slot_id": 20,
+        "error": "dry_run: production SOCKS5 disabled; use start_test_vpn"
+      },
+      "vpn_start": {
+        "success": true,
+        "active": true,
+        "dry_run": true
+      },
+      "vpn_stop": {
+        "success": true,
+        "active": false
+      }
+    }
+  }
+]

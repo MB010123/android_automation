@@ -1,0 +1,918 @@
+﻿Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 92
+WaitTime: 96
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 53
+WaitTime: 55
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 96
+WaitTime: 97
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 97
+WaitTime: 99
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Status: ok
+LaunchState: WARM
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 153
+WaitTime: 156
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 94
+WaitTime: 97
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 75
+WaitTime: 76
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 95
+WaitTime: 97
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 63
+WaitTime: 65
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 96
+WaitTime: 99
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 52
+WaitTime: 55
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 99
+WaitTime: 103
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 66
+WaitTime: 69
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 91
+WaitTime: 95
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 60
+WaitTime: 62
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 102
+WaitTime: 105
+Complete
+Starting: Intent { act=android.intent.action.MAIN cat=[android.intent.category.APP_MESSAGING] }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 39
+WaitTime: 43
+Complete
+{
+  "events": [
+    {
+      "at": "2026-09-18T19:06:43.992839+00:00",
+      "event": "prechecks_done",
+      "precheck_pass": true
+    },
+    {
+      "at": "2026-09-18T19:06:48.566929+00:00",
+      "event": "dashboard_before",
+      "counts": {
+        "Pending": "0",
+        "Sent": "5",
+        "Delivered": "0",
+        "Failed": "0"
+      }
+    },
+    {
+      "at": "2026-09-18T19:06:49.407487+00:00",
+      "event": "send_complete",
+      "message_id": "3933486"
+    }
+  ],
+  "prechecks": {
+    "slot_map_serial": "18171FDF6005WG",
+    "ro_serialno": "18171FDF6005WG",
+    "serial_match": true,
+    "adb_state": "device",
+    "voidfix_drawer_ids": [
+      "1386"
+    ],
+    "settings_sim2_phone": "+19522287088",
+    "api_device_1386_sim_key_1": "SIM #2 [+19522287088]",
+    "api_device_1386_phone": "+19522287088",
+    "all_prechecks_pass": true
+  },
+  "send": {
+    "at": "2026-09-18T19:06:48.566929+00:00",
+    "http_status": 200,
+    "success": true,
+    "provider_message_id": "3933486",
+    "outcome": "success",
+    "error": null,
+    "response_redacted": {
+      "success": true,
+      "data": {
+        "messages": [
+          {
+            "ID": 3933486,
+            "number": "+19522287088",
+            "message": "Mobi-Rent Slot 1 SMS TEST",
+            "deviceID": 1386,
+            "simSlot": 1,
+            "schedule": null,
+            "userID": 671,
+            "groupID": "5gt8leK7uVUO8rETL46aad8bc891dc56.94080588",
+            "status": "Pending",
+            "resultCode": null,
+            "errorCode": null,
+            "type": "sms",
+            "attachments": null,
+            "prioritize": true,
+            "retries": null,
+            "sentDate": "2026-09-18T19:06:48+0000",
+            "deliveredDate": null,
+            "expiryDate": "2026-10-03 17:17:21"
+          }
+        ]
+      },
+      "error": null
+    }
+  },
+  "poll": [
+    {
+      "at": "2026-09-18T19:07:14.434740+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:14.487394+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:14.541793+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:14.588264+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:14.634645+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.677443+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.726300+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.773221+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.821546+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.866097+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.915082+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:14.955872+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:45.681479+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:45.727659+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:45.782953+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:45.829618+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:07:45.878533+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:45.919920+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:45.965601+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:46.010099+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:46.050727+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:46.098827+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:46.140270+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:07:46.181296+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:16.714716+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:16.762772+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:16.812334+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:16.863791+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:16.906486+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:16.948200+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:16.998252+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:17.040555+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:17.090952+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:17.134804+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:17.180242+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:17.234923+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:47.786252+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:47.834658+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:47.886441+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:47.940122+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:08:47.984690+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.033111+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.079687+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.124362+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.173669+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.214778+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.262651+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:08:48.304824+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:18.862401+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:18.909648+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:18.957077+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:19.006743+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:19.053718+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.096126+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.141111+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.189576+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.234072+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.278826+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.327538+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:19.370516+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:49.942239+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:49.988946+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:50.036010+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:50.081967+00:00",
+      "url": "https://sms.voidfix.com/services/get-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 200,
+      "body_preview": ""
+    },
+    {
+      "at": "2026-09-18T19:09:50.128604+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.171022+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.215544+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.264533+00:00",
+      "url": "https://sms.voidfix.com/services/get-sent-messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.309586+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.354645+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.399545+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "message_id"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    },
+    {
+      "at": "2026-09-18T19:09:50.440803+00:00",
+      "url": "https://sms.voidfix.com/services/messages.php",
+      "extra_keys": [
+        "ID"
+      ],
+      "http": 404,
+      "body_preview": "File not found.\n"
+    }
+  ],
+  "delivery": {
+    "timeline": [
+      {
+        "at": "2026-09-18T19:06:49.407487+00:00",
+        "status": "Pending",
+        "source": "send_response",
+        "raw": {
+          "success": true,
+          "data": {
+            "messages": [
+              {
+                "ID": 3933486,
+                "number": "+19522287088",
+                "message": "Mobi-Rent Slot 1 SMS TEST",
+                "deviceID": 1386,
+                "simSlot": 1,
+                "schedule": null,
+                "userID": 671,
+                "groupID": "5gt8leK7uVUO8rETL46aad8bc891dc56.94080588",
+                "status": "Pending",
+                "resultCode": null,
+                "errorCode": null,
+                "type": "sms",
+                "attachments": null,
+                "prioritize": true,
+                "retries": null,
+                "sentDate": "2026-09-18T19:06:48+0000",
+                "deliveredDate": null,
+                "expiryDate": "2026-10-03 17:17:21"
+              }
+            ]
+          },
+          "error": null
+        }
+      },
+      {
+        "at": "2026-09-18T19:07:09.407734+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      },
+      {
+        "at": "2026-09-18T19:07:40.582973+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      },
+      {
+        "at": "2026-09-18T19:08:11.651593+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      },
+      {
+        "at": "2026-09-18T19:08:42.727518+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      },
+      {
+        "at": "2026-09-18T19:09:13.793666+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      },
+      {
+        "at": "2026-09-18T19:09:44.849314+00:00",
+        "voidfix_dashboard": {
+          "Pending": "0",
+          "Sent": "6",
+          "Delivered": "0",
+          "Failed": "0"
+        }
+      }
+    ],
+    "dashboard_before": {
+      "Pending": "0",
+      "Sent": "5",
+      "Delivered": "0",
+      "Failed": "0"
+    },
+    "dashboard_after": {
+      "Pending": "0",
+      "Sent": "6",
+      "Delivered": "0",
+      "Failed": "0"
+    },
+    "final_status": "Pending",
+    "messages_app_seen": false
+  }
+}

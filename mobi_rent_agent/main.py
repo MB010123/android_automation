@@ -18,11 +18,20 @@ from application.provisioning_service import ProvisioningService, ProvisioningSe
 from application.proxy_service import ProxyService, ProxyServiceConfig
 from application.retry_policy import RetryPolicy
 from application.slot_coordinator import SlotOperationCoordinator
+from domain.esim_capabilities import AndroidAuthorizationSnapshot
+from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
 from infrastructure.activation_payload import QrActivationPayloadResolver
 from infrastructure.adb_companion import AdbCommandRunner, AdbForwardedJsonClient
+from infrastructure.adb_four_layer import collect_four_layer_verification
 from infrastructure.adb_health import AdbDeviceHealthController
-from infrastructure.adb_provisioner import AdbCompanionProvisioner
 from infrastructure.adb_proxy import AdbVpnProxyConfigurator
+from infrastructure.android_authorization_probe import AdbAuthorizationProbe
+from infrastructure.authorized_esim_provider import (
+    AuthorizedEsimProvider,
+    companion_provision_transport,
+    live_download_may_arm,
+    select_esim_provider,
+)
 from infrastructure.adb_slot_status import AdbSlotStatusProvider, SlotMapError, load_slot_map
 from infrastructure.api_client import HttpHeartbeatTransport
 from infrastructure.config import AgentConfig, ConfigError, load_config
@@ -30,10 +39,55 @@ from infrastructure.logging_setup import configure_logging
 from infrastructure.provisioning_api import HttpActivationJobSource
 from infrastructure.proxy_routes import ProxyRouteConfigError, load_proxy_routes
 from infrastructure.system_clock import SystemClock
+from application.sms_factory import (
+    recover_sms_outbox_after_restart,
+    sms_dispatch_runtime_flags,
+)
+from infrastructure.voidfix_api import SmsGatewayError, VoidFixSmsGateway
 
 logger = logging.getLogger("mobi_rent_agent.main")
 
 SLOT_MAP_PATH = Path(__file__).parent / "slot_map.json"
+
+
+def _log_voidfix_state(config: AgentConfig) -> None:
+    if config.sms_enabled:
+        flags = sms_dispatch_runtime_flags(config)
+        try:
+            service = recover_sms_outbox_after_restart(config)
+        except Exception as exc:  # pragma: no cover - defensive startup
+            logger.error("voidfix-sms dispatch build failed: %s", exc)
+            service = None
+        if service is None:
+            logger.error(
+                "voidfix-sms enabled but SmsDispatchService could not be constructed "
+                "(delivery_poll=%s sim_slot_send=%s)",
+                flags.get("delivery_poll_enabled"),
+                flags.get("sim_slot_send_enabled"),
+            )
+            return
+        logger.info(
+            "voidfix-sms dispatch ready (allowed_slots=%s delivery_poll=%s poller_active=%s "
+            "sim_slot_send=%s durable_outbox=True; daemon does not auto-send)",
+            flags.get("voidfix_allowed_slot_ids"),
+            flags.get("delivery_poll_enabled"),
+            flags.get("delivery_poller_active"),
+            flags.get("sim_slot_send_enabled"),
+        )
+        thread = threading.Thread(
+            target=service.resume_inflight_delivery_tracking,
+            name="sms-outbox-recovery",
+            daemon=True,
+        )
+        thread.start()
+        return
+    if config.voidfix_enabled and not config.voidfix_api_key:
+        logger.info("voidfix-sms VOIDFIX_ENABLED is true but VOIDFIX_API_KEY is unset")
+        return
+    if config.voidfix_api_key and not config.voidfix_enabled:
+        logger.info("voidfix-sms key present but VOIDFIX_ENABLED is false")
+        return
+    logger.info("voidfix-sms disabled by configuration")
 
 
 def build_heartbeat_service(config: AgentConfig, slot_map: dict[int, str]) -> HeartbeatService:
@@ -70,23 +124,57 @@ def build_provisioning_service(
     if not config.provisioning_endpoint:
         return None
 
+    isolation = SlotIsolationPolicy(config.provisioning_allowed_slot_ids)
+    try:
+        isolation.refuse_if_empty(slot_map)
+    except SlotIsolationError as exc:
+        logger.error("Provisioning refused by slot isolation: %s", exc)
+        return None
+
     source = HttpActivationJobSource(
         endpoint=config.provisioning_endpoint,
         hardware_agent_token=config.hardware_agent_token,
         timeout_seconds=config.request_timeout_seconds,
     )
-    command_runner = AdbCommandRunner(
-        adb_path=config.adb_path,
-        timeout_seconds=config.request_timeout_seconds,
-    )
-    provisioner = AdbCompanionProvisioner(
-        command_runner=command_runner,
-        companion_socket=config.provisioning_companion_socket,
-        provisioning_timeout_seconds=config.provisioning_timeout_seconds,
-    )
     payload_resolver = QrActivationPayloadResolver(
         timeout_seconds=config.request_timeout_seconds,
     )
+    armed = live_download_may_arm(
+        real_esim_enabled=config.real_esim_enabled,
+        esim_live_download_armed=config.esim_live_download_armed,
+        allowed_slot_ids=isolation.allowed_slot_ids,
+    )
+    if armed:
+        runner = AdbCommandRunner(config.adb_path, config.provisioning_timeout_seconds)
+        client = AdbForwardedJsonClient(
+            runner,
+            config.provisioning_companion_socket,
+            config.provisioning_timeout_seconds,
+        )
+        probe = AdbAuthorizationProbe(runner, client, real_esim_flag=config.real_esim_enabled)
+
+        def _verify(serial: str, job):
+            _ = job
+            status = {}
+            try:
+                status = client.request(serial, {"command": "get_esim_status"})
+            except Exception:
+                status = {}
+            return collect_four_layer_verification(runner, serial, status)
+
+        provisioner = AuthorizedEsimProvider(
+            probe,
+            isolation,
+            live_download_armed=True,
+            download_transport=companion_provision_transport(client),
+            verification_source=_verify,
+        )
+    else:
+        provisioner = select_esim_provider(
+            AndroidAuthorizationSnapshot(real_esim_flag=config.real_esim_enabled),
+            isolation,
+            live_download_armed=False,
+        )
     return ProvisioningService(
         config=ProvisioningServiceConfig(
             poll_interval_seconds=config.provisioning_poll_interval_seconds,
@@ -97,6 +185,7 @@ def build_provisioning_service(
         payload_resolver=payload_resolver,
         slot_map=slot_map,
         coordinator=coordinator,
+        isolation=isolation,
     )
 
 
@@ -138,6 +227,7 @@ def build_health_service(
             interval_seconds=config.health_interval_seconds,
             failure_threshold=config.health_failure_threshold,
             reboot_cooldown_seconds=config.health_reboot_cooldown_seconds,
+            recovery_enabled=config.health_recovery_enabled,
         ),
         controller=AdbDeviceHealthController(runner),
         slot_map=slot_map,
@@ -153,9 +243,12 @@ def build_services() -> tuple[
     HealthService | None,
 ]:
     config = load_config()
-    configure_logging(config.log_level)
+    configure_logging(config.log_level, log_file=config.log_file)
     slot_map = load_slot_map(config.slot_map_path or SLOT_MAP_PATH)
     coordinator = SlotOperationCoordinator(list(slot_map))
+    # SMS (VoidFix) stays inert in the daemon: the adapter is validated when
+    # explicitly enabled, but no send/poll/webhook loop is started here.
+    _log_voidfix_state(config)
     return (
         build_heartbeat_service(config, slot_map),
         build_provisioning_service(config, slot_map, coordinator),

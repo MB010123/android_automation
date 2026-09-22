@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from domain.models import HeartbeatPayload, HeartbeatResult, SlotState
+from domain.models import HeartbeatPayload, HeartbeatResult, SlotState, SlotStatus
 from domain.ports import Clock, HeartbeatTransport, SlotStatusProvider
 from application.retry_policy import RetryPolicy
 
@@ -47,6 +47,7 @@ class HeartbeatService:
         self._retry_policy = retry_policy or RetryPolicy()
         self._consecutive_failures = 0
         self._running = False
+        self._last_slot_status: dict[int, SlotStatus] = {}
 
     def run_forever(self) -> None:
         """Blocking loop. Intended to be the daemon's main loop, run under
@@ -80,6 +81,7 @@ class HeartbeatService:
 
         any_failure = False
         for slot_state in slot_states:
+            self._log_adb_transition(slot_state)
             result = self._send_heartbeat_for_slot(slot_state)
             results.append(result)
             if not result.success:
@@ -114,6 +116,22 @@ class HeartbeatService:
                 result.error,
             )
         return result
+
+    def _log_adb_transition(self, slot_state: SlotState) -> None:
+        previous = self._last_slot_status.get(slot_state.slot_id)
+        self._last_slot_status[slot_state.slot_id] = slot_state.status
+        if previous is None:
+            return
+        if previous == SlotStatus.ONLINE and slot_state.status != SlotStatus.ONLINE:
+            logger.info(
+                "Slot %s ADB device disappeared; monitoring for recovery",
+                slot_state.slot_id,
+            )
+        elif previous != SlotStatus.ONLINE and slot_state.status == SlotStatus.ONLINE:
+            logger.info(
+                "Slot %s ADB device recovered; resuming heartbeat",
+                slot_state.slot_id,
+            )
 
     def _register_failure(self) -> None:
         self._consecutive_failures += 1

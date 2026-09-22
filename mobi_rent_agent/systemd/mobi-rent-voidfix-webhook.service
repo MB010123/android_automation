@@ -1,0 +1,21 @@
+[Unit]
+Description=Mobi-Rent VoidFix inbound SMS webhook (HTTPS terminates on reverse proxy)
+After=network-online.target mobi-rent-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mobirent
+WorkingDirectory=/opt/mobi-rent-agent
+EnvironmentFile=/opt/mobi-rent-agent/.env
+# Bind loopback; expose via nginx/Caddy on the same host or tunnel from VPS.
+Environment=VOIDFIX_WEBHOOK_LISTEN_HOST=127.0.0.1
+Environment=VOIDFIX_WEBHOOK_LISTEN_PORT=8787
+ExecStart=/opt/mobi-rent-agent/.venv/bin/python /opt/mobi-rent-agent/tools/voidfix_inbound_webhook_listener.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

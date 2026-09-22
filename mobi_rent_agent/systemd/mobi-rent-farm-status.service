@@ -1,0 +1,21 @@
+[Unit]
+Description=Mobi-Rent farm ADB status API (physical PC only)
+After=network-online.target mobi-rent-farm-agent.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mobirent
+WorkingDirectory=/opt/mobi-rent-agent
+EnvironmentFile=/opt/mobi-rent-agent/.env
+Environment=MOBI_RENT_DEPLOY_ROLE=farm
+Environment=FARM_AGENT_LISTEN_HOST=0.0.0.0
+Environment=FARM_AGENT_LISTEN_PORT=8790
+ExecStart=/opt/mobi-rent-agent/.venv/bin/python /opt/mobi-rent-agent/tools/farm_agent_status_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -50,8 +50,12 @@ class QrActivationPayloadResolver(ActivationPayloadResolver):
         activation_code = result.text.strip() if result is not None else ""
         if not activation_code:
             raise ActivationPayloadError("QR image does not contain a readable activation code")
-        if not activation_code.startswith("LPA:"):
-            raise ActivationPayloadError("QR image does not contain an LPA activation code")
+        from infrastructure.lpa import LpaFormatError, parse_lpa
+
+        try:
+            parse_lpa(activation_code)
+        except LpaFormatError as exc:
+            raise ActivationPayloadError(f"QR image is not a valid LPA activation code: {exc}") from exc
         return job.with_activation_code(activation_code)
 
     def _read_limited(self, response: requests.Response) -> bytes:

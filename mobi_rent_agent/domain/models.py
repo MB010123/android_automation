@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from domain.provisioning_state import ActivationVerdict
+
 
 class SlotStatus(str, Enum):
     """Allowed values for the `status` field of the heartbeat payload.
@@ -37,6 +39,43 @@ class SlotState:
     def __post_init__(self) -> None:
         if not (1 <= self.slot_id <= 20):
             raise ValueError(f"slot_id must be between 1 and 20, got {self.slot_id}")
+
+
+@dataclass(frozen=True)
+class SlotDeviceRecord:
+    """Stable device identifiers for one physical bay.
+
+    slot_id is the PhoneFarmBox bay (1-20). imei2 is the Pixel eSIM / digital
+    IMEI used for US Mobile ordering. This is not an ADB serial and not a
+    bay number.
+    """
+
+    slot_id: int
+    imei2: str
+    imei1: str | None = None
+
+    def __post_init__(self) -> None:
+        if not (1 <= self.slot_id <= 20):
+            raise ValueError(f"slot_id must be between 1 and 20, got {self.slot_id}")
+        if self.imei2 == str(self.slot_id):
+            raise ValueError("imei2 must not be the bay/slot number")
+        if self.imei1 is not None and self.imei1 == self.imei2:
+            raise ValueError("imei1 and imei2 must be different")
+
+    def to_registry_dict(self) -> dict[str, str | None]:
+        return {"imei1": self.imei1, "imei2": self.imei2}
+
+    def us_mobile_device_info(self) -> dict[str, str]:
+        """Fields the rental frontend should show for US Mobile eSIM ordering.
+
+        IMEI 1 is intentionally omitted: that flow requires the digital/eSIM
+        IMEI only.
+        """
+        return {
+            "slot_id": str(self.slot_id),
+            "label": "IMEI 2 / Digital IMEI",
+            "imei2": self.imei2,
+        }
 
 
 @dataclass(frozen=True)
@@ -78,7 +117,7 @@ class ActivationJob:
     slot_id: int
     activation_code: str | None = None
     qr_url: str | None = None
-    switch_after_download: bool = True
+    switch_after_download: bool = False
 
     def __post_init__(self) -> None:
         if not self.job_id.strip():
@@ -109,6 +148,35 @@ class ProvisioningResult:
     device_code: int | None = None
     error: str | None = None
     active_phone_number: str | None = None
+    verdict: ActivationVerdict | None = None
+
+    def __post_init__(self) -> None:
+        confirmed = self.verdict is ActivationVerdict.ACTIVATION_CONFIRMED
+        if self.success and not confirmed:
+            raise ValueError(
+                "success=true requires verdict=ACTIVATION_CONFIRMED; "
+                f"got verdict={self.verdict.value if self.verdict else None}"
+            )
+        if confirmed and not self.success:
+            raise ValueError("ACTIVATION_CONFIRMED requires success=true")
+
+    @classmethod
+    def from_verdict(
+        cls,
+        job_id: str,
+        slot_id: int,
+        verdict: ActivationVerdict,
+        error: str | None = None,
+        device_code: int | None = None,
+    ) -> ProvisioningResult:
+        return cls(
+            success=verdict.success,
+            job_id=job_id,
+            slot_id=slot_id,
+            device_code=device_code,
+            error=error,
+            verdict=verdict,
+        )
 
     def to_dict(self) -> dict:
         payload: dict[str, str | int | bool] = {
@@ -122,6 +190,8 @@ class ProvisioningResult:
             payload["error"] = self.error
         if self.active_phone_number:
             payload["active_phone_number"] = self.active_phone_number
+        if self.verdict is not None:
+            payload["verdict"] = self.verdict.value
         return payload
 
 
@@ -148,6 +218,49 @@ class ProxyRoute:
     @property
     def route_key(self) -> tuple[str, int, str | None]:
         return (self.host.lower(), self.port, self.username)
+
+
+class SmsSendOutcome(str, Enum):
+    """Delivery classification for one SMS send attempt.
+
+    ``UNKNOWN`` means the provider response was missing, malformed, or
+    ambiguous. It is never treated as successful delivery.
+    """
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class SmsSendResult:
+    """Outcome of one outbound SMS handed to the SMS gateway."""
+
+    success: bool
+    to_number: str
+    provider_message_id: str | None = None
+    status_code: int | None = None
+    error: str | None = None
+    outcome: SmsSendOutcome | None = None
+    provider_accept_row: dict | None = None
+    voidfix_sim_slot: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.success:
+            object.__setattr__(self, "outcome", SmsSendOutcome.SUCCESS)
+            return
+        if self.outcome is None or self.outcome is SmsSendOutcome.SUCCESS:
+            object.__setattr__(self, "outcome", SmsSendOutcome.FAILURE)
+
+
+@dataclass(frozen=True)
+class InboundSms:
+    """One inbound SMS reported by the SMS gateway."""
+
+    from_number: str
+    message: str
+    device_id: str | None = None
+    received_at: str | None = None
 
 
 class RecoveryAction(str, Enum):

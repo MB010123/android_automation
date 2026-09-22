@@ -1,0 +1,9 @@
+{
+  "prototype-device-1": {
+    "device_type": "pixel_7a",
+    "role": "test_pixel_7a",
+    "adb_serial": "REPLACE_WITH_TEST_SERIAL",
+    "voidfix_device_id": "REPLACE_WITH_VOIDFIX_DEVICE_ID",
+    "enabled": false
+  }
+}

@@ -28,11 +28,17 @@ class HttpActivationJobSource(ActivationJobSource):
             }
         )
 
+    @staticmethod
+    def build_claim_payload(slot_ids: Iterable[int]) -> dict[str, list[int]]:
+        """Construct the /claim body. Does not perform I/O."""
+        return {"slot_ids": sorted({int(slot_id) for slot_id in slot_ids})}
+
     def fetch_pending(self, slot_ids: Iterable[int]) -> Iterable[ActivationJob]:
+        payload = self.build_claim_payload(slot_ids)
         try:
             response = self._session.post(
                 f"{self._endpoint}/claim",
-                json={"slot_ids": sorted(slot_ids)},
+                json=payload,
                 timeout=self._timeout,
             )
             response.raise_for_status()
@@ -53,7 +59,7 @@ class HttpActivationJobSource(ActivationJobSource):
             if not isinstance(raw_job, dict):
                 raise ProvisioningTransportError(f"activation job at index {index} must be an object")
             try:
-                switch_after_download = raw_job.get("switch_after_download", True)
+                switch_after_download = raw_job.get("switch_after_download", False)
                 if not isinstance(switch_after_download, bool):
                     raise TypeError("switch_after_download must be a boolean")
                 jobs.append(

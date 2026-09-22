@@ -304,15 +304,20 @@ systemd service must not run at the same time.
 
 ## Phase 2 provisioning pipeline
 
-Provisioning is disabled unless `PROVISIONING_ENDPOINT` is configured. The
-worker atomically claims work with:
+Provisioning is disabled unless `PROVISIONING_ENDPOINT` is configured.
+Leave it unset. Claim scope is a `SlotIsolationPolicy` allowlist (default
+`{1}`), not `slot_map.json`. Initial claim body is `{"slot_ids":[1]}`.
+The wired provider is `HumanActivationProvider` (no EuiccManager, no
+activation codes). Only `ACTIVATION_CONFIRMED` is success.
+
+The worker would atomically claim work with:
 
 ```http
 POST {PROVISIONING_ENDPOINT}/claim
 Authorization: Bearer {HARDWARE_AGENT_TOKEN}
 X-Hardware-Agent-Token: {HARDWARE_AGENT_TOKEN}
 
-{"slot_ids":[1,2,3]}
+{"slot_ids":[1]}
 ```
 
 The response may be a JSON array or `{"jobs":[...]}`. A job must contain

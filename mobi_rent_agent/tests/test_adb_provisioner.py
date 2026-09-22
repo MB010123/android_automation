@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from domain.models import ActivationJob
+from domain.slot_isolation import SlotIsolationPolicy
 from infrastructure.adb_companion import AdbCommandResult
 from infrastructure.adb_provisioner import AdbCompanionProvisioner
 
@@ -50,30 +51,85 @@ class FakeSocket:
         return response
 
 
-def test_activation_code_uses_forwarded_socket_and_forward_is_removed(monkeypatch):
+def _queue_sockets(monkeypatch, sockets: list[FakeSocket]) -> None:
+    remaining = list(sockets)
+
+    def factory(*_args, **_kwargs):
+        return remaining.pop(0)
+
+    monkeypatch.setattr("infrastructure.adb_companion.socket.create_connection", factory)
+
+
+def test_legacy_provisioner_never_sends_code_when_quarantined(monkeypatch):
     runner = FakeRunner()
-    fake_socket = FakeSocket({"success": True, "device_code": 0})
-    monkeypatch.setattr(
-        "infrastructure.adb_companion.socket.create_connection",
-        lambda *_args, **_kwargs: fake_socket,
+    status_socket = FakeSocket(
+        {
+            "success": True,
+            "can_silent_install": True,
+            "real_esim_enabled": True,
+            "euicc_enabled": True,
+        }
     )
+    provision_socket = FakeSocket({"success": True, "device_code": 0})
+    _queue_sockets(monkeypatch, [status_socket, provision_socket])
     provisioner = AdbCompanionProvisioner(runner)
     job = ActivationJob("job-1", 1, "LPA:1$server$secret")
 
     result = provisioner.provision("SERIAL-1", job)
 
-    assert result.success is True
-    assert json.loads(fake_socket.sent) == {
-        "command": "provision_esim",
-        "job_id": "job-1",
-        "slot_id": 1,
-        "activation_code": "LPA:1$server$secret",
-        "switch_after_download": True,
-    }
-    assert runner.calls == [
-        ("SERIAL-1", ["get-state"]),
-        ("SERIAL-1", ["shell", "getprop", "sys.boot_completed"]),
-        ("SERIAL-1", ["shell", "pm", "list", "features"]),
-        ("SERIAL-1", ["forward", "tcp:0", "localabstract:mobi_rent.provisioning"]),
-        ("SERIAL-1", ["forward", "--remove", "tcp:43210"]),
-    ]
+    assert result.success is False
+    assert "quarantined" in (result.error or "")
+    assert provision_socket.sent == b""
+    assert "secret" not in (result.error or "")
+    assert "activation_code" not in result.to_dict()
+
+
+def test_privilege_gate_does_not_send_activation_code(monkeypatch):
+    runner = FakeRunner()
+    status_socket = FakeSocket(
+        {
+            "success": True,
+            "can_silent_install": False,
+            "real_esim_enabled": True,
+            "has_write_embedded_subscriptions": False,
+            "has_carrier_privileges": False,
+        }
+    )
+    provision_socket = FakeSocket({"success": True, "device_code": 0})
+    _queue_sockets(monkeypatch, [status_socket, provision_socket])
+    provisioner = AdbCompanionProvisioner(runner)
+    job = ActivationJob("job-1", 1, "LPA:1$server$secret")
+
+    result = provisioner.provision("SERIAL-1", job)
+
+    assert result.success is False
+    assert "cannot silently install" in (result.error or "")
+    assert provision_socket.sent == b""
+    assert json.loads(status_socket.sent) == {"command": "get_esim_status"}
+    assert "activation_code" not in json.loads(status_socket.sent)
+
+
+def test_real_esim_disabled_does_not_send_activation_code(monkeypatch):
+    runner = FakeRunner()
+    status_socket = FakeSocket(
+        {"success": True, "can_silent_install": True, "real_esim_enabled": False}
+    )
+    provision_socket = FakeSocket({"success": True, "device_code": 0})
+    _queue_sockets(monkeypatch, [status_socket, provision_socket])
+    provisioner = AdbCompanionProvisioner(runner)
+    result = provisioner.provision("SERIAL-1", ActivationJob("job-1", 1, "LPA:1$server$secret"))
+    assert result.success is False
+    assert "REAL_ESIM_ENABLED" in (result.error or "")
+    assert provision_socket.sent == b""
+
+
+def test_legacy_provisioner_refuses_slot_outside_allowlist(monkeypatch):
+    runner = FakeRunner()
+    provision_socket = FakeSocket({"success": True, "device_code": 0})
+    _queue_sockets(monkeypatch, [provision_socket])
+    provisioner = AdbCompanionProvisioner(runner, isolation=SlotIsolationPolicy({1}))
+    result = provisioner.provision("SERIAL-2", ActivationJob("job-2", 2, "LPA:1$server$secret"))
+    assert result.success is False
+    assert "allowlist" in (result.error or "")
+    assert provision_socket.sent == b""
+    assert runner.calls == []

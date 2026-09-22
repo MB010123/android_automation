@@ -1,0 +1,20 @@
+{
+  "11": {
+    "drawer_opener_bounds": null,
+    "labels": [],
+    "vf_ids": [],
+    "xml_hint": "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation=\"0\"><node index=\"0\" text=\"\" resource-id=\"\" class=\"android.widget.FrameLayout\" package=\"org.voidfix.smsgateway\" content-desc="
+  },
+  "17": {
+    "drawer_opener_bounds": null,
+    "labels": [],
+    "vf_ids": [],
+    "xml_hint": "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation=\"0\"><node index=\"0\" text=\"\" resource-id=\"\" class=\"android.widget.FrameLayout\" package=\"org.voidfix.smsgateway\" content-desc="
+  },
+  "19": {
+    "drawer_opener_bounds": null,
+    "labels": [],
+    "vf_ids": [],
+    "xml_hint": "<?xml version='1.0' encoding='UTF-8' standalone='yes' ?><hierarchy rotation=\"0\"><node index=\"0\" text=\"\" resource-id=\"\" class=\"android.widget.FrameLayout\" package=\"org.voidfix.smsgateway\" content-desc="
+  }
+}

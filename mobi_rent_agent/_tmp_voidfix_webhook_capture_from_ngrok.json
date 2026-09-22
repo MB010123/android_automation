@@ -1,0 +1,59 @@
+{
+  "start": "2026-09-21T16:37:35-05:00",
+  "response_status": "400 Bad Request",
+  "request": {
+    "method": "POST",
+    "proto": "HTTP/1.1",
+    "headers": {
+      "Accept-Encoding": [
+        "gzip"
+      ],
+      "Content-Length": [
+        "632"
+      ],
+      "Content-Type": [
+        "application/x-www-form-urlencoded"
+      ],
+      "Host": [
+        "handstand-yesterday-ocelot.ngrok-free.dev"
+      ],
+      "User-Agent": [
+        "GuzzleHttp/7"
+      ],
+      "X-Forwarded-For": [
+        "137.184.48.219"
+      ],
+      "X-Forwarded-Host": [
+        "handstand-yesterday-ocelot.ngrok-free.dev"
+      ],
+      "X-Forwarded-Proto": [
+        "https"
+      ],
+      "X-Sg-Signature": [
+        "7VPQotn/dVOiTDCvEhWt+RH8jUP/Qh7Hiop8hH8IhSA="
+      ]
+    },
+    "uri": "/voidfix/inbound",
+    "raw": "UE9TVCAvdm9pZGZpeC9pbmJvdW5kIEhUVFAvMS4xDQpIb3N0OiBoYW5kc3RhbmQteWVzdGVyZGF5LW9jZWxvdC5uZ3Jvay1mcmVlLmRldg0KVXNlci1BZ2VudDogR3V6emxlSHR0cC83DQpDb250ZW50LUxlbmd0aDogNjMyDQpDb250ZW50LVR5cGU6IGFwcGxpY2F0aW9uL3gtd3d3LWZvcm0tdXJsZW5jb2RlZA0KWC1Gb3J3YXJkZWQtRm9yOiAxMzcuMTg0LjQ4LjIxOQ0KWC1Gb3J3YXJkZWQtSG9zdDogaGFuZHN0YW5kLXllc3RlcmRheS1vY2Vsb3Qubmdyb2stZnJlZS5kZXYNClgtRm9yd2FyZGVkLVByb3RvOiBodHRwcw0KWC1TZy1TaWduYXR1cmU6IDdWUFFvdG4vZFZPaVREQ3ZFaFd0K1JIOGpVUC9RaDdIaW9wOGhIOEloU0E9DQpBY2NlcHQtRW5jb2Rpbmc6IGd6aXANCg0KbWVzc2FnZXM9JTVCJTdCJTIySUQlMjIlM0EzOTU2Nzk4JTJDJTIybnVtYmVyJTIyJTNBJTIyJTJCMTY1MTQ3MjI3MDklMjIlMkMlMjJtZXNzYWdlJTIyJTNBJTIyTW9iaS1SZW50K2luYm91bmQrd2ViaG9vaytURVNUK3Nsb3QyLXRvLXNsb3QxK3J1biUzRDIwMjYwOTIxVDIxMzczMFolMjIlMkMlMjJkZXZpY2VJRCUyMiUzQTEzODYlMkMlMjJzaW1TbG90JTIyJTNBMSUyQyUyMnNjaGVkdWxlJTIyJTNBbnVsbCUyQyUyMnVzZXJJRCUyMiUzQTY3MSUyQyUyMmdyb3VwSUQlMjIlM0FudWxsJTJDJTIyc3RhdHVzJTIyJTNBJTIyUmVjZWl2ZWQlMjIlMkMlMjJyZXN1bHRDb2RlJTIyJTNBbnVsbCUyQyUyMmVycm9yQ29kZSUyMiUzQW51bGwlMkMlMjJ0eXBlJTIyJTNBbnVsbCUyQyUyMmF0dGFjaG1lbnRzJTIyJTNBbnVsbCUyQyUyMnByaW9yaXRpemUlMjIlM0FudWxsJTJDJTIycmV0cmllcyUyMiUzQW51bGwlMkMlMjJzZW50RGF0ZSUyMiUzQSUyMjIwMjYtMDktMjFUMjElM0EzNyUzQTMzJTJCMDAwMCUyMiUyQyUyMmRlbGl2ZXJlZERhdGUlMjIlM0ElMjIyMDI2LTA5LTIxVDIxJTNBMzclM0EzNSUyQjAwMDAlMjIlMkMlMjJleHBpcnlEYXRlJTIyJTNBbnVsbCUyQyUyMmxvY2F0aW9uSWQlMjIlM0ElMjIlMjIlN0QlNUQ="
+  },
+  "response": {
+    "status": "400 Bad Request",
+    "status_code": 400,
+    "proto": "HTTP/1.0",
+    "headers": {
+      "Content-Length": [
+        "43"
+      ],
+      "Content-Type": [
+        "application/json"
+      ],
+      "Date": [
+        "Mon, 21 Sep 2026 21:37:35 GMT"
+      ],
+      "Server": [
+        "BaseHTTP/0.6 Python/3.12.10"
+      ]
+    },
+    "raw": "SFRUUC8xLjAgNDAwIEJhZCBSZXF1ZXN0DQpTZXJ2ZXI6IEJhc2VIVFRQLzAuNiBQeXRob24vMy4xMi4xMA0KRGF0ZTogTW9uLCAyMSBTZXAgMjAyNiAyMTozNzozNSBHTVQNCkNvbnRlbnQtVHlwZTogYXBwbGljYXRpb24vanNvbg0KQ29udGVudC1MZW5ndGg6IDQzDQoNCnsib2siOiBmYWxzZSwgImVycm9yIjogImJvZHkgbXVzdCBiZSBKU09OIn0="
+  }
+}

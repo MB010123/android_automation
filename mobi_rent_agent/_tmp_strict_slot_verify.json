@@ -1,0 +1,2430 @@
+{
+  "rows": [
+    {
+      "slot": 1,
+      "adb_serial_map": "18171FDF6005WG",
+      "adb": "device",
+      "ro_serialno": "18171FDF6005WG",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1386]"
+      ],
+      "vf_ids": [
+        "1386"
+      ],
+      "vf_id": "1386",
+      "sim2_slot_ok": true,
+      "phone": "+19522287088",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+19522287088]",
+        "sim2_phone": "+19522287088"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+19522287088",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 2,
+      "adb_serial_map": "19141FDF6OO8T9",
+      "adb": "device",
+      "ro_serialno": "19141FDF6OO8T9",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1389]"
+      ],
+      "vf_ids": [
+        "1389"
+      ],
+      "vf_id": "1389",
+      "sim2_slot_ok": true,
+      "phone": "+16514722709",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16514722709]",
+        "sim2_phone": "+16514722709"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16514722709",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 3,
+      "adb_serial_map": "19161FDF6004AD",
+      "adb": "device",
+      "ro_serialno": "19161FDF6004AD",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1393]"
+      ],
+      "vf_ids": [
+        "1393"
+      ],
+      "vf_id": "1393",
+      "sim2_slot_ok": true,
+      "phone": "+17633287165",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633287165]",
+        "sim2_phone": "+17633287165"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633287165",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 4,
+      "adb_serial_map": "19161FDF6005B9",
+      "adb": "device",
+      "ro_serialno": "19161FDF6005B9",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1394]"
+      ],
+      "vf_ids": [
+        "1394"
+      ],
+      "vf_id": "1394",
+      "sim2_slot_ok": true,
+      "phone": "+17633468225",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633468225]",
+        "sim2_phone": "+17633468225"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633468225",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 5,
+      "adb_serial_map": "19161FDF6OO411",
+      "adb": "device",
+      "ro_serialno": "19161FDF6OO411",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1395]"
+      ],
+      "vf_ids": [
+        "1395"
+      ],
+      "vf_id": "1395",
+      "sim2_slot_ok": true,
+      "phone": "+16126499401",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499401]",
+        "sim2_phone": "+16126499401"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499401",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 6,
+      "adb_serial_map": "19281FDF6OO1T4",
+      "adb": "device",
+      "ro_serialno": "19281FDF6OO1T4",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1402]"
+      ],
+      "vf_ids": [
+        "1402"
+      ],
+      "vf_id": "1402",
+      "sim2_slot_ok": true,
+      "phone": "+17633390175",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633390175]",
+        "sim2_phone": "+17633390175"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633390175",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 7,
+      "adb_serial_map": "1A181FDF6006KN",
+      "adb": "device",
+      "ro_serialno": "1A181FDF6006KN",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1403]"
+      ],
+      "vf_ids": [
+        "1403"
+      ],
+      "vf_id": "1403",
+      "sim2_slot_ok": true,
+      "phone": "+16126499481",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499481]",
+        "sim2_phone": "+16126499481"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499481",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 8,
+      "adb_serial_map": "1B131FDF60090W",
+      "adb": "device",
+      "ro_serialno": "1B131FDF60090W",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1404]"
+      ],
+      "vf_ids": [
+        "1404"
+      ],
+      "vf_id": "1404",
+      "sim2_slot_ok": true,
+      "phone": "+17633573736",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633573736]",
+        "sim2_phone": "+17633573736"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633573736",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 9,
+      "adb_serial_map": "1B301FDF6004HF",
+      "adb": "device",
+      "ro_serialno": "1B301FDF6004HF",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1405]"
+      ],
+      "vf_ids": [
+        "1405"
+      ],
+      "vf_id": "1405",
+      "sim2_slot_ok": true,
+      "phone": "+16126499603",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499603]",
+        "sim2_phone": "+16126499603"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499603",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 10,
+      "adb_serial_map": "1C021FDF600GKL",
+      "adb": "device",
+      "ro_serialno": "1C021FDF600GKL",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1406]"
+      ],
+      "vf_ids": [
+        "1406"
+      ],
+      "vf_id": "1406",
+      "sim2_slot_ok": true,
+      "phone": "+17633406158",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633406158]",
+        "sim2_phone": "+17633406158"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633406158",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 11,
+      "adb_serial_map": "1C071FDF6004MS",
+      "adb": "device",
+      "ro_serialno": "1C071FDF6004MS",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1407]"
+      ],
+      "vf_ids": [
+        "1407"
+      ],
+      "vf_id": "1407",
+      "sim2_slot_ok": true,
+      "phone": "+16126499651",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499651]",
+        "sim2_phone": "+16126499651"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499651",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 12,
+      "adb_serial_map": "1C071FDF6006YS",
+      "adb": "device",
+      "ro_serialno": "1C071FDF6006YS",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1408]"
+      ],
+      "vf_ids": [
+        "1408"
+      ],
+      "vf_id": "1408",
+      "sim2_slot_ok": true,
+      "phone": "+17634382664",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17634382664]",
+        "sim2_phone": "+17634382664"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17634382664",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 13,
+      "adb_serial_map": "1C111FDF600CNB",
+      "adb": "device",
+      "ro_serialno": "1C111FDF600CNB",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1409]"
+      ],
+      "vf_ids": [
+        "1409"
+      ],
+      "vf_id": "1409",
+      "sim2_slot_ok": true,
+      "phone": "+16126499683",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499683]",
+        "sim2_phone": "+16126499683"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499683",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 14,
+      "adb_serial_map": "1C141FDF600GXF",
+      "adb": "device",
+      "ro_serialno": "1C141FDF600GXF",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1410]"
+      ],
+      "vf_ids": [
+        "1410"
+      ],
+      "vf_id": "1410",
+      "sim2_slot_ok": true,
+      "phone": "+17633935186",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633935186]",
+        "sim2_phone": "+17633935186"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633935186",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 15,
+      "adb_serial_map": "21051FDF600EM9",
+      "adb": "",
+      "result": "UNRESOLVED",
+      "note": "adb offline or missing"
+    },
+    {
+      "slot": 16,
+      "adb_serial_map": "23101FDF60058N",
+      "adb": "device",
+      "ro_serialno": "23101FDF60058N",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1412]"
+      ],
+      "vf_ids": [
+        "1412"
+      ],
+      "vf_id": "1412",
+      "sim2_slot_ok": true,
+      "phone": "+17634384448",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17634384448]",
+        "sim2_phone": "+17634384448"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17634384448",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 17,
+      "adb_serial_map": "25061FDF6006KF",
+      "adb": "device",
+      "ro_serialno": "25061FDF6006KF",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1413]"
+      ],
+      "vf_ids": [
+        "1413"
+      ],
+      "vf_id": "1413",
+      "sim2_slot_ok": true,
+      "phone": null,
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [US Mobile]",
+        "sim2_phone": null
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": null,
+      "api_match": true,
+      "result": "UNRESOLVED"
+    },
+    {
+      "slot": 18,
+      "adb_serial_map": "25261FDF60017D",
+      "adb": "device",
+      "ro_serialno": "25261FDF60017D",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1414]"
+      ],
+      "vf_ids": [
+        "1414"
+      ],
+      "vf_id": "1414",
+      "sim2_slot_ok": true,
+      "phone": "+17634388552",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17634388552]",
+        "sim2_phone": "+17634388552"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17634388552",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 19,
+      "adb_serial_map": "1C101FDF6009EZ",
+      "adb": "device",
+      "ro_serialno": "1C101FDF6009EZ",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1415]"
+      ],
+      "vf_ids": [
+        "1415"
+      ],
+      "vf_id": "1415",
+      "sim2_slot_ok": true,
+      "phone": "+16126499751",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+16126499751]",
+        "sim2_phone": "+16126499751"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+16126499751",
+      "api_match": true,
+      "result": "VERIFIED"
+    },
+    {
+      "slot": 20,
+      "adb_serial_map": "1A271FDF600BX2",
+      "adb": "device",
+      "ro_serialno": "1A271FDF600BX2",
+      "serial_map_ok": true,
+      "ro_serial_ok": true,
+      "vf_drawer_labels": [
+        "Pixel 6 [1417]"
+      ],
+      "vf_ids": [
+        "1417"
+      ],
+      "vf_id": "1417",
+      "sim2_slot_ok": true,
+      "phone": "+17633935255",
+      "api_for_vf": {
+        "model": "Pixel 6",
+        "sim2_raw": "SIM #2 [+17633935255]",
+        "sim2_phone": "+17633935255"
+      },
+      "api_all": {
+        "1386": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+19522287088]",
+          "sim2_phone": "+19522287088"
+        },
+        "1389": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16514722709]",
+          "sim2_phone": "+16514722709"
+        },
+        "1393": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633287165]",
+          "sim2_phone": "+17633287165"
+        },
+        "1394": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633468225]",
+          "sim2_phone": "+17633468225"
+        },
+        "1395": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499401]",
+          "sim2_phone": "+16126499401"
+        },
+        "1402": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633390175]",
+          "sim2_phone": "+17633390175"
+        },
+        "1403": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499481]",
+          "sim2_phone": "+16126499481"
+        },
+        "1404": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633573736]",
+          "sim2_phone": "+17633573736"
+        },
+        "1405": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499603]",
+          "sim2_phone": "+16126499603"
+        },
+        "1406": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633406158]",
+          "sim2_phone": "+17633406158"
+        },
+        "1407": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499651]",
+          "sim2_phone": "+16126499651"
+        },
+        "1408": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634382664]",
+          "sim2_phone": "+17634382664"
+        },
+        "1409": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499683]",
+          "sim2_phone": "+16126499683"
+        },
+        "1410": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935186]",
+          "sim2_phone": "+17633935186"
+        },
+        "1411": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499573]",
+          "sim2_phone": "+16126499573"
+        },
+        "1412": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634384448]",
+          "sim2_phone": "+17634384448"
+        },
+        "1413": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [US Mobile]",
+          "sim2_phone": null
+        },
+        "1414": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17634388552]",
+          "sim2_phone": "+17634388552"
+        },
+        "1415": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+16126499751]",
+          "sim2_phone": "+16126499751"
+        },
+        "1417": {
+          "model": "Pixel 6",
+          "sim2_raw": "SIM #2 [+17633935255]",
+          "sim2_phone": "+17633935255"
+        }
+      },
+      "reference_phone": "+17633935255",
+      "api_match": true,
+      "result": "VERIFIED"
+    }
+  ],
+  "duplicates_vf_id": {},
+  "duplicates_phone": {},
+  "unassigned_api_devices": [
+    "1411"
+  ],
+  "vf_1411_on_farm": []
+}

@@ -1,0 +1,386 @@
+{
+  "prepared_at_utc": "2026-09-21T19:21:44.504420+00:00",
+  "sms_sent_during_preparation": false,
+  "outbox_rows_before": 0,
+  "authoritative_plan": "_tmp_fullbox_prep_test_plan.md",
+  "prototype_excluded": {
+    "voidfix_device_id": "1385",
+    "adb_serial": "3C071JEHN14705"
+  },
+  "outbound_strategy": {
+    "name": "central_hub",
+    "description": "All 20 slots send outbound to one allowlisted hub; correlate by unique body token per slot.",
+    "distinct_recipients_required": 1,
+    "recipients_e164": [
+      "19522287088"
+    ]
+  },
+  "alternate_outbound_strategy": {
+    "name": "ring_to_next_slot_sim2",
+    "description": "Slot N texts slot N+1 SIM2 MSISDN (slot 20 \u2192 slot 1). Requires every farm SIM2 on allowlist.",
+    "distinct_recipients_required": 20,
+    "recipients_e164": [
+      "16126499401",
+      "16126499481",
+      "16126499573",
+      "16126499603",
+      "16126499651",
+      "16126499683",
+      "16126499751",
+      "16514722709",
+      "17633287165",
+      "17633390175",
+      "17633406158",
+      "17633468225",
+      "17633573736",
+      "17633887556",
+      "17633935186",
+      "17633935255",
+      "17634382664",
+      "17634384448",
+      "17634388552",
+      "19522287088"
+    ],
+    "allowlist_missing_for_ring": [
+      "16126499401",
+      "16126499481",
+      "16126499573",
+      "16126499603",
+      "16126499651",
+      "16126499683",
+      "16126499751",
+      "16514722709",
+      "17633287165",
+      "17633390175",
+      "17633406158",
+      "17633468225",
+      "17633573736",
+      "17633887556",
+      "17633935186",
+      "17633935255",
+      "17634382664",
+      "17634384448",
+      "17634388552"
+    ]
+  },
+  "current_recipient_allowlist": [
+    "19522287088"
+  ],
+  "required_allowlist_changes": {
+    "for_central_hub_test": {
+      "add": [],
+      "remove": [],
+      "note": "No change if hub +19522287088 remains the sole recipient."
+    },
+    "for_ring_test": {
+      "add": [
+        "16126499401",
+        "16126499481",
+        "16126499573",
+        "16126499603",
+        "16126499651",
+        "16126499683",
+        "16126499751",
+        "16514722709",
+        "17633287165",
+        "17633390175",
+        "17633406158",
+        "17633468225",
+        "17633573736",
+        "17633887556",
+        "17633935186",
+        "17633935255",
+        "17634382664",
+        "17634384448",
+        "17634388552"
+      ],
+      "remove": [],
+      "note": "Not recommended unless explicitly authorized; expands blast radius to all farm MSISDNs."
+    }
+  },
+  "inbound_validation_plan": {
+    "reply_initiator": "Manual or scripted SMS from hub handset +19522287088 to each expected_inbound_reply_target",
+    "production_poll_inbound_endpoint": null,
+    "outbound_delivery_verification": {
+      "method": "SmsDispatchService send + durable outbox + VoidFixDeliveryPoller on read-messages.php",
+      "match_keys": [
+        "slot_id",
+        "voidfix_device_id",
+        "idempotency_key",
+        "provider_message_id",
+        "message body token slot=NN",
+        "deliveredDate on read-messages row"
+      ]
+    },
+    "inbound_reply_verification": {
+      "primary": "SmsDispatchService.ingest_inbound(webhook_payload) when VoidFix dashboard webhook hits agent HTTPS URL",
+      "match_keys": [
+        "device_id \u2192 slot via voidfix_devices.json reverse map",
+        "from_number hub +19522287088",
+        "message body token IN slot=NN run=\u2026",
+        "to implicit via device_id (SIM2 on that phone)"
+      ],
+      "fallback_without_inbound_endpoint": [
+        "VoidFix read-messages.php poll filtered by deviceID == voidfix_device_id; locate newest row with sender hub and IN token",
+        "Optional read-only ADB SMS inbox spot-check per adb_serial if API schema lacks inbound direction"
+      ]
+    }
+  },
+  "eventual_test_entrypoint": {
+    "factory_path": "application.sms_factory.build_sms_dispatch_service",
+    "send_api": "SmsDispatchService.send_for_slot(slot_id, to_number, message, idempotency_key=...)",
+    "reference_tool": "tools/slot1_sms_delivery_regression.py",
+    "planned_fullbox_tool": "tools/fullbox_sms_simultaneous_test.py",
+    "example_command_after_authorization": "cd mobi_rent_agent && python tools/fullbox_sms_simultaneous_test.py --config _tmp_fullbox_test_config.json --execute",
+    "constraints": [
+      "No raw VoidFix send scripts",
+      "No daemon restart required",
+      "VOIDFIX_LIVE_SEND_AUTHORIZED must remain true",
+      "Recipient must be on VOIDFIX_RECIPIENT_ALLOWLIST"
+    ]
+  },
+  "run_id": "20260921T192144Z",
+  "slots": [
+    {
+      "slot": 1,
+      "adb_serial": "18171FDF6005WG",
+      "voidfix_device_id": "1386",
+      "sim2_msisdn": "+19522287088",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=01 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+19522287088",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=01 run=20260921T192144Z",
+      "notes": "slot 1 SIM2 equals hub MSISDN; outbound is farm\u2192hub self-number text",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 2,
+      "adb_serial": "19141FDF6OO8T9",
+      "voidfix_device_id": "1389",
+      "sim2_msisdn": "+16514722709",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=02 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16514722709",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=02 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 3,
+      "adb_serial": "19161FDF6004AD",
+      "voidfix_device_id": "1393",
+      "sim2_msisdn": "+17633287165",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=03 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633287165",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=03 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 4,
+      "adb_serial": "19161FDF6005B9",
+      "voidfix_device_id": "1394",
+      "sim2_msisdn": "+17633468225",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=04 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633468225",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=04 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 5,
+      "adb_serial": "19161FDF6OO411",
+      "voidfix_device_id": "1395",
+      "sim2_msisdn": "+16126499401",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=05 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499401",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=05 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 6,
+      "adb_serial": "19281FDF6OO1T4",
+      "voidfix_device_id": "1402",
+      "sim2_msisdn": "+17633390175",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=06 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633390175",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=06 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 7,
+      "adb_serial": "1A181FDF6006KN",
+      "voidfix_device_id": "1403",
+      "sim2_msisdn": "+16126499481",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=07 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499481",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=07 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 8,
+      "adb_serial": "1B131FDF60090W",
+      "voidfix_device_id": "1404",
+      "sim2_msisdn": "+17633573736",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=08 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633573736",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=08 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 9,
+      "adb_serial": "1B301FDF6004HF",
+      "voidfix_device_id": "1405",
+      "sim2_msisdn": "+16126499603",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=09 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499603",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=09 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 10,
+      "adb_serial": "1C021FDF600GKL",
+      "voidfix_device_id": "1406",
+      "sim2_msisdn": "+17633406158",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=10 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633406158",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=10 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 11,
+      "adb_serial": "1C071FDF6004MS",
+      "voidfix_device_id": "1407",
+      "sim2_msisdn": "+16126499651",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=11 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499651",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=11 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 12,
+      "adb_serial": "1C071FDF6006YS",
+      "voidfix_device_id": "1408",
+      "sim2_msisdn": "+17634382664",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=12 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17634382664",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=12 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 13,
+      "adb_serial": "1C111FDF600CNB",
+      "voidfix_device_id": "1409",
+      "sim2_msisdn": "+16126499683",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=13 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499683",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=13 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 14,
+      "adb_serial": "1C141FDF600GXF",
+      "voidfix_device_id": "1410",
+      "sim2_msisdn": "+17633935186",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=14 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633935186",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=14 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 15,
+      "adb_serial": "21051FDF600EM9",
+      "voidfix_device_id": "1411",
+      "sim2_msisdn": "+16126499573",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=15 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499573",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=15 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 16,
+      "adb_serial": "23101FDF60058N",
+      "voidfix_device_id": "1412",
+      "sim2_msisdn": "+17634384448",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=16 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17634384448",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=16 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 17,
+      "adb_serial": "25061FDF6006KF",
+      "voidfix_device_id": "1413",
+      "sim2_msisdn": "+17633887556",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=17 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633887556",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=17 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 18,
+      "adb_serial": "25261FDF60017D",
+      "voidfix_device_id": "1414",
+      "sim2_msisdn": "+17634388552",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=18 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17634388552",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=18 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 19,
+      "adb_serial": "1C101FDF6009EZ",
+      "voidfix_device_id": "1415",
+      "sim2_msisdn": "+16126499751",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=19 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+16126499751",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=19 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    },
+    {
+      "slot": 20,
+      "adb_serial": "1A271FDF600BX2",
+      "voidfix_device_id": "1417",
+      "sim2_msisdn": "+17633935255",
+      "outbound_test_recipient": "+19522287088",
+      "outbound_message": "Mobi-Rent fullbox OUT slot=20 run=20260921T192144Z",
+      "expected_inbound_reply_target": "+17633935255",
+      "inbound_reply_message": "Mobi-Rent fullbox IN slot=20 run=20260921T192144Z",
+      "notes": "",
+      "allowlist_covers_outbound": true
+    }
+  ],
+  "outbox_rows_after": 0
+}

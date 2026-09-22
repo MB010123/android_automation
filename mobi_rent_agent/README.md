@@ -46,7 +46,8 @@ tail -f logs/agent.log
 ```
 
 Stop a foreground run with `Ctrl+C`. For an always-on production install,
-use the [systemd instructions](#run-on-boot-systemd).
+use the [systemd instructions](#run-on-boot-systemd) and [DEPLOYMENT.md](DEPLOYMENT.md)
+(Linux VPS vs phone-farm topology, webhook service, validation).
 
 ## Architecture
 
@@ -65,6 +66,7 @@ mobi_rent_agent/
 │   ├── proxy_service.py     #   Persistent one-route-per-slot reconciliation
 │   ├── health_service.py    #   Radio/network monitoring and isolated recovery
 │   ├── slot_coordinator.py  #   Cross-service per-slot operation mutexes
+│   ├── sms_service.py       #   Slot-allowlisted VoidFix send / webhook ingest
 │   └── retry_policy.py      #   Exponential backoff policy
 │
 ├── infrastructure/            # Concrete adapters (the only layer that
@@ -79,6 +81,8 @@ mobi_rent_agent/
 │   ├── proxy_routes.py      #   Strict persistent route configuration
 │   ├── system_clock.py      #   SystemClock (implements Clock)
 │   ├── provisioning_api.py  #   Backend activation claim/result adapter
+│   ├── voidfix_api.py       #   VoidFix SMS gateway (disabled by default)
+│   ├── voidfix_devices.py   #   Bay -> VoidFix dashboard device-ID map
 │   └── logging_setup.py     #   Rotating file + console logging
 │
 ├── tests/
@@ -86,6 +90,7 @@ mobi_rent_agent/
 │
 ├── main.py                    # Composition root: wires adapters into the use case
 ├── slot_map.example.json      # slot_id -> fixed ADB serial mapping (copy to slot_map.json)
+├── voidfix_devices.example.json # slot_id -> VoidFix dashboard device ID
 ├── .env.example                # Copy to .env and fill in HARDWARE_AGENT_TOKEN
 ├── requirements.txt
 ├── requirements-dev.txt
@@ -255,7 +260,23 @@ HEARTBEAT_ENDPOINT=https://mobi-rent.example/api/public/hardware/queue
 
 Phase 2 features are off by default. Leave `PROVISIONING_ENDPOINT` and
 `PROXY_ROUTES_PATH` blank and `HEALTH_MONITOR_ENABLED=false` for the initial
-heartbeat-only run.
+heartbeat-only run. `PROVISIONING_ALLOWED_SLOT_IDS` defaults to `1` and is
+independent of `slot_map.json`; do not treat map size as claim scope.
+
+Additional Phase 2 switches:
+
+- `HEALTH_RECOVERY_ENABLED=false` runs the health monitor in dry-run mode:
+  every check and threshold behaves normally, but the reboot is logged as
+  `DRY-RUN` instead of being issued. Use this for chassis validation before
+  trusting automatic recovery.
+- `VOIDFIX_API_KEY` alone does **not** enable SMS. See [Phase 2 VoidFix
+  SMS](#phase-2-voidfix-sms). `devices` values are VoidFix dashboard
+  device IDs, not ADB serials. Production VoidFix stays off until
+  `VOIDFIX_ENABLED=true` is set explicitly.
+- `python tools/phase2_readiness.py` is a read-only probe that reports, per
+  slot: ADB state, boot completion, the eUICC (eSIM) hardware feature,
+  radio registration, and network reachability. Run it before enabling any
+  Phase 2 service.
 
 ## Hot run (foreground)
 
@@ -302,18 +323,187 @@ pgrep -af 'python.*main.py'
 Do not start a second agent against the same slot map. A hot run and the
 systemd service must not run at the same time.
 
+Isolated Pixel 7a prototype (not 20-slot production): see
+`config/prototype/README.md` and `python tools/prototype_readiness.py --env prototype audit`.
+
+## Phase 2 VoidFix SMS
+
+VoidFix is the SMS gateway adapter behind the existing `SmsGateway` port
+(`domain/ports.py`). The daemon never sends SMS, never polls inbound, and
+never opens a webhook listener. `SmsDispatchService` exists for explicit
+callers (tests and a future send workflow). Reuse that service; do not add
+a second HTTP client.
+
+### Required environment variables
+
+Heartbeat still requires `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
+`HARDWARE_AGENT_TOKEN`. VoidFix is optional and off by default:
+
+| Variable | Default | Role |
+|---|---|---|
+| `VOIDFIX_ENABLED` | `false` | Master switch. Must be `true` together with a key. |
+| `VOIDFIX_API_KEY` | unset | Dashboard API key. Never committed. |
+| `VOIDFIX_SEND_ENDPOINT` | `https://sms.voidfix.com/services/send.php` | Outbound send URL. HTTPS only. |
+| `VOIDFIX_INBOUND_ENDPOINT` | unset | Optional poll URL if VoidFix issues one. HTTPS only. |
+| `VOIDFIX_ALLOWED_SLOT_IDS` | empty | CSV of bays allowed to send. Independent of `slot_map.json`. |
+| `VOIDFIX_DEVICE_MAP_PATH` | unset | JSON file mapping bay -> VoidFix device ID. |
+| `VOIDFIX_WEBHOOK_SECRET` | unset | Shared secret for inbound webhook ingest. |
+
+### How to enable VoidFix
+
+1. Enroll phones in the VoidFix dashboard and install the sender app. Note
+   each dashboard **device ID** (not the ADB serial).
+2. Copy `voidfix_devices.example.json` to `voidfix_devices.json` (gitignored)
+   and fill dashboard IDs for the bays you intend to use.
+3. Set `VOIDFIX_DEVICE_MAP_PATH=voidfix_devices.json`.
+4. Set `VOIDFIX_ALLOWED_SLOT_IDS` to those same bays, for example `1`.
+5. Put the API key in `.env` as `VOIDFIX_API_KEY`.
+6. Set `VOIDFIX_ENABLED=true` only when you intend to allow send calls.
+   Leave it `false` on production hosts until that is authorized.
+
+Startup logs `voidfix-sms gateway configured (… no send workflow active)`
+when the switch and key are both set. Heartbeat still does not send SMS.
+
+### How to configure allowed slots
+
+`VOIDFIX_ALLOWED_SLOT_IDS` uses the same CSV parser as
+`PROVISIONING_ALLOWED_SLOT_IDS`, but **defaults to empty** so SMS cannot
+inherit the provisioning Slot 1 allowlist. `SmsDispatchService` then applies
+`SlotIsolationPolicy` to that list. A bay must be in the allowlist **and**
+have a device ID in `voidfix_devices.json`. `slot_map.json` is not an SMS
+allowlist and must not be edited to enable VoidFix.
+
+### Supported operations
+
+- **Send SMS** — `POST` form body to the send endpoint with `number`,
+  `devices` (comma-separated dashboard IDs), `key`, and `message`. HTTP
+  4xx/5xx and JSON `success: false` are `FAILURE`. HTTP 2xx without a
+  recognizable `success: true` is `UNKNOWN`, not delivery. Nested
+  `data.messages[].ID` is stored as `provider_message_id` when present.
+- **Parse inbound webhook** — `SmsDispatchService.ingest_inbound` / 
+  `VoidFixSmsGateway.ingest_inbound` parse a push JSON body. No network.
+- **Poll inbound** — `fetch_inbound` GET with `key=` only when
+  `VOIDFIX_INBOUND_ENDPOINT` is configured. VoidFix does not publish a
+  standard receive URL.
+
+Unsupported / not wired: daemon auto-send, MMS, WhatsApp, iMessage, SIM-slot
+override, delivery-report callbacks, mutating production slot maps.
+
+### How inbound SMS / webhooks work
+
+VoidFix captures replies on the Android sender app and forwards them through
+its dashboard socket. Public docs say an application webhook can receive
+those messages, but they do not publish the payload schema or a receive
+endpoint.
+
+This agent treats inbound as:
+
+1. Point the VoidFix dashboard webhook at an HTTPS URL you control.
+2. If `VOIDFIX_WEBHOOK_SECRET` is set, include that secret with the request
+   (query or header, depending on what the dashboard allows) and pass it to
+   `ingest_inbound(..., provided_secret=...)`.
+3. The parser accepts a list, `{ "messages": [...] }`,
+   `{ "data": { "messages": [...] } }`, or a single object. Field aliases:
+   `number`/`from`/`sender`, `message`/`text`/`body`,
+   `device`/`deviceID`/`device_id`, `received_at`/`timestamp`.
+
+Until VoidFix documents a poll URL, leave `VOIDFIX_INBOUND_ENDPOINT` unset.
+
+### Security considerations
+
+- HTTPS is required for send and inbound endpoints.
+- The API key travels as form field `key` on send and query `key` on poll
+  (VoidFix's documented method). It is never logged.
+- Message bodies and recipient numbers are not written to the agent log.
+- `VOIDFIX_ENABLED` defaults false; a key in `.env` is not sufficient.
+- Allowlist and device map are separate from `slot_map.json`.
+- Do not paste API keys into issues, chats that are shared, or git.
+
+### Test procedure
+
+From `mobi_rent_agent`, with the venv active:
+
+```bash
+python -m pytest tests/test_voidfix_api.py tests/test_sms_service.py tests/test_config.py -v
+python -m pytest tests/ -v
+```
+
+These tests use in-memory fakes. They must not call `sms.voidfix.com` and
+must not send a real SMS. Do not set `VOIDFIX_ENABLED=true` on a production
+host as part of this procedure.
+
+### Durable SMS outbox backup and restore
+
+When VoidFix SMS is enabled, outbound idempotency and delivery state are stored
+in **`logs/sms_outbox.sqlite`** (SQLite, schema version 1). The file is created
+automatically on first use. It is gitignored with `logs/`; treat it as production
+state alongside `.env`.
+
+**Backup (recommended daily, and before agent upgrades):**
+
+```powershell
+# From mobi_rent_agent/
+New-Item -ItemType Directory -Force -Path logs\backups | Out-Null
+Copy-Item logs\sms_outbox.sqlite "logs\backups\sms_outbox-$(Get-Date -Format yyyyMMdd-HHmmss).sqlite"
+```
+
+On Linux/systemd hosts, stop is not required for a consistent copy if the agent
+is idle; for busy hosts, stop `mobi-rent-agent`, copy the file, then start.
+
+**Restore (disaster recovery or migration to a new host):**
+
+1. Stop the hardware agent (`main.py` / `mobi-rent-agent` service).
+2. Move the broken or missing DB aside:
+   `mv logs/sms_outbox.sqlite logs/sms_outbox.sqlite.bak-$(date +%Y%m%d)`.
+3. Copy a known-good backup into place:
+   `cp logs/backups/sms_outbox-YYYYMMDD-HHMMSS.sqlite logs/sms_outbox.sqlite`.
+4. Start the agent. On startup it reloads non-terminal rows and resumes
+   **delivery polling only** (no automatic VoidFix resend).
+5. Verify logs contain `voidfix-sms dispatch ready` and
+   `reloaded N non-terminal outbox record(s)` when applicable.
+
+Never restore over a live DB while the agent is running. Do not commit
+`sms_outbox.sqlite` to git.
+
 ## Phase 2 provisioning pipeline
 
-Provisioning is disabled unless `PROVISIONING_ENDPOINT` is configured. The
-worker atomically claims work with:
+Provisioning is disabled unless `PROVISIONING_ENDPOINT` is configured.
+Leave it unset. `REAL_ESIM_ENABLED` stays false in the companion.
+
+Claim scope is **not** `slot_map.json`. A `SlotIsolationPolicy` allowlist
+(default `{1}`) is intersected with the map. The initial claim body is:
 
 ```http
 POST {PROVISIONING_ENDPOINT}/claim
 Authorization: Bearer {HARDWARE_AGENT_TOKEN}
 X-Hardware-Agent-Token: {HARDWARE_AGENT_TOKEN}
 
-{"slot_ids":[1,2,3]}
+{"slot_ids":[1]}
 ```
+
+A 20-slot production map plus allowlist `{1}` still claims only Slot 1.
+An empty intersection refuses provisioning. Jobs returned for slots
+outside the allowlist are rejected. Worker count is bounded by the claim
+set, not map size.
+
+The compose-time provider is selected by `select_esim_provider` after a
+capability gate. On a stock device the fallback is
+`HumanActivationProvider`: it never sends an activation code and never
+calls `EuiccManager`. `AuthorizedEsimProvider` exists only for a
+legitimate Android authority (`WRITE_EMBEDDED_SUBSCRIPTIONS`, carrier
+privileges, Device Owner, or Profile Owner). `REAL_ESIM_ENABLED=true` is
+**not** authorization and cannot arm download. Live download stays
+unarmed until a later explicit Slot 1 activation authorization.
+
+The service applies the approved job state machine **in memory only**
+(no new database). Only `ACTIVATION_CONFIRMED` is `success=true`.
+`ACTIVATION_PARTIAL` stays observable and is never success. Leftover
+`AdbCompanionProvisioner` and `tools/slot1_tello_provision.py` are
+quarantined behind the same allowlist / `REAL_ESIM_ENABLED` /
+`can_silent_install` gates and cannot bypass the human provider.
+`switch_after_download` defaults to false.
+
+The worker would atomically claim work with:
 
 The response may be a JSON array or `{"jobs":[...]}`. A job must contain
 exactly one of `activation_code` or an HTTPS `qr_url`:
@@ -324,7 +514,7 @@ exactly one of `activation_code` or an HTTPS `qr_url`:
     "job_id": "activation-123",
     "slot_id": 1,
     "qr_url": "https://storage.example/activation-123.png",
-    "switch_after_download": true
+    "switch_after_download": false
   }]
 }
 ```
@@ -642,17 +832,22 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-The suite uses in-memory fakes for backend, device, proxy, health, and time
-ports. It covers heartbeat resilience, real QR decoding, per-slot
-provisioning isolation, route uniqueness, proxy failure isolation, recovery
-thresholds, cooldowns, and busy-slot protection without touching real
-devices.
+The suite uses in-memory fakes for backend, device, proxy, health, VoidFix
+SMS, and time ports. It covers heartbeat resilience, real QR decoding,
+per-slot provisioning isolation, route uniqueness, proxy failure isolation,
+recovery thresholds, cooldowns, busy-slot protection, VoidFix response
+parsing, and SMS allowlisting without touching real devices or the VoidFix
+network.
 
 ## Security notes
 
-- `HARDWARE_AGENT_TOKEN` lives only in `.env` (git-ignored) — never
-  hard-coded, never logged.
+- `HARDWARE_AGENT_TOKEN` and `VOIDFIX_API_KEY` live only in `.env`
+  (git-ignored) — never hard-coded, never logged.
 - The HTTP client only ever sends the fields in the agreed schema.
 - All network/ADB failures are caught at the infrastructure boundary
   and turned into typed `HeartbeatResult` values; the daemon process
   itself never crashes from a dropped connection or an offline device.
+- VoidFix send failures become `SmsSendResult` values. JSON `success:
+  false` is `FAILURE` even on HTTP 200. Ambiguous HTTP 200 bodies are
+  `UNKNOWN`, never successful delivery. Provider error text is redacted
+  if it echoes the API key.

@@ -1,0 +1,21 @@
+[Unit]
+Description=Mobi-Rent VPS backend (health, VoidFix webhook, farm status proxy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mobirent
+WorkingDirectory=/opt/mobi-rent-agent
+EnvironmentFile=/opt/mobi-rent-agent/.env
+Environment=MOBI_RENT_DEPLOY_ROLE=vps
+Environment=VPS_BACKEND_LISTEN_HOST=127.0.0.1
+Environment=VPS_BACKEND_LISTEN_PORT=8080
+ExecStart=/opt/mobi-rent-agent/.venv/bin/python /opt/mobi-rent-agent/tools/vps_backend_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

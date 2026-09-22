@@ -57,6 +57,22 @@ def test_load_slot_map_parses_valid_mapping(tmp_path):
     assert slot_map == {1: "SERIAL1", 2: "SERIAL2"}
 
 
+def test_load_slot_map_rejects_duplicate_serials(tmp_path):
+    path = tmp_path / "slot_map.json"
+    path.write_text(json.dumps({"1": "SERIAL1", "2": "SERIAL1"}))
+
+    with pytest.raises(SlotMapError, match="duplicate serial"):
+        load_slot_map(path)
+
+
+def test_load_slot_map_rejects_empty_serial(tmp_path):
+    path = tmp_path / "slot_map.json"
+    path.write_text(json.dumps({"1": "  "}))
+
+    with pytest.raises(SlotMapError, match="empty serial"):
+        load_slot_map(path)
+
+
 def _patch_adb(monkeypatch, devices_output: str, probe_ok_serials: set[str]):
     def fake_run(command, capture_output, text, timeout, check):
         assert command[0] == "adb"
@@ -147,3 +163,152 @@ def test_probe_timeout_is_treated_as_networkerror_not_a_crash(monkeypatch):
     states = list(provider.read_slot_states())
 
     assert states[0].status == SlotStatus.NETWORK_ERROR
+
+
+class _RecordingAdb:
+    def __init__(self, devices_outputs: list[str], probe_ok_serials: set[str]) -> None:
+        self.devices_outputs = list(devices_outputs)
+        self.probe_ok_serials = set(probe_ok_serials)
+        self.commands: list[list[str]] = []
+        self._devices_index = 0
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def run(self, command, capture_output, text, timeout, check):
+        self.commands.append(list(command))
+        assert command[0] == "adb"
+        assert "reconnect" not in command
+        assert "kill-server" not in command
+        assert "reboot" not in command
+        if command[1:] == ["devices"]:
+            output = self.devices_outputs[min(self._devices_index, len(self.devices_outputs) - 1)]
+            self._devices_index += 1
+            return FakeCompletedProcess(stdout=output)
+        serial = command[2]
+        if serial in self.probe_ok_serials:
+            return FakeCompletedProcess(stdout="ok\n", returncode=0)
+        return FakeCompletedProcess(stdout="", returncode=1)
+
+
+def _install_recording_adb(monkeypatch, recorder: _RecordingAdb) -> AdbSlotStatusProvider:
+    monkeypatch.setattr("infrastructure.adb_slot_status.subprocess.run", recorder.run)
+    return AdbSlotStatusProvider(
+        slot_map={1: "SERIAL1", 2: "SERIAL2"},
+        probe_retry_seconds=15.0,
+        monotonic=recorder.monotonic,
+    )
+
+
+def _probed_serials(commands: list[list[str]]) -> list[str]:
+    probed = []
+    for cmd in commands:
+        if len(cmd) >= 6 and cmd[1] == "-s" and cmd[3:6] == ["shell", "echo", "ok"]:
+            probed.append(cmd[2])
+    return probed
+
+
+def test_recovers_when_missing_serial_returns_as_device(monkeypatch):
+    recorder = _RecordingAdb(
+        devices_outputs=[
+            "List of devices attached\nSERIAL2\tdevice\n",
+            "List of devices attached\nSERIAL1\tdevice\nSERIAL2\tdevice\n",
+        ],
+        probe_ok_serials={"SERIAL1", "SERIAL2"},
+    )
+    provider = _install_recording_adb(monkeypatch, recorder)
+
+    first = {s.slot_id: s.status for s in provider.read_slot_states()}
+    second = {s.slot_id: s.status for s in provider.read_slot_states()}
+
+    assert first[1] == SlotStatus.NETWORK_ERROR
+    assert first[2] == SlotStatus.ONLINE
+    assert second[1] == SlotStatus.ONLINE
+    assert second[2] == SlotStatus.ONLINE
+    assert _probed_serials(recorder.commands) == ["SERIAL2", "SERIAL1", "SERIAL2"]
+
+
+@pytest.mark.parametrize("adb_state", ["offline", "unauthorized"])
+def test_recovers_when_listed_state_returns_to_device(monkeypatch, adb_state):
+    recorder = _RecordingAdb(
+        devices_outputs=[
+            f"List of devices attached\nSERIAL1\t{adb_state}\nSERIAL2\tdevice\n",
+            "List of devices attached\nSERIAL1\tdevice\nSERIAL2\tdevice\n",
+        ],
+        probe_ok_serials={"SERIAL1", "SERIAL2"},
+    )
+    provider = _install_recording_adb(monkeypatch, recorder)
+
+    first = {s.slot_id: s.status for s in provider.read_slot_states()}
+    second = {s.slot_id: s.status for s in provider.read_slot_states()}
+
+    assert first[1] == SlotStatus.NETWORK_ERROR
+    assert first[2] == SlotStatus.ONLINE
+    assert second[1] == SlotStatus.ONLINE
+    assert _probed_serials(recorder.commands) == ["SERIAL2", "SERIAL1", "SERIAL2"]
+
+
+def test_failed_probe_is_not_retried_until_backoff_expires(monkeypatch):
+    recorder = _RecordingAdb(
+        devices_outputs=[
+            "List of devices attached\nSERIAL1\tdevice\n",
+            "List of devices attached\nSERIAL1\tdevice\n",
+            "List of devices attached\nSERIAL1\tdevice\n",
+        ],
+        probe_ok_serials=set(),
+    )
+    provider = AdbSlotStatusProvider(
+        slot_map={1: "SERIAL1"},
+        probe_retry_seconds=15.0,
+        monotonic=recorder.monotonic,
+    )
+    monkeypatch.setattr("infrastructure.adb_slot_status.subprocess.run", recorder.run)
+
+    assert list(provider.read_slot_states())[0].status == SlotStatus.NETWORK_ERROR
+    assert _probed_serials(recorder.commands) == ["SERIAL1"]
+
+    recorder.now = 14.0
+    recorder.probe_ok_serials = {"SERIAL1"}
+    assert list(provider.read_slot_states())[0].status == SlotStatus.NETWORK_ERROR
+    assert _probed_serials(recorder.commands) == ["SERIAL1"]
+
+    recorder.now = 15.0
+    assert list(provider.read_slot_states())[0].status == SlotStatus.ONLINE
+    assert _probed_serials(recorder.commands) == ["SERIAL1", "SERIAL1"]
+
+
+def test_adb_state_change_clears_probe_backoff(monkeypatch):
+    recorder = _RecordingAdb(
+        devices_outputs=[
+            "List of devices attached\nSERIAL1\tdevice\n",
+            "List of devices attached\n",
+            "List of devices attached\nSERIAL1\tdevice\n",
+        ],
+        probe_ok_serials=set(),
+    )
+    provider = AdbSlotStatusProvider(
+        slot_map={1: "SERIAL1"},
+        probe_retry_seconds=15.0,
+        monotonic=recorder.monotonic,
+    )
+    monkeypatch.setattr("infrastructure.adb_slot_status.subprocess.run", recorder.run)
+
+    assert list(provider.read_slot_states())[0].status == SlotStatus.NETWORK_ERROR
+    assert list(provider.read_slot_states())[0].status == SlotStatus.NETWORK_ERROR
+    recorder.probe_ok_serials = {"SERIAL1"}
+    assert list(provider.read_slot_states())[0].status == SlotStatus.ONLINE
+    assert _probed_serials(recorder.commands) == ["SERIAL1", "SERIAL1"]
+
+
+def test_parse_space_separated_adb_devices_line(monkeypatch):
+    _patch_adb(
+        monkeypatch,
+        devices_output="List of devices attached\nSERIAL1 device\n",
+        probe_ok_serials={"SERIAL1"},
+    )
+    provider = AdbSlotStatusProvider(slot_map={1: "SERIAL1"})
+
+    states = list(provider.read_slot_states())
+
+    assert states[0].status == SlotStatus.ONLINE

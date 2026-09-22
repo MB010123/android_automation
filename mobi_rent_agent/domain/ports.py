@@ -15,10 +15,14 @@ from domain.models import (
     DeviceHealth,
     HeartbeatPayload,
     HeartbeatResult,
+    InboundSms,
     ProvisioningResult,
     ProxyRoute,
     SlotState,
+    SmsSendResult,
 )
+from domain.provisioning_state import JobState
+from domain.verification import FourLayerVerification
 
 
 class HeartbeatTransport(ABC):
@@ -76,6 +80,85 @@ class SubscriptionProvisioner(ABC):
         raise NotImplementedError
 
 
+class ProviderCapabilities:
+    """Static capability bits for an EsimProvisioningProvider."""
+
+    def __init__(
+        self,
+        *,
+        unattended: bool,
+        can_download: bool,
+        can_switch: bool,
+        can_delete: bool,
+        requires_user_consent: bool,
+        provider_id: str,
+        authorization_source: str = "none",
+        reason: str = "",
+    ) -> None:
+        if can_delete:
+            raise ValueError("can_delete must remain false")
+        self.unattended = unattended
+        self.can_download = can_download
+        self.can_switch = can_switch
+        self.can_delete = False
+        self.requires_user_consent = requires_user_consent
+        self.provider_id = provider_id
+        self.authorization_source = authorization_source
+        self.reason = reason
+
+
+class SubmitResult:
+    """Outcome of submit_activation. Never carries an activation code."""
+
+    def __init__(
+        self,
+        *,
+        accepted: bool,
+        state: JobState,
+        error: str | None = None,
+        activation_code_sent: bool = False,
+    ) -> None:
+        self.accepted = accepted
+        self.state = state
+        self.error = error
+        self.activation_code_sent = activation_code_sent
+
+
+class EsimProvisioningProvider(ABC):
+    """Activation backend. HumanActivationProvider is the fallback.
+
+    AuthorizedEsimProvider may be selected only after a live capability
+    gate proves a legitimate Android authorization_source. REAL_ESIM_ENABLED
+    is never sufficient by itself.
+    """
+
+    @abstractmethod
+    def capabilities(self, serial: str | None = None) -> ProviderCapabilities:
+        raise NotImplementedError
+
+    @abstractmethod
+    def submit_activation(self, serial: str, job: ActivationJob) -> SubmitResult:
+        """Must not send an LPA code unless capabilities.can_download is true."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def wait_for_result(self, serial: str, job: ActivationJob, timeout_seconds: float) -> SubmitResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def verify_profile(
+        self,
+        serial: str,
+        job: ActivationJob,
+        snapshot: FourLayerVerification,
+    ) -> ProvisioningResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    def activate_profile(self, serial: str, job: ActivationJob, subscription_id: int) -> SubmitResult:
+        raise NotImplementedError
+
+
 class ActivationPayloadResolver(ABC):
     """Resolves a backend activation string or QR image into an LPA code."""
 
@@ -103,4 +186,40 @@ class DeviceHealthController(ABC):
 
     @abstractmethod
     def reboot(self, serial: str) -> None:
+        raise NotImplementedError
+
+
+class SmsGateway(ABC):
+    """Sends and receives SMS through an external gateway provider.
+
+    Phase 2 preparation: implementations must stay inert until explicitly
+    configured with credentials, and must never log message bodies or keys.
+    """
+
+    @abstractmethod
+    def send(
+        self,
+        to_number: str,
+        message: str,
+        device_ids: Iterable[str],
+        *,
+        sim_slot: int | None = None,
+    ) -> SmsSendResult:
+        """Send one SMS. Must not raise for provider-level failures; those
+        are reported through `SmsSendResult`."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_inbound(self) -> Iterable[InboundSms]:
+        """Return inbound messages. Raise `SmsGatewayError` when the
+        inbound channel is not configured for this account."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def ingest_inbound(self, payload: object) -> Iterable[InboundSms]:
+        """Parse a VoidFix dashboard webhook / push payload into inbound SMS.
+
+        Raise `SmsGatewayError` when the payload cannot be parsed. Must not
+        log message bodies.
+        """
         raise NotImplementedError

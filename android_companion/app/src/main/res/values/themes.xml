@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.MobiRentCompanion" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+</resources>

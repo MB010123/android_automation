@@ -1,0 +1,334 @@
+﻿Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 95
+WaitTime: 100
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 66
+WaitTime: 67
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 95
+WaitTime: 98
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 57
+WaitTime: 61
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 94
+WaitTime: 97
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 57
+WaitTime: 62
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 88
+WaitTime: 90
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 54
+WaitTime: 57
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 85
+WaitTime: 86
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 37
+WaitTime: 41
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 94
+WaitTime: 97
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 99
+WaitTime: 101
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 93
+WaitTime: 95
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 101
+WaitTime: 104
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 108
+WaitTime: 109
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 99
+WaitTime: 101
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 97
+WaitTime: 100
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 56
+WaitTime: 61
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 92
+WaitTime: 93
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 38
+WaitTime: 45
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 94
+WaitTime: 96
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Warning: Activity not started, its current task has been brought to the front
+Status: ok
+LaunchState: HOT
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 82
+WaitTime: 86
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 101
+WaitTime: 103
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 110
+WaitTime: 112
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 83
+WaitTime: 85
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 124
+WaitTime: 127
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 87
+WaitTime: 91
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 96
+WaitTime: 99
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 97
+WaitTime: 99
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 108
+WaitTime: 110
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 91
+WaitTime: 93
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 141
+WaitTime: 143
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 94
+WaitTime: 96
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 97
+WaitTime: 99
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 87
+WaitTime: 88
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 118
+WaitTime: 121
+Complete
+Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 100
+WaitTime: 102
+Complete
+Starting: Intent { act=android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS }
+Status: ok
+LaunchState: WARM
+Activity: com.android.settings/.spa.SpaActivity
+TotalTime: 97
+WaitTime: 100
+Complete
+Slot | ADB Serial | VoidFix ID | SIM Slot | Phone Number | API Match | Result
+---
+1 | 18171FDF6005WG | 1386 | SIM2 | +19522287088 | yes | VERIFIED
+2 | 19141FDF6OO8T9 | 1389 | SIM2 | +16514722709 | yes | VERIFIED
+3 | 19161FDF6004AD | 1393 | SIM2 | +17633287165 | yes | VERIFIED
+4 | 19161FDF6005B9 | 1394 | SIM2 | +17633468225 | yes | VERIFIED
+5 | 19161FDF6OO411 | 1395 | SIM2 | +16126499401 | yes | VERIFIED
+6 | 19281FDF6OO1T4 | 1402 | SIM2 | +17633390175 | yes | VERIFIED
+7 | 1A181FDF6006KN | 1403 | SIM2 | +16126499481 | yes | VERIFIED
+8 | 1B131FDF60090W | 1404 | SIM2 | +17633573736 | yes | VERIFIED
+9 | 1B301FDF6004HF | 1405 | SIM2 | +16126499603 | yes | VERIFIED
+10 | 1C021FDF600GKL | 1406 | SIM2 | +17633406158 | yes | VERIFIED
+11 | 1C071FDF6004MS | 1407 | SIM2 | +16126499651 | yes | VERIFIED
+12 | 1C071FDF6006YS | 1408 | SIM2 | +17634382664 | yes | VERIFIED
+13 | 1C111FDF600CNB | 1409 | SIM2 | +16126499683 | yes | VERIFIED
+14 | 1C141FDF600GXF | 1410 | SIM2 | +17633935186 | yes | VERIFIED
+15 | 21051FDF600EM9 | ? | SIM2? | (none) | no | UNRESOLVED
+16 | 23101FDF60058N | 1412 | SIM2 | +17634384448 | yes | VERIFIED
+17 | 25061FDF6006KF | 1413 | SIM2 | (none) | yes | UNRESOLVED
+18 | 25261FDF60017D | 1414 | SIM2 | +17634388552 | yes | VERIFIED
+19 | 1C101FDF6009EZ | 1415 | SIM2 | +16126499751 | yes | VERIFIED
+20 | 1A271FDF600BX2 | 1417 | SIM2 | +17633935255 | yes | VERIFIED
+
+## VERIFIED
+  slot 1:  vf=1386 phone=+19522287088
+  slot 2:  vf=1389 phone=+16514722709
+  slot 3:  vf=1393 phone=+17633287165
+  slot 4:  vf=1394 phone=+17633468225
+  slot 5:  vf=1395 phone=+16126499401
+  slot 6:  vf=1402 phone=+17633390175
+  slot 7:  vf=1403 phone=+16126499481
+  slot 8:  vf=1404 phone=+17633573736
+  slot 9:  vf=1405 phone=+16126499603
+  slot 10:  vf=1406 phone=+17633406158
+  slot 11:  vf=1407 phone=+16126499651
+  slot 12:  vf=1408 phone=+17634382664
+  slot 13:  vf=1409 phone=+16126499683
+  slot 14:  vf=1410 phone=+17633935186
+  slot 16:  vf=1412 phone=+17634384448
+  slot 18:  vf=1414 phone=+17634388552
+  slot 19:  vf=1415 phone=+16126499751
+  slot 20:  vf=1417 phone=+17633935255
+
+## UNRESOLVED
+  slot 15: adb offline or missing vf=None phone=(none)
+  slot 17:  vf=1413 phone=(none)
+
+## MISMATCH
+
+## DUPLICATES
+  vf_id: (none)
+  phone: (none)
+
+## UNASSIGNED API DEVICES
+  ['1411']
+
+## VF 1411 / +16126499573 on farm
+  (not found on slots 1-20)
+
+Wrote C:\Users\mobirent\android_automation\mobi_rent_agent\_tmp_strict_slot_verify.json

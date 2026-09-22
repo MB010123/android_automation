@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Mobi-Rent Companion</string>
+    <string name="notification_channel">Companion host link</string>
+    <string name="notification_title">Mobi-Rent companion running</string>
+    <string name="notification_text">Listening for host ADB commands (dry-run)</string>
+    <string name="grant_vpn">Grant test VPN permission</string>
+    <string name="start_service">Start companion service</string>
+    <string name="device_admin_description">Mobi-Rent companion device policy receiver for legitimate Device Owner enrollment. Does not wipe the device or delete eSIM profiles.</string>
+</resources>

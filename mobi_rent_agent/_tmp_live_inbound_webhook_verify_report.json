@@ -1,0 +1,68 @@
+{
+  "precheck": {
+    "allowlist": "+19522287088",
+    "started_at_utc": "2026-09-21T21:51:56.283487+00:00",
+    "listener": "PASS",
+    "ngrok_online": "PASS",
+    "ngrok_url": "https://handstand-yesterday-ocelot.ngrok-free.dev",
+    "public_health": "PASS",
+    "webhook_ready": "PASS"
+  },
+  "outbound": {
+    "send_success": true,
+    "send_error": null,
+    "provider_message_id": "3956861",
+    "idempotency_key": "live-inbound-verify-20260921T215156Z",
+    "outbox_status": "delivered",
+    "final_status": "delivered"
+  },
+  "verify": {
+    "webhook_received": true,
+    "content_type": "application/x-www-form-urlencoded",
+    "form_urlencoded": true,
+    "device_id_row": "1386",
+    "sender_row": "+16514722709",
+    "message_has_marker": true,
+    "ingest_count": 1,
+    "ingest_sender": "+16514722709",
+    "ingest_device": "1386",
+    "mapped_slot": 1,
+    "ngrok_posts": [
+      {
+        "id": "airt_3JehcbgnDbogZwjQCd6yEclolo4",
+        "start": "2026-09-21T16:52:01-05:00",
+        "status": "200 OK",
+        "status_code": 200
+      },
+      {
+        "id": "airt_3JefrjjEunlTvAzpTRei0OJNReP",
+        "start": "2026-09-21T16:37:35-05:00",
+        "status": "400 Bad Request",
+        "status_code": 400
+      }
+    ],
+    "ngrok_hit": {
+      "id": "airt_3JefrjjEunlTvAzpTRei0OJNReP",
+      "start": "2026-09-21T16:37:35-05:00",
+      "status": "400 Bad Request",
+      "status_code": 400
+    },
+    "capture_file": "inbound_1790027521281.json"
+  },
+  "final": {
+    "fresh_live_sms_sent": "PASS",
+    "provider_sms_id": "3956861",
+    "webhook_received": "PASS",
+    "webhook_http_response": 400,
+    "form_urlencoded_parsed": "PASS",
+    "ingest_inbound": "PASS",
+    "sender_identified": "PASS",
+    "device_1386": "PASS",
+    "mapped_slot_1": "PASS",
+    "new_raw_capture": "PASS",
+    "automatic_retries": 0,
+    "sms_sent": 1,
+    "overall": "FAIL",
+    "marker": "Mobi-Rent LIVE inbound verification 20260921T215156Z"
+  }
+}

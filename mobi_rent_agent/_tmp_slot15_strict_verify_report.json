@@ -1,0 +1,37 @@
+{
+  "readonly": true,
+  "slot": 15,
+  "expected": {
+    "serial": "21051FDF600EM9",
+    "voidfix_id": "1411",
+    "sim2_msisdn": "+16126499573"
+  },
+  "checks": {
+    "adb_online": "PASS",
+    "ro_serialno": "21051FDF600EM9",
+    "ro_serial_match": "PASS",
+    "voidfix_drawer_ids": [
+      "1411"
+    ],
+    "voidfix_id_exact_1411": "PASS",
+    "isub_sim2_simSlotIndex_1": "PASS",
+    "settings_sim2_msisdn": "+16126499573",
+    "settings_msisdn_match": "PASS"
+  },
+  "isub_snippet": "[SubscriptionInfoInternal: id=2 iccId=890128033[****] simSlotIndex=1 portIndex=0 isEmbedded=1 isRemovableEmbedded=0 carrierId=2575 displayName=US Mobile carrierName=Dark Star isOpportunistic=0 groupUuid= groupOwner= displayNameSource=CARRIER iconTint=-16749196 number=[****] dataRoaming=0 mcc=310 mnc=280 ehplmns=310410 hplmns= cardString=890330234[****] cardId=0 nativeAccessRules=0000000100000001000000203425D51CA1A8DB37CAE79668D0FCB83FBA05623C357D9FBD304FF371D926E2A1000000000000000001 carrierConfigAccessRules= countryIso=us profileClass=2 type=LOCAL_SIM areUiccApplicationsEnabled=1 usageSetting=DEFAULT isEnhanced4GModeEnabled=-1 isVideoTelephonyEnabled=-1 isWifiCallingEnabled=-1 isWifiCallingEnabledForRoaming=-1 wifiCallingMode=UNKNOWN wifiCallingModeForRoaming=UNKNOWN enabledMobileDataPoli",
+  "voidfix_api_1411": {
+    "sim2_raw": "SIM #2 [+16126499573]",
+    "sim2_phone": "+16126499573"
+  },
+  "production_config": {
+    "slot15_in_voidfix_devices_json": false,
+    "slot15_in_allowlist": false,
+    "slot15_mapped_serial": "21051FDF600EM9",
+    "voidfix_1411_assigned_prod_slots": [],
+    "msisdn_16126499573_on_prod_slots_api": [],
+    "prod_vf_id_duplicates": {},
+    "prod_msisdn_duplicates": {}
+  },
+  "production_duplicate_scan_pass": true,
+  "overall": "PASS"
+}

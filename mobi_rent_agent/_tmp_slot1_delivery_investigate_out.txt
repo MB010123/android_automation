@@ -1,0 +1,20 @@
+﻿Starting: Intent { cmp=org.voidfix.smsgateway/.ui.StartActivity }
+Status: ok
+LaunchState: WARM
+Activity: org.voidfix.smsgateway/.ui.MainActivity
+TotalTime: 96
+WaitTime: 98
+Complete
+Starting: Intent { cmp=com.google.android.apps.messaging/.ui.ConversationListActivity }
+Status: ok
+LaunchState: WARM
+Activity: com.google.android.apps.messaging/.main.MainActivity
+TotalTime: 87
+WaitTime: 90
+Complete
+message_rows_from_api 1
+  {'ID': 3933486, 'id': None, 'status': 'Sent', 'deliveredDate': '2026-09-18T19:06:53+0000', 'sentDate': '2026-09-18T19:06:48+0000', 'message': 'Mobi-Rent Slot 1 SMS TEST'}
+voidfix_counts {'Pending': '0', 'Sent': '6', 'Delivered': '0', 'Failed': '0'}
+vf_messages_needle False
+gmsg_needle False None
+wrote C:\Users\mobirent\android_automation\mobi_rent_agent\_tmp_slot1_delivery_investigate.json

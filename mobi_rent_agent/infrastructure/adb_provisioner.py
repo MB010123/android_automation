@@ -1,9 +1,8 @@
-"""Secure ADB adapter for a privileged on-device eSIM companion.
+"""Quarantined ADB adapter for a future privileged companion.
 
-The activation code is sent over an ADB-forwarded local socket instead of
-appearing in an ``adb shell`` command line. The companion must invoke
-``EuiccManager.downloadSubscription`` and return its callback result as one
-newline-delimited JSON object.
+This class is not wired into the daemon. It refuses unless every safety
+gate passes, and even then it never reports success=true (that requires
+four-layer ACTIVATION_CONFIRMED). Activation codes are never logged.
 """
 from __future__ import annotations
 
@@ -11,6 +10,9 @@ import logging
 
 from domain.models import ActivationJob, ProvisioningResult
 from domain.ports import SubscriptionProvisioner
+from domain.provisioning_state import ActivationVerdict
+from domain.slot_isolation import SlotIsolationPolicy
+from infrastructure.legacy_silent_guard import refuse_legacy_silent_provision
 from infrastructure.adb_companion import (
     AdbCommandError,
     AdbCommandRunner,
@@ -27,8 +29,12 @@ class AdbCompanionProvisioner(SubscriptionProvisioner):
         companion_socket: str = "mobi_rent.provisioning",
         provisioning_timeout_seconds: float = 180.0,
         max_response_bytes: int = 64 * 1024,
+        isolation: SlotIsolationPolicy | None = None,
+        silent_provision_authorized: bool = False,
     ) -> None:
         self._command_runner = command_runner
+        self._isolation = isolation or SlotIsolationPolicy()
+        self._silent_provision_authorized = silent_provision_authorized
         self._client = AdbForwardedJsonClient(
             command_runner,
             companion_socket,
@@ -38,24 +44,34 @@ class AdbCompanionProvisioner(SubscriptionProvisioner):
 
     def provision(self, serial: str, job: ActivationJob) -> ProvisioningResult:
         try:
+            if not self._isolation.allows(job.slot_id):
+                return self._refused(
+                    job,
+                    f"slot {job.slot_id} is outside the provisioning allowlist "
+                    f"{sorted(self._isolation.allowed_slot_ids)}",
+                )
             self._preflight(serial)
-            response = self._client.request(
-                serial,
-                {
-                    "command": "provision_esim",
-                    "job_id": job.job_id,
-                    "slot_id": job.slot_id,
-                    "activation_code": job.activation_code,
-                    "switch_after_download": job.switch_after_download,
-                },
+            status = self._client.request(serial, {"command": "get_esim_status"})
+            reason = refuse_legacy_silent_provision(
+                slot_id=job.slot_id,
+                isolation=self._isolation,
+                real_esim_enabled=status.get("real_esim_enabled") is True,
+                can_silent_install=status.get("can_silent_install") is True,
+                authorized=self._silent_provision_authorized,
             )
-            return self._parse_response(job, response)
+            if reason is None:
+                reason = (
+                    "legacy silent provisioner is quarantined; "
+                    "HumanActivationProvider is required"
+                )
+            return self._refused(job, reason)
         except (AdbCommandError, OSError, ValueError) as exc:
             return ProvisioningResult(
                 success=False,
                 job_id=job.job_id,
                 slot_id=job.slot_id,
                 error=str(exc),
+                verdict=ActivationVerdict.ACTIVATION_FAILED,
             )
 
     def _preflight(self, serial: str) -> None:
@@ -76,28 +92,12 @@ class AdbCompanionProvisioner(SubscriptionProvisioner):
             raise AdbCommandError(f"device {serial} does not expose the eUICC feature")
 
     @staticmethod
-    def _parse_response(job: ActivationJob, response: dict) -> ProvisioningResult:
-        success = response.get("success")
-        if not isinstance(success, bool):
-            raise ValueError("provisioning companion response is missing boolean 'success'")
-
-        device_code = response.get("device_code")
-        if device_code is not None and not isinstance(device_code, int):
-            raise ValueError("provisioning companion 'device_code' must be an integer")
-
-        error = response.get("error")
-        if error is not None and not isinstance(error, str):
-            raise ValueError("provisioning companion 'error' must be a string")
-
-        active_phone_number = response.get("active_phone_number")
-        if active_phone_number is not None and not isinstance(active_phone_number, str):
-            raise ValueError("provisioning companion 'active_phone_number' must be a string")
-
-        return ProvisioningResult(
-            success=success,
+    def _refused(job: ActivationJob, error: str) -> ProvisioningResult:
+        logger.info("Refusing legacy silent provision for slot %s job=%s", job.slot_id, job.job_id)
+        return ProvisioningResult.from_verdict(
             job_id=job.job_id,
             slot_id=job.slot_id,
-            device_code=device_code,
+            verdict=ActivationVerdict.ACTIVATION_FAILED,
             error=error,
-            active_phone_number=active_phone_number,
+            device_code=-1,
         )

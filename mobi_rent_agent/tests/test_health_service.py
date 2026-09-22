@@ -45,7 +45,7 @@ def healthy(slot_id: int) -> DeviceHealth:
 def test_only_unhealthy_slot_reboots_after_threshold():
     controller = FakeController({1: unhealthy(1), 2: healthy(2)})
     service = HealthService(
-        HealthServiceConfig(failure_threshold=2),
+        HealthServiceConfig(failure_threshold=2, recovery_enabled=True),
         controller,
         {1: "SERIAL-1", 2: "SERIAL-2"},
         SlotOperationCoordinator([1, 2]),
@@ -62,7 +62,7 @@ def test_reboot_cooldown_prevents_reboot_storm():
     clock = FakeClock()
     controller = FakeController({1: unhealthy(1)})
     service = HealthService(
-        HealthServiceConfig(failure_threshold=1, reboot_cooldown_seconds=300),
+        HealthServiceConfig(failure_threshold=1, reboot_cooldown_seconds=300, recovery_enabled=True),
         controller,
         {1: "SERIAL-1"},
         SlotOperationCoordinator([1]),

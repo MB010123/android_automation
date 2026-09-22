@@ -19,6 +19,9 @@ class HealthServiceConfig:
     failure_threshold: int = 3
     reboot_cooldown_seconds: float = 300.0
     max_workers: int = 20
+    # Dry-run switch: when False the monitor observes and logs the reboot
+    # it *would* issue, but never touches the device.
+    recovery_enabled: bool = False
 
 
 class HealthService:
@@ -87,6 +90,18 @@ class HealthService:
         if self._failures[slot_id] < self._config.failure_threshold:
             return
         if self._clock.monotonic() - self._last_reboot[slot_id] < self._config.reboot_cooldown_seconds:
+            return
+
+        if not self._config.recovery_enabled:
+            # Mirror real recovery timing (cooldown + counter reset) so the
+            # dry-run log cadence matches what production would do.
+            self._last_reboot[slot_id] = self._clock.monotonic()
+            self._failures[slot_id] = 0
+            logger.warning(
+                "DRY-RUN: slot %s exceeded the failure threshold; reboot suppressed "
+                "(HEALTH_RECOVERY_ENABLED=false)",
+                slot_id,
+            )
             return
 
         with self._coordinator.acquire(slot_id, blocking=False) as acquired:

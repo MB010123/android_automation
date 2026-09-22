@@ -1,0 +1,1336 @@
+{
+  "path": "application.sms_factory.build_sms_dispatch_service -> SmsDispatchService.send_for_slot",
+  "slot": 1,
+  "expected_voidfix_device_id": "1386",
+  "recipient_redacted": "+XXX****7088",
+  "idempotency_key": "mobi-rent-e2e-75212dea4ea3",
+  "send_success": true,
+  "send_error": null,
+  "provider_message_id": "3933715",
+  "duplicate_second_success": false,
+  "duplicate_second_error": "duplicate idempotency key status=delivered",
+  "outbox_history": [
+    {
+      "event": "reserve",
+      "status": "pending",
+      "final_status": "queued"
+    },
+    {
+      "event": "update",
+      "status": "confirmed",
+      "final_status": "accepted",
+      "kwargs": [
+        "accepted_at",
+        "error",
+        "final_status",
+        "provider_error_code",
+        "provider_message_id",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "sent",
+      "final_status": "sent",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "delivered",
+      "final_status": "delivered",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    },
+    {
+      "event": "update",
+      "status": "delivered",
+      "final_status": "delivered",
+      "kwargs": [
+        "final_status",
+        "last_polled_at",
+        "provider_delivered_date",
+        "provider_error_code",
+        "provider_sent_date",
+        "status",
+        "voidfix_device_id",
+        "voidfix_sim_slot"
+      ]
+    }
+  ],
+  "outbox_final": {
+    "status": "delivered",
+    "final_status": "delivered",
+    "provider_message_id": "3933715",
+    "voidfix_device_id": "1386",
+    "voidfix_sim_slot": 1,
+    "destination_redacted": "+XXX****7088",
+    "accepted_at": 1789761526.586125,
+    "provider_sent_date": "2026-09-18T19:58:45+0000",
+    "provider_delivered_date": "2026-09-18T19:58:51+0000",
+    "provider_error_code": null,
+    "last_polled_at": 1789761531.808999
+  },
+  "checks": {
+    "application_request": true,
+    "outbox_queued": true,
+    "voidfix_accepted": true,
+    "provider_message_id_stored": true,
+    "sent_detected": true,
+    "delivered_date_detected": true,
+    "final_delivered": true,
+    "audit_fields": true,
+    "duplicate_prevention": true,
+    "slot1_sim2_simslot1": true
+  },
+  "sms_count_sent": 1
+}

@@ -1,0 +1,20 @@
+[
+  {
+    "slot": 11,
+    "serial": "1C071FDF6004MS",
+    "drawer_device_labels": [],
+    "parsed_vf_ids": []
+  },
+  {
+    "slot": 17,
+    "serial": "25061FDF6006KF",
+    "drawer_device_labels": [],
+    "parsed_vf_ids": []
+  },
+  {
+    "slot": 19,
+    "serial": "1C101FDF6009EZ",
+    "drawer_device_labels": [],
+    "parsed_vf_ids": []
+  }
+]

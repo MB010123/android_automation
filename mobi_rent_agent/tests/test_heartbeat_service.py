@@ -6,6 +6,7 @@ separate from the use case.
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -104,6 +105,54 @@ def test_backoff_increases_after_consecutive_failures_and_resets_on_success():
     transport.should_fail = False
     service.run_once()
     assert service._current_interval() == 15.0
+
+
+def test_logs_disappear_and_recover_without_dropping_other_slots(caplog):
+    caplog.set_level(logging.INFO, logger="mobi_rent_agent.heartbeat")
+    transport = FakeTransport()
+    provider = FakeSlotStatusProvider(
+        [
+            SlotState(1, SlotStatus.ONLINE),
+            SlotState(2, SlotStatus.ONLINE),
+        ]
+    )
+    service = HeartbeatService(
+        config=HeartbeatServiceConfig(hardware_agent_token="tok123", interval_seconds=15.0),
+        transport=transport,
+        slot_status_provider=provider,
+        clock=FakeClock(),
+    )
+
+    service.run_once()
+    provider._states = [
+        SlotState(1, SlotStatus.NETWORK_ERROR),
+        SlotState(2, SlotStatus.ONLINE),
+    ]
+    service.run_once()
+    provider._states = [
+        SlotState(1, SlotStatus.ONLINE),
+        SlotState(2, SlotStatus.ONLINE),
+    ]
+    service.run_once()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Slot 1 ADB device disappeared; monitoring for recovery" in messages
+    assert "Slot 1 ADB device recovered; resuming heartbeat" in messages
+    assert not any("Slot 2 ADB device disappeared" in message for message in messages)
+    assert [payload.slot_id for payload in transport.sent_payloads] == [1, 2, 1, 2, 1, 2]
+    assert transport.sent_payloads[2].status == SlotStatus.NETWORK_ERROR
+    assert transport.sent_payloads[4].status == SlotStatus.ONLINE
+
+
+def test_first_observation_does_not_log_disappear_or_recover(caplog):
+    caplog.set_level(logging.INFO, logger="mobi_rent_agent.heartbeat")
+    transport = FakeTransport()
+    service = make_service(transport, [SlotState(1, SlotStatus.NETWORK_ERROR)])
+
+    service.run_once()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert not any("disappeared" in message or "recovered" in message for message in messages)
 
 
 def test_provider_exception_does_not_crash_run_once():
