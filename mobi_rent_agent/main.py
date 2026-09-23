@@ -18,20 +18,12 @@ from application.provisioning_service import ProvisioningService, ProvisioningSe
 from application.proxy_service import ProxyService, ProxyServiceConfig
 from application.retry_policy import RetryPolicy
 from application.slot_coordinator import SlotOperationCoordinator
-from domain.esim_capabilities import AndroidAuthorizationSnapshot
 from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
 from infrastructure.activation_payload import QrActivationPayloadResolver
 from infrastructure.adb_companion import AdbCommandRunner, AdbForwardedJsonClient
-from infrastructure.adb_four_layer import collect_four_layer_verification
 from infrastructure.adb_health import AdbDeviceHealthController
 from infrastructure.adb_proxy import AdbVpnProxyConfigurator
-from infrastructure.android_authorization_probe import AdbAuthorizationProbe
-from infrastructure.authorized_esim_provider import (
-    AuthorizedEsimProvider,
-    companion_provision_transport,
-    live_download_may_arm,
-    select_esim_provider,
-)
+from infrastructure.subscription_provisioner_factory import build_subscription_provisioner
 from infrastructure.adb_slot_status import AdbSlotStatusProvider, SlotMapError, load_slot_map
 from infrastructure.api_client import HttpHeartbeatTransport
 from infrastructure.config import AgentConfig, ConfigError, load_config
@@ -136,45 +128,10 @@ def build_provisioning_service(
         hardware_agent_token=config.hardware_agent_token,
         timeout_seconds=config.request_timeout_seconds,
     )
-    payload_resolver = QrActivationPayloadResolver(
-        timeout_seconds=config.request_timeout_seconds,
+    provisioner, payload_resolver, isolation = build_subscription_provisioner(
+        config,
+        isolation=isolation,
     )
-    armed = live_download_may_arm(
-        real_esim_enabled=config.real_esim_enabled,
-        esim_live_download_armed=config.esim_live_download_armed,
-        allowed_slot_ids=isolation.allowed_slot_ids,
-    )
-    if armed:
-        runner = AdbCommandRunner(config.adb_path, config.provisioning_timeout_seconds)
-        client = AdbForwardedJsonClient(
-            runner,
-            config.provisioning_companion_socket,
-            config.provisioning_timeout_seconds,
-        )
-        probe = AdbAuthorizationProbe(runner, client, real_esim_flag=config.real_esim_enabled)
-
-        def _verify(serial: str, job):
-            _ = job
-            status = {}
-            try:
-                status = client.request(serial, {"command": "get_esim_status"})
-            except Exception:
-                status = {}
-            return collect_four_layer_verification(runner, serial, status)
-
-        provisioner = AuthorizedEsimProvider(
-            probe,
-            isolation,
-            live_download_armed=True,
-            download_transport=companion_provision_transport(client),
-            verification_source=_verify,
-        )
-    else:
-        provisioner = select_esim_provider(
-            AndroidAuthorizationSnapshot(real_esim_flag=config.real_esim_enabled),
-            isolation,
-            live_download_armed=False,
-        )
     return ProvisioningService(
         config=ProvisioningServiceConfig(
             poll_interval_seconds=config.provisioning_poll_interval_seconds,

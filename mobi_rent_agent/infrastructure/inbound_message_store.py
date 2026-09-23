@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
+import uuid
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class InboundMessageStore:
@@ -15,6 +17,7 @@ class InboundMessageStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -36,15 +39,43 @@ class InboundMessageStore:
                     slot_id INTEGER,
                     from_number TEXT NOT NULL,
                     body TEXT NOT NULL,
-                    payload_json TEXT NOT NULL
+                    payload_json TEXT NOT NULL,
+                    message_uuid TEXT,
+                    provider_message_id TEXT,
+                    slot_public_id TEXT,
+                    direction TEXT DEFAULT 'in',
+                    to_number TEXT
                 )
                 """
             )
             self._conn.commit()
             return
+        self._migrate_to_v2()
+
+    def _migrate_to_v2(self) -> None:
+        cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(inbound_messages)").fetchall()
+        }
+        if "message_uuid" not in cols:
+            self._conn.execute("ALTER TABLE inbound_messages ADD COLUMN message_uuid TEXT")
+            self._conn.execute("ALTER TABLE inbound_messages ADD COLUMN provider_message_id TEXT")
+            self._conn.execute("ALTER TABLE inbound_messages ADD COLUMN slot_public_id TEXT")
+            self._conn.execute("ALTER TABLE inbound_messages ADD COLUMN direction TEXT DEFAULT 'in'")
+            self._conn.execute("ALTER TABLE inbound_messages ADD COLUMN to_number TEXT")
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_provider_message_id "
+                "ON inbound_messages (provider_message_id) "
+                "WHERE provider_message_id IS NOT NULL"
+            )
+            self._conn.commit()
         row = self._conn.execute("SELECT version FROM schema_version").fetchone()
-        if row is None or int(row["version"]) != SCHEMA_VERSION:
-            raise RuntimeError(f"inbound store schema unsupported (expected {SCHEMA_VERSION})")
+        if row is not None:
+            self._conn.execute(
+                "UPDATE schema_version SET version = ? WHERE rowid = 1",
+                (SCHEMA_VERSION,),
+            )
+            self._conn.commit()
 
     def insert(
         self,
@@ -54,19 +85,44 @@ class InboundMessageStore:
         from_number: str,
         body: str,
         payload: object,
-    ) -> int:
+        provider_message_id: str | None = None,
+        slot_public_id: str | None = None,
+        to_number: str | None = None,
+    ) -> tuple[int, bool]:
+        """Insert row. Returns (row_id, created). Skips duplicate provider_message_id."""
         now = time.time()
         payload_json = json.dumps(payload, ensure_ascii=False)
-        cur = self._conn.execute(
-            """
-            INSERT INTO inbound_messages
-                (received_at, device_id, slot_id, from_number, body, payload_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (now, device_id, slot_id, from_number, body, payload_json),
-        )
-        self._conn.commit()
-        return int(cur.lastrowid)
+        with self._lock:
+            if provider_message_id:
+                existing = self._conn.execute(
+                    "SELECT id FROM inbound_messages WHERE provider_message_id = ?",
+                    (provider_message_id,),
+                ).fetchone()
+                if existing:
+                    return int(existing["id"]), False
+            message_uuid = str(uuid.uuid4())
+            cur = self._conn.execute(
+                """
+                INSERT INTO inbound_messages (
+                    received_at, device_id, slot_id, from_number, body, payload_json,
+                    message_uuid, provider_message_id, slot_public_id, direction, to_number
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'in', ?)
+                """,
+                (
+                    now,
+                    device_id,
+                    slot_id,
+                    from_number,
+                    body,
+                    payload_json,
+                    message_uuid,
+                    provider_message_id,
+                    slot_public_id,
+                    to_number,
+                ),
+            )
+            self._conn.commit()
+            return int(cur.lastrowid), True
 
     def count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) AS c FROM inbound_messages").fetchone()

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -26,9 +27,34 @@ from infrastructure.inbound_message_store import InboundMessageStore
 from infrastructure.voidfix_api import SmsGatewayError, parse_inbound_payload
 from infrastructure.voidfix_devices import VoidFixDeviceMapError, load_voidfix_device_map
 
+from application.inbound_sms_normalize import (
+    normalize_inbound_for_lovable,
+    provider_message_id_from_payload,
+)
+from application.vps_farm_management_service import VpsFarmManagementService
+from application.vps_job_worker import VpsJobWorker
+from application.vps_lovable_routes import parse_route
+from application.vps_slot_sms_service import VpsSlotSmsService
 from application.webhook_outbound_dispatcher import WebhookOutboundDispatcher
 from infrastructure.farm_sms_client import FarmSmsClient
+from infrastructure.farm_task_client import FarmTaskClient
+from infrastructure.lovable_inbound_webhook import deliver_inbound_to_lovable
+from infrastructure.slot_assignment_store import SlotAssignmentStore
+from infrastructure.slot_event_store import SlotEventStore
+from infrastructure.slot_public_id import public_id_for_farm_slot
+from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.outbound_job_store import OutboundJobStore
+from infrastructure.outbound_message_store import OutboundMessageStore
+from infrastructure.slot_public_id import load_slot_public_id_overrides
+from infrastructure.vps_rate_limiter import VpsRateLimiter
+from infrastructure.vps_openapi_spec import build_vps_openapi_document
+from infrastructure.vps_api_docs import (
+    OPENAPI_JSON_PATH,
+    REDOC_PATH,
+    SWAGGER_UI_PATH,
+    redoc_html,
+    swagger_ui_html,
+)
 from infrastructure.voidfix_webhook_http import (
     WebhookBodyError,
     parse_inbound_http_body,
@@ -80,10 +106,30 @@ class Handler(BaseHTTPRequestHandler):
     outbound_dispatcher: WebhookOutboundDispatcher | None = None
     farm_agent_url: str | None = None
     farm_agent_token: str | None = None
+    farm_service_token: str | None = None
+    slot_sms_service: VpsSlotSmsService | None = None
+    farm_management_service: VpsFarmManagementService | None = None
+    lovable_inbound_url: str | None = None
+    lovable_inbound_secret: str | None = None
     request_timeout: float = 10.0
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
+
+    def _authorized_service(self) -> bool:
+        token = extract_bearer_token(self.headers.get("Authorization"))
+        return authorize_farm_request(token, self.farm_service_token)
+
+    def _read_json_body(self) -> dict[str, Any] | None:
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _send_json(self, code: int, body: dict[str, Any]) -> None:
         raw = json.dumps(body).encode("utf-8")
@@ -93,8 +139,108 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _send_html(self, code: int, html: str) -> None:
+        raw = html.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _handle_api_docs(self, path: str) -> bool:
+        if path == OPENAPI_JSON_PATH:
+            spec = build_vps_openapi_document(voidfix_webhook_path=self.webhook_path)
+            self._send_json(200, spec)
+            return True
+        if path == SWAGGER_UI_PATH:
+            self._send_html(200, swagger_ui_html())
+            return True
+        if path == REDOC_PATH:
+            self._send_html(200, redoc_html())
+            return True
+        return False
+
+    def _handle_service_get(self, route) -> bool:
+        query = parse_qs(urlparse(self.path).query)
+        if route.kind == "farm_available":
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.list_available_slots()
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "job" and route.job_id:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.get_job(route.job_id)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "message" and route.message_id:
+            assert self.slot_sms_service is not None
+            result = self.slot_sms_service.get_message(route.message_id)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_messages" and route.slot_public_id:
+            assert self.slot_sms_service is not None
+            limit_raw = (query.get("limit") or ["50"])[0]
+            try:
+                limit = int(limit_raw)
+            except ValueError:
+                self._send_json(400, {"error": "invalid_limit"})
+                return True
+            cursor = (query.get("cursor") or [None])[0]
+            direction = (query.get("direction") or [None])[0]
+            result = self.slot_sms_service.list_messages(
+                route.slot_public_id,
+                limit=limit,
+                cursor=cursor,
+                direction=direction,
+            )
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_events" and route.slot_public_id:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.list_events(
+                route.slot_public_id,
+                since_raw=(query.get("since") or [None])[0],
+                limit_raw=(query.get("limit") or [None])[0],
+            )
+            self._send_json(result.http_status, result.body)
+            return True
+        return False
+
+    def _handle_service_post(self, route, payload: dict[str, Any]) -> bool:
+        if route.kind == "farm_assign" and route.farm_bay is not None:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.assign_slot(route.farm_bay, payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_action" and route.slot_public_id and route.action:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.enqueue_action(
+                route.slot_public_id,
+                route.action,
+                payload,
+            )
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_sms_send" and route.slot_public_id:
+            assert self.slot_sms_service is not None
+            result = self.slot_sms_service.enqueue_send(route.slot_public_id, payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        return False
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if self._handle_api_docs(path):
+            return
+        route = parse_route(path)
+        if route is not None:
+            if not self._authorized_service():
+                self._send_json(401, {"error": "unauthorized"})
+                return
+            if self._handle_service_get(route):
+                return
+            self._send_json(404, {"error": "not_found"})
+            return
         if path == HEALTH_PATH:
             self._send_json(
                 200,
@@ -135,6 +281,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        route = parse_route(path)
+        if route is not None:
+            if not self._authorized_service():
+                self._send_json(401, {"error": "unauthorized"})
+                return
+            payload = self._read_json_body()
+            if payload is None:
+                self._send_json(400, {"error": "invalid_json"})
+                return
+            if self._handle_service_post(route, payload):
+                return
+            self._send_json(404, {"error": "not_found"})
+            return
         if path != self.webhook_path:
             self._send_json(404, {"ok": False, "error": "not found"})
             return
@@ -171,15 +330,44 @@ class Handler(BaseHTTPRequestHandler):
             mapped_slots.append(slot_id)
             row_id: int | None = None
             if self.inbound_store is not None:
-                row_id = self.inbound_store.insert(
+                provider_id = provider_message_id_from_payload(payload, index)
+                slot_public = (
+                    public_id_for_farm_slot(int(slot_id)) if slot_id is not None else None
+                )
+                row_id, created = self.inbound_store.insert(
                     device_id=msg.device_id,
                     slot_id=slot_id,
                     from_number=msg.from_number,
                     body=msg.message,
                     payload=payload,
+                    provider_message_id=provider_id,
+                    slot_public_id=slot_public,
                 )
                 stored_ids.append(row_id)
-                logger.info("inbound_stored row_id=%s slot=%s", row_id, slot_id)
+                logger.info("inbound_stored row_id=%s slot=%s created=%s", row_id, slot_id, created)
+                if created and slot_id is not None:
+                    normalized = normalize_inbound_for_lovable(
+                        msg,
+                        farm_slot=slot_id,
+                        provider_message_id=provider_id,
+                    )
+                    if self.lovable_inbound_url and self.lovable_inbound_secret:
+                        threading.Thread(
+                            target=deliver_inbound_to_lovable,
+                            args=(
+                                self.lovable_inbound_url,
+                                self.lovable_inbound_secret,
+                                normalized,
+                            ),
+                            kwargs={"timeout": self.request_timeout},
+                            daemon=True,
+                        ).start()
+                    if self.farm_management_service is not None:
+                        self.farm_management_service.record_event(
+                            int(slot_id),
+                            "inbound_sms",
+                            "provider_message_id=" + (provider_id or "unknown"),
+                        )
             if self.outbound_dispatcher is not None:
                 dispatch_results.append(
                     self.outbound_dispatcher.process_inbound(
@@ -271,6 +459,70 @@ def main() -> int:
         max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
     )
 
+    api_messages_db = os.getenv(
+        "OUTBOUND_MESSAGES_DB_PATH",
+        str(ROOT / "logs" / "outbound_api_messages.sqlite"),
+    )
+    message_store = OutboundMessageStore(Path(api_messages_db))
+    known_slots = set(device_map.keys()) if device_map else set(range(1, 21))
+    overrides = load_slot_public_id_overrides(os.getenv("SLOT_PUBLIC_ID_MAP_PATH"))
+
+    def _farm_status() -> dict[str, Any]:
+        if not farm_url or not farm_token:
+            return {"ok": False, "error": "farm_agent_not_configured"}
+        return fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
+
+    rate_limiter = VpsRateLimiter(
+        per_slot_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_PER_SLOT", "10")),
+        global_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_GLOBAL", "120")),
+    )
+    slot_sms_service = VpsSlotSmsService(
+        message_store=message_store,
+        farm_client=farm_client,
+        farm_status_fetcher=_farm_status,
+        known_farm_slots=known_slots,
+        slot_id_overrides=overrides,
+        rate_limiter=rate_limiter,
+        max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
+    )
+
+    vps_jobs_db = os.getenv(
+        "VPS_JOBS_DB_PATH",
+        str(ROOT / "logs" / "vps_jobs.sqlite"),
+    )
+    vps_job_store = VpsJobStore(Path(vps_jobs_db))
+    assignment_store = SlotAssignmentStore(Path(vps_jobs_db).with_name("slot_assignments.sqlite"))
+    event_store = SlotEventStore(Path(vps_jobs_db).with_name("slot_events.sqlite"))
+    farm_task_client: FarmTaskClient | None = None
+    if farm_url and farm_token:
+        farm_task_client = FarmTaskClient(
+            farm_url,
+            farm_token,
+            timeout_seconds=config.webhook_farm_dispatch_timeout_seconds,
+        )
+    job_worker = VpsJobWorker(
+        job_store=vps_job_store,
+        assignment_store=assignment_store,
+        event_store=event_store,
+        farm_task_client=farm_task_client,
+    )
+    job_worker.start()
+    mgmt_rate = VpsRateLimiter(
+        per_slot_limit=int(os.getenv("VPS_MGMT_RATE_LIMIT_PER_SLOT", "20")),
+        global_limit=int(os.getenv("VPS_MGMT_RATE_LIMIT_GLOBAL", "200")),
+    )
+    farm_management_service = VpsFarmManagementService(
+        job_store=vps_job_store,
+        assignment_store=assignment_store,
+        event_store=event_store,
+        job_worker=job_worker,
+        farm_status_fetcher=_farm_status,
+        known_farm_slots=known_slots,
+        slot_id_overrides=overrides,
+        default_box=os.getenv("FARM_DEFAULT_BOX", "POD_01"),
+        rate_limiter=mgmt_rate,
+    )
+
     Handler.app_name = config.app_name
     Handler.webhook_path = _env_webhook_path()
     Handler.webhook_secret = config.voidfix_webhook_secret
@@ -279,16 +531,23 @@ def main() -> int:
     Handler.outbound_dispatcher = dispatcher
     Handler.farm_agent_url = farm_url
     Handler.farm_agent_token = farm_token
+    Handler.farm_service_token = os.getenv("FARM_SERVICE_TOKEN") or None
+    Handler.slot_sms_service = slot_sms_service
+    Handler.farm_management_service = farm_management_service
+    Handler.lovable_inbound_url = os.getenv("LOVABLE_INBOUND_WEBHOOK_URL") or None
+    Handler.lovable_inbound_secret = os.getenv("LOVABLE_INBOUND_WEBHOOK_HMAC_SECRET") or None
     Handler.request_timeout = config.request_timeout_seconds
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(
-        "VPS backend http://%s:%s (health %s, farm proxy %s, webhook %s)",
+        "VPS backend http://%s:%s (health %s, farm proxy %s, webhook %s, docs %s, openapi %s)",
         args.host,
         args.port,
         HEALTH_PATH,
         FARM_STATUS_PATH,
         Handler.webhook_path,
+        SWAGGER_UI_PATH,
+        OPENAPI_JSON_PATH,
     )
     try:
         server.serve_forever()
@@ -297,6 +556,11 @@ def main() -> int:
     finally:
         store.close()
         job_store.close()
+        message_store.close()
+        vps_job_store.close()
+        assignment_store.close()
+        event_store.close()
+        job_worker.stop()
     return 0
 
 

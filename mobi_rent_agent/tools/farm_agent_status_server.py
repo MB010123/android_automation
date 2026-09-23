@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from application.farm_agent_tasks import execute_farm_task, parse_farm_task_body
 from application.farm_sms_command import execute_farm_sms_send, parse_farm_sms_send_body
 from infrastructure.config import AgentConfig
 from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
@@ -28,6 +29,7 @@ from infrastructure.farm_agent_auth import authorize_farm_request, extract_beare
 HEALTH_PATH = "/agent/health"
 STATUS_PATH = "/agent/status"
 SMS_SEND_PATH = "/agent/sms/send"
+TASKS_RUN_PATH = "/agent/tasks/run"
 
 logger = logging.getLogger("farm_agent_status")
 
@@ -115,14 +117,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path != SMS_SEND_PATH:
+        if path not in (SMS_SEND_PATH, TASKS_RUN_PATH):
             self._send_json(404, {"ok": False, "error": "not found"})
             return
         if not self._authorized():
             self._send_json(401, {"ok": False, "error": "unauthorized"})
-            return
-        if self.agent_config is None:
-            self._send_json(503, {"ok": False, "error": "agent not configured"})
             return
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b""
@@ -133,6 +132,30 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not isinstance(data, dict):
             self._send_json(400, {"ok": False, "error": "body must be object"})
+            return
+        if path == TASKS_RUN_PATH:
+            try:
+                task = parse_farm_task_body(data)
+                result = execute_farm_task(
+                    adb_path=self.adb_path,
+                    slot_map=self.slot_map,
+                    request=task,
+                    agent_config=self.agent_config,
+                )
+            except ValueError as exc:
+                self._send_json(400, {"ok": False, "error": str(exc)})
+                return
+            body: dict[str, Any] = {
+                "ok": result.ok,
+                "job_id": task.job_id,
+                "error": result.error,
+            }
+            if result.message:
+                body["message"] = result.message
+            self._send_json(result.http_status, body)
+            return
+        if self.agent_config is None:
+            self._send_json(503, {"ok": False, "error": "agent not configured"})
             return
         try:
             request = parse_farm_sms_send_body(data)
@@ -202,11 +225,12 @@ def main() -> int:
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(
-        "farm agent listening http://%s:%s (health %s, sms %s)",
+        "farm agent listening http://%s:%s (health %s, sms %s, tasks %s)",
         args.host,
         args.port,
         HEALTH_PATH,
         SMS_SEND_PATH,
+        TASKS_RUN_PATH,
     )
     try:
         server.serve_forever()
