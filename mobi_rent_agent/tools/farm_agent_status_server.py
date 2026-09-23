@@ -1,6 +1,7 @@
-"""Physical-PC HTTP status endpoint (ADB visibility only; no SMS, no phone control via HTTP).
+"""Physical-PC Farm Agent HTTP API (health + authenticated VPS SMS commands).
 
-VPS calls GET /agent/health with Authorization: Bearer FARM_AGENT_API_TOKEN.
+  GET  /agent/health   — ADB/slot status
+  POST /agent/sms/send — VPS-originated SMS via SmsDispatchService
 
   python tools/farm_agent_status_server.py
 """
@@ -20,10 +21,13 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from application.farm_sms_command import execute_farm_sms_send, parse_farm_sms_send_body
+from infrastructure.config import AgentConfig
 from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
 
 HEALTH_PATH = "/agent/health"
 STATUS_PATH = "/agent/status"
+SMS_SEND_PATH = "/agent/sms/send"
 
 logger = logging.getLogger("farm_agent_status")
 
@@ -81,6 +85,7 @@ class Handler(BaseHTTPRequestHandler):
     api_token: str | None = None
     adb_path: str = "adb"
     slot_map: dict[int, str] = {}
+    agent_config: AgentConfig | None = None
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
@@ -107,6 +112,46 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = build_farm_status(adb_path=self.adb_path, slot_map=self.slot_map)
         self._send_json(200, body)
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path != SMS_SEND_PATH:
+            self._send_json(404, {"ok": False, "error": "not found"})
+            return
+        if not self._authorized():
+            self._send_json(401, {"ok": False, "error": "unauthorized"})
+            return
+        if self.agent_config is None:
+            self._send_json(503, {"ok": False, "error": "agent not configured"})
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(raw.decode("utf-8") if raw else "{}")
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "invalid JSON"})
+            return
+        if not isinstance(data, dict):
+            self._send_json(400, {"ok": False, "error": "body must be object"})
+            return
+        try:
+            request = parse_farm_sms_send_body(data)
+            result = execute_farm_sms_send(self.agent_config, request)
+        except ValueError as exc:
+            self._send_json(400, {"ok": False, "error": str(exc)})
+            return
+        self._send_json(
+            result.http_status,
+            {
+                "ok": result.ok,
+                "job_id": result.job_id,
+                "idempotency_key": result.idempotency_key,
+                "status": result.status,
+                "provider_message_id": result.provider_message_id,
+                "duplicate": result.duplicate,
+                "error": result.error,
+            },
+        )
 
 
 def main() -> int:
@@ -153,13 +198,15 @@ def main() -> int:
     Handler.api_token = token
     Handler.adb_path = config.adb_path
     Handler.slot_map = slot_map
+    Handler.agent_config = config
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(
-        "farm status listening http://%s:%s%s (auth required; no SMS)",
+        "farm agent listening http://%s:%s (health %s, sms %s)",
         args.host,
         args.port,
         HEALTH_PATH,
+        SMS_SEND_PATH,
     )
     try:
         server.serve_forever()

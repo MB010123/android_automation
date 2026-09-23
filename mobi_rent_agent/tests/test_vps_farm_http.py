@@ -69,6 +69,7 @@ def test_vps_webhook_stores_inbound(tmp_path: Path):
     VpsHandler.device_map = {1: "1386"}
     VpsHandler.farm_agent_url = None
     VpsHandler.farm_agent_token = None
+    VpsHandler.outbound_dispatcher = None
     VpsHandler.app_name = "test"
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), VpsHandler)

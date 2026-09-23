@@ -70,6 +70,9 @@ class AgentConfig:
     log_file: str = "logs/agent.log"
     sms_outbox_db_path: str | None = None
     app_name: str = "mobi-rent-agent"
+    slot_msisdn_map_path: str | None = None
+    webhook_farm_dispatch_timeout_seconds: float = 120.0
+    webhook_farm_dispatch_max_attempts: int = 3
 
     @property
     def sms_enabled(self) -> bool:
@@ -179,6 +182,13 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             sms_outbox_db_path=os.getenv("SMS_OUTBOX_DB_PATH") or None,
             app_name=os.getenv("APP_NAME", os.getenv("MOBI_RENT_APP_NAME", "mobi-rent-agent")).strip()
             or "mobi-rent-agent",
+            slot_msisdn_map_path=os.getenv("SLOT_MSISDN_MAP_PATH") or None,
+            webhook_farm_dispatch_timeout_seconds=float(
+                os.getenv("WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS", "120")
+            ),
+            webhook_farm_dispatch_max_attempts=_read_int_range(
+                "WEBHOOK_FARM_DISPATCH_MAX_ATTEMPTS", 3, 1, 10
+            ),
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

@@ -137,6 +137,9 @@ location /health {
 
 Set the **same** long random `FARM_AGENT_API_TOKEN` in both `.env` files.
 
+VoidFix inbound → outbound SMS (policy, idempotency, Farm `POST /agent/sms/send`):
+see [docs/WEBHOOK_OUTBOUND_SMS.md](docs/WEBHOOK_OUTBOUND_SMS.md).
+
 - PC `farm_agent_status_server` requires `Authorization: Bearer <token>`.
 - VPS `GET /farm/status` uses that token when calling the PC.
 

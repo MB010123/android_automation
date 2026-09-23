@@ -26,6 +26,9 @@ from infrastructure.inbound_message_store import InboundMessageStore
 from infrastructure.voidfix_api import SmsGatewayError, parse_inbound_payload
 from infrastructure.voidfix_devices import VoidFixDeviceMapError, load_voidfix_device_map
 
+from application.webhook_outbound_dispatcher import WebhookOutboundDispatcher
+from infrastructure.farm_sms_client import FarmSmsClient
+from infrastructure.outbound_job_store import OutboundJobStore
 from infrastructure.voidfix_webhook_http import (
     WebhookBodyError,
     parse_inbound_http_body,
@@ -74,6 +77,7 @@ class Handler(BaseHTTPRequestHandler):
     webhook_secret: str | None = None
     device_map: dict[int, str] = {}
     inbound_store: InboundMessageStore | None = None
+    outbound_dispatcher: WebhookOutboundDispatcher | None = None
     farm_agent_url: str | None = None
     farm_agent_token: str | None = None
     request_timeout: float = 10.0
@@ -158,11 +162,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(422, {"ok": False, "error": str(exc)})
             return
 
+        logger.info("webhook_received parsed_count=%s", len(messages))
         stored_ids: list[int] = []
         mapped_slots: list[int | None] = []
-        for msg in messages:
+        dispatch_results: list[dict[str, Any]] = []
+        for index, msg in enumerate(messages):
             slot_id = slot_for_voidfix_device(msg.device_id, self.device_map)
             mapped_slots.append(slot_id)
+            row_id: int | None = None
             if self.inbound_store is not None:
                 row_id = self.inbound_store.insert(
                     device_id=msg.device_id,
@@ -172,6 +179,17 @@ class Handler(BaseHTTPRequestHandler):
                     payload=payload,
                 )
                 stored_ids.append(row_id)
+                logger.info("inbound_stored row_id=%s slot=%s", row_id, slot_id)
+            if self.outbound_dispatcher is not None:
+                dispatch_results.append(
+                    self.outbound_dispatcher.process_inbound(
+                        msg,
+                        inbound_row_id=row_id,
+                        inbound_slot=slot_id,
+                        payload=payload,
+                        index=index,
+                    )
+                )
 
         self._send_json(
             200,
@@ -181,6 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                 "device_ids": [m.device_id for m in messages],
                 "mapped_slots": mapped_slots,
                 "stored_ids": stored_ids,
+                "dispatch": dispatch_results,
             },
         )
 
@@ -232,13 +251,34 @@ def main() -> int:
     )
     store = InboundMessageStore(Path(inbound_db))
 
+    outbound_db = os.getenv(
+        "OUTBOUND_JOBS_DB_PATH",
+        str(ROOT / "logs" / "outbound_jobs.sqlite"),
+    )
+    job_store = OutboundJobStore(Path(outbound_db))
+    farm_url = os.getenv("FARM_AGENT_URL") or None
+    farm_token = os.getenv("FARM_AGENT_API_TOKEN") or None
+    farm_client: FarmSmsClient | None = None
+    if farm_url and farm_token:
+        farm_client = FarmSmsClient(
+            farm_url,
+            farm_token,
+            timeout_seconds=config.webhook_farm_dispatch_timeout_seconds,
+        )
+    dispatcher = WebhookOutboundDispatcher(
+        job_store=job_store,
+        farm_client=farm_client,
+        max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
+    )
+
     Handler.app_name = config.app_name
     Handler.webhook_path = _env_webhook_path()
     Handler.webhook_secret = config.voidfix_webhook_secret
     Handler.device_map = device_map
     Handler.inbound_store = store
-    Handler.farm_agent_url = os.getenv("FARM_AGENT_URL") or None
-    Handler.farm_agent_token = os.getenv("FARM_AGENT_API_TOKEN") or None
+    Handler.outbound_dispatcher = dispatcher
+    Handler.farm_agent_url = farm_url
+    Handler.farm_agent_token = farm_token
     Handler.request_timeout = config.request_timeout_seconds
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
@@ -256,6 +296,7 @@ def main() -> int:
         logger.info("shutting down")
     finally:
         store.close()
+        job_store.close()
     return 0
 
 
