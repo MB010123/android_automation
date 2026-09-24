@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 .env
 slot_map.json
+# Real slot -> SIM2 MSISDN map is runtime configuration on the farm host;
+# only slot_msisdn_map.example.json (placeholders) is tracked.
+slot_msisdn_map.json
 device_registry.json
 proxy_routes.json
 voidfix_devices.json
@@ -11,3 +14,6 @@ config/prototype/prototype_devices.json
 logs/
 .pytest_cache/
 *.egg-info/
+# Ad-hoc operational/verification scratch files (may contain MSISDNs, device IDs,
+# live-SMS scripts). Convention: filename prefix `_tmp_`. Never commit.
+_tmp_*

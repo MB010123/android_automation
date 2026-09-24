@@ -97,5 +97,5 @@ Example success body:
 
 ## Farm configuration
 
-- `SLOT_MSISDN_MAP_PATH` — JSON map `"2": "+1..."` for `to_slot_id` resolution on the farm host.
+- `SLOT_MSISDN_MAP_PATH` — JSON map `"2": "+1..."` for `to_slot_id` resolution on the farm host. Start from the tracked template `slot_msisdn_map.example.json`; the real `slot_msisdn_map.json` is runtime configuration, gitignored, and must be preserved (never overwritten) by deployments.
 - Existing VoidFix allowlist and `VOIDFIX_*` send gates unchanged.
