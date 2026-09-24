@@ -38,8 +38,12 @@ class VpsJobWorker:
         self._thread = threading.Thread(target=self._loop, daemon=True, name="vps-job-worker")
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, join_timeout: float | None = None) -> None:
+        """Signal the loop to exit; optionally wait (bounded) for it to finish."""
         self._stop.set()
+        thread = self._thread
+        if join_timeout is not None and thread is not None and thread.is_alive():
+            thread.join(timeout=max(0.0, join_timeout))
 
     def enqueue_process(self, job_id: str) -> None:
         threading.Thread(
@@ -88,6 +92,11 @@ class VpsJobWorker:
             if record.type == "assign" and record.farm_slot_id is not None:
                 self._events.append(
                     record.farm_slot_id,
+                    "provisioning_completed",
+                    f"job_id={job_id}",
+                )
+                self._events.append(
+                    record.farm_slot_id,
                     "assignment_completed",
                     f"job_id={job_id}",
                 )
@@ -97,18 +106,25 @@ class VpsJobWorker:
                     f"{record.type}_completed",
                     f"job_id={job_id}",
                 )
-            logger.info("vps_job_done job_id=%s type=%s", job_id, record.type)
+            logger.info("farm_task_completed job_id=%s type=%s bay=%s", job_id, record.type, record.farm_slot_id)
             return
         error = response.error or "task_failed"
+        safe_result = response.body if isinstance(response.body, dict) else {}
         self._jobs.update(
             job_id,
             status="failed",
             progress=0,
             error=error,
+            result_payload=safe_result or None,
             completed_at=time.time(),
         )
         if record.type == "assign" and record.farm_slot_id is not None:
             self._assignments.release(record.farm_slot_id)
+            self._events.append(
+                record.farm_slot_id,
+                "provisioning_failed",
+                error,
+            )
             self._events.append(
                 record.farm_slot_id,
                 "assignment_failed",
@@ -116,4 +132,4 @@ class VpsJobWorker:
             )
         elif record.farm_slot_id is not None:
             self._events.append(record.farm_slot_id, f"{record.type}_failed", error)
-        logger.warning("vps_job_failed job_id=%s error=%s", job_id, error)
+        logger.warning("farm_task_failed job_id=%s type=%s error=%s", job_id, record.type, error)

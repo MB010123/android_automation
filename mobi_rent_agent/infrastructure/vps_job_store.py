@@ -179,6 +179,29 @@ class VpsJobStore:
             ).fetchone()
         return row is not None
 
+    def get_active_for_slot(self, farm_slot_id: int) -> VpsJobRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM vps_jobs
+                WHERE farm_slot_id = ? AND status IN ('pending', 'running')
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (farm_slot_id,),
+            ).fetchone()
+        return _row_to_record(row) if row else None
+
+    def get_latest_for_slot(self, farm_slot_id: int, *, job_type: str | None = None) -> VpsJobRecord | None:
+        query = "SELECT * FROM vps_jobs WHERE farm_slot_id = ?"
+        params: list[object] = [farm_slot_id]
+        if job_type is not None:
+            query += " AND type = ?"
+            params.append(job_type)
+        query += " ORDER BY created_at DESC LIMIT 1"
+        with self._lock:
+            row = self._conn.execute(query, params).fetchone()
+        return _row_to_record(row) if row else None
+
     def list_pending(self, limit: int = 20) -> list[VpsJobRecord]:
         with self._lock:
             rows = self._conn.execute(

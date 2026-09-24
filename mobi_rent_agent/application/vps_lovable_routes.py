@@ -11,6 +11,7 @@ RE_MESSAGE = re.compile(rf"^/messages/({_UUID})$")
 RE_SLOT_MESSAGES = re.compile(rf"^/slots/({_UUID})/messages$")
 RE_SLOT_ACTION = re.compile(rf"^/slots/({_UUID})/actions/([a-z_]+)$")
 RE_SLOT_EVENTS = re.compile(rf"^/slots/({_UUID})/events$")
+RE_SLOT_STATUS = re.compile(rf"^/slots/({_UUID})/status$")
 RE_JOB = re.compile(rf"^/jobs/({_UUID})$")
 RE_FARM_AVAILABLE = re.compile(r"^/farm/slots/available$")
 RE_FARM_ASSIGN = re.compile(r"^/farm/slots/(\d{1,2})/assign$")
@@ -41,6 +42,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="slot_messages", slot_public_id=m.group(1))
     if m := RE_SLOT_EVENTS.match(path):
         return ParsedRoute(kind="slot_events", slot_public_id=m.group(1))
+    if m := RE_SLOT_STATUS.match(path):
+        return ParsedRoute(kind="slot_status", slot_public_id=m.group(1))
     if m := RE_SLOT_ACTION.match(path):
         return ParsedRoute(
             kind="slot_action",

@@ -12,6 +12,7 @@ SCHEMA_VERSION = 1
 
 @dataclass
 class SlotEvent:
+    event_id: int
     farm_slot_id: int
     event_type: str
     detail: str
@@ -90,6 +91,7 @@ class SlotEventStore:
             rows = self._conn.execute(query, params).fetchall()
         return [
             SlotEvent(
+                event_id=int(r["id"]),
                 farm_slot_id=int(r["farm_slot_id"]),
                 event_type=r["event_type"],
                 detail=r["detail"],

@@ -20,6 +20,8 @@ from infrastructure.vps_rate_limiter import VpsRateLimiter
 
 logger = logging.getLogger("vps_backend.slot_sms")
 
+SlotEventRecorder = Callable[[int, str, str], None]
+
 MAX_BODY_LEN = 1600
 MAX_IDEMPOTENCY_LEN = 128
 
@@ -41,6 +43,7 @@ class VpsSlotSmsService:
         slot_id_overrides: dict[str, int] | None = None,
         rate_limiter: VpsRateLimiter | None = None,
         max_dispatch_attempts: int = 3,
+        event_recorder: SlotEventRecorder | None = None,
     ) -> None:
         self._store = message_store
         self._farm = farm_client
@@ -50,6 +53,7 @@ class VpsSlotSmsService:
         self._rate = rate_limiter or VpsRateLimiter()
         self._max_attempts = max(1, max_dispatch_attempts)
         self._lock = threading.Lock()
+        self._record_event = event_recorder
 
     def enqueue_send(
         self,
@@ -154,6 +158,8 @@ class VpsSlotSmsService:
             farm_slot,
             redact_phone(to_number),
         )
+        if self._record_event is not None:
+            self._record_event(farm_slot, "sms_send_requested", f"message_id={message_id}")
         threading.Thread(
             target=self._dispatch_async,
             args=(message_id,),
@@ -200,12 +206,24 @@ class VpsSlotSmsService:
                     status,
                     attempt,
                 )
+                if self._record_event is not None:
+                    self._record_event(
+                        record.farm_slot_id,
+                        "sms_sent",
+                        f"message_id={message_id} status={status}",
+                    )
                 return
             last_error = response.error or f"http_{response.http_status}"
             if response.http_status in (401, 403, 400, 422):
                 break
             time.sleep(min(2.0 * attempt, 10.0))
         self._store.update(message_id, status="failed", error_code=last_error or "dispatch_failed")
+        if self._record_event is not None and record is not None:
+            self._record_event(
+                record.farm_slot_id,
+                "sms_failed",
+                f"message_id={message_id} error={last_error or 'dispatch_failed'}",
+            )
         logger.warning(
             "slot_sms_dispatch_failed message_id=%s error=%s",
             message_id,

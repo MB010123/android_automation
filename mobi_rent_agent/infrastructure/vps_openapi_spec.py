@@ -63,12 +63,26 @@ def _schemas() -> dict[str, Any]:
     return {
         "ErrorResponse": {
             "type": "object",
+            "description": (
+                "Service-layer error shape (management, jobs, status, events, SMS): "
+                "always `ok: false`, an `error` code and a human `message`. "
+                "Two legacy edge responses omit `ok`/`message` and carry only `error`: "
+                "the authentication gate (`401 {\"error\":\"unauthorized\"}`) and a few "
+                "handler-level validation errors (e.g. `invalid_limit` on messages listing)."
+            ),
             "properties": {
+                "ok": {"type": "boolean", "enum": [False]},
                 "error": {"type": "string"},
                 "message": {"type": "string"},
                 "retry_after": {"type": "number", "description": "Seconds (rate limit)."},
                 "detail": {"type": "string"},
             },
+            "required": ["error"],
+        },
+        "AuthErrorResponse": {
+            "type": "object",
+            "description": "Legacy authentication gate shape; intentionally minimal and unchanged.",
+            "properties": {"error": {"type": "string", "enum": ["unauthorized"]}},
             "required": ["error"],
         },
         "HealthResponse": {
@@ -94,18 +108,22 @@ def _schemas() -> dict[str, Any]:
         "SlotAvailabilityList": {
             "type": "object",
             "properties": {
+                "ok": {"type": "boolean"},
                 "available": {
                     "type": "array",
                     "items": {"$ref": "#/components/schemas/SlotAvailability"},
-                }
+                },
             },
+            "required": ["ok", "available"],
         },
         "SlotAvailability": {
             "type": "object",
             "properties": {
                 "bay": {"type": "integer", "minimum": 1, "maximum": 20},
                 "box": {"type": "string", "example": "POD_01"},
+                "slot_id": {"type": "string", "format": "uuid"},
             },
+            "required": ["bay", "box", "slot_id"],
         },
         "AssignmentRequest": {
             "type": "object",
@@ -129,17 +147,23 @@ def _schemas() -> dict[str, Any]:
         "JobAcceptedResponse": {
             "type": "object",
             "properties": {
+                "ok": {"type": "boolean", "example": True},
                 "job_id": {"type": "string", "format": "uuid", "example": EXAMPLE_JOB_ID},
+                "bay": {"type": "integer", "example": 4},
+                "slot_id": {"type": "string", "format": "uuid", "example": EXAMPLE_SLOT_ID},
+                "status": {"type": "string", "example": "pending"},
+                "action": {"type": "string", "description": "Present for device actions only."},
             },
-            "required": ["job_id"],
+            "required": ["ok", "job_id", "status"],
             "description": (
                 "Async acceptance. Poll `GET /jobs/{job_id}` until `state` is `done` or `failed`. "
-                "Initial job state is `pending` (not repeated in this body)."
+                "Assign idempotency: `assign-{rental_id}` per bay."
             ),
         },
         "JobResponse": {
             "type": "object",
             "properties": {
+                "ok": {"type": "boolean"},
                 "job_id": {"type": "string", "format": "uuid"},
                 "type": {
                     "type": "string",
@@ -149,8 +173,32 @@ def _schemas() -> dict[str, Any]:
                     "type": "string",
                     "enum": ["pending", "running", "done", "failed"],
                 },
+                "status": {"type": "string", "description": "Same as state."},
                 "progress": {"type": "integer", "minimum": 0, "maximum": 100},
+                "bay": {"type": "integer"},
+                "slot_id": {"type": "string", "format": "uuid"},
                 "error": {"type": "string", "nullable": True},
+                "message": {"type": "string", "nullable": True},
+                "provisioning_phase": {
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "provisioning",
+                        "completed",
+                        "failed",
+                        "requires_manual_action",
+                        "unsupported",
+                        "unknown",
+                    ],
+                },
+                "failure_class": {
+                    "type": "string",
+                    "enum": ["unsupported", "requires_manual_action", "temporary", "permanent"],
+                    "description": "Present only when state is failed.",
+                },
+                "created_at": {"type": "string", "format": "date-time"},
+                "started_at": {"type": "string", "format": "date-time", "nullable": True},
+                "completed_at": {"type": "string", "format": "date-time", "nullable": True},
             },
         },
         "ActionRequest": {
@@ -206,19 +254,84 @@ def _schemas() -> dict[str, Any]:
         "SlotEvent": {
             "type": "object",
             "properties": {
+                "id": {"type": "integer"},
+                "slot_id": {"type": "string", "format": "uuid"},
                 "at": {"type": "string", "format": "date-time"},
                 "type": {"type": "string"},
                 "detail": {"type": "string"},
             },
         },
+        "SlotStatusResponse": {
+            "type": "object",
+            "description": (
+                "Derived from the VPS heartbeat store (Farm `GET /agent/health` polled every "
+                "`heartbeat_interval_seconds`), the assignment store and the job store. "
+                "Radio/carrier/IMEI2 are not observed by the Farm health endpoint and are always "
+                "reported as unknown/null — never inferred from ADB state."
+            ),
+            "properties": {
+                "ok": {"type": "boolean"},
+                "slot_id": {"type": "string", "format": "uuid"},
+                "bay": {"type": "integer"},
+                "box": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "available",
+                        "assigned",
+                        "provisioning",
+                        "requires_manual_action",
+                        "online",
+                        "offline",
+                        "busy",
+                        "network_error",
+                        "failed",
+                        "unknown",
+                    ],
+                },
+                "assigned": {"type": "boolean"},
+                "rental_id": {"type": "string", "nullable": True},
+                "assigned_at": {"type": "string", "format": "date-time", "nullable": True},
+                "adb_online": {"type": "boolean", "nullable": True},
+                "last_seen_at": {"type": "string", "format": "date-time", "nullable": True},
+                "last_checked_at": {"type": "string", "format": "date-time", "nullable": True},
+                "heartbeat": {"type": "string", "enum": ["fresh", "stale", "farm_unreachable", "none"]},
+                "heartbeat_interval_seconds": {"type": "number"},
+                "active_job_id": {"type": "string", "nullable": True},
+                "active_job_type": {"type": "string", "nullable": True},
+                "last_assign_job_id": {"type": "string", "nullable": True},
+                "provisioning_phase": {
+                    "type": "string",
+                    "nullable": True,
+                    "enum": [
+                        "queued",
+                        "provisioning",
+                        "completed",
+                        "failed",
+                        "requires_manual_action",
+                        "unsupported",
+                        "unknown",
+                    ],
+                },
+                "cellular_status": {"type": "string", "enum": ["unknown"]},
+                "carrier": {"type": "string", "nullable": True},
+                "imei2": {"type": "string", "nullable": True},
+                "imei2_status": {"type": "string", "enum": ["unknown"]},
+                "checked_at": {"type": "string", "format": "date-time"},
+            },
+        },
         "SlotEventsResponse": {
             "type": "object",
             "properties": {
+                "ok": {"type": "boolean"},
+                "slot_id": {"type": "string", "format": "uuid"},
                 "events": {
                     "type": "array",
                     "items": {"$ref": "#/components/schemas/SlotEvent"},
-                }
+                    "description": "Each event carries its integer `id` (monotonic per store) and the public `slot_id`.",
+                },
             },
+            "required": ["ok", "slot_id", "events"],
         },
         "VoidfixInboundSuccess": {
             "type": "object",
@@ -256,20 +369,26 @@ def _schemas() -> dict[str, Any]:
 def _shared_responses() -> dict[str, Any]:
     return {
         "Unauthorized": {
-            "description": "Missing or invalid `FARM_SERVICE_TOKEN`.",
+            "description": (
+                "Missing or invalid `FARM_SERVICE_TOKEN`. Body is the legacy minimal shape "
+                "(`ok`/`message` are absent)."
+            ),
             "content": {
                 "application/json": {
-                    "schema": {"$ref": "#/components/schemas/ErrorResponse"},
+                    "schema": {"$ref": "#/components/schemas/AuthErrorResponse"},
                     "example": {"error": "unauthorized"},
                 }
             },
         },
         "FarmUnreachable": {
-            "description": "Farm Agent health proxy failed or farm not configured.",
+            "description": (
+                "Farm Agent unreachable or not configured. Always `ok: false` + `error`. "
+                "Service-layer routes (503) add `message`; the `/farm/status` proxy (502) adds `detail` instead."
+            ),
             "content": {
                 "application/json": {
                     "schema": {"$ref": "#/components/schemas/ErrorResponse"},
-                    "example": {"error": "farm_unreachable"},
+                    "example": {"ok": False, "error": "farm_unreachable"},
                 }
             },
         },
@@ -511,6 +630,36 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "409": {"description": "slot_unavailable, device_offline"},
                     "429": {"description": "rate_limited"},
                     "503": {"$ref": "#/components/responses/FarmUnreachable"},
+                },
+            }
+        },
+        f"/slots/{{slot_id}}/status": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "Per-slot status (heartbeat + assignment + job)",
+                "description": (
+                    "Status of one rented slot, not the global farm. `status` is derived deterministically: "
+                    "active assign job → `provisioning`; other active job → `busy`; no fresh heartbeat → `unknown`; "
+                    "ADB unreachable → `offline`; assigned + provisioning completed → `online`; "
+                    "assigned + manual step → `requires_manual_action`; assigned otherwise → `assigned`; "
+                    "last assign `provisioning_phase` in {failed, unsupported} → `failed` (sticky until the next "
+                    "assign; `provisioning_phase` is preserved, so `status: failed` + `provisioning_phase: unsupported` "
+                    "coexist); else `available`. `requires_manual_action` is surfaced via `provisioning_phase`, "
+                    "not `status`, because the bay is released on assign failure. "
+                    "Heartbeat is stale after 3× the poll interval or when the Farm Agent is unreachable."
+                ),
+                "security": bearer,
+                "parameters": [slot_param],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/SlotStatusResponse"},
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"description": "slot_not_found"},
                 },
             }
         },

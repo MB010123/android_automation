@@ -61,6 +61,24 @@ class SlotAssignmentStore:
             ).fetchone()
         return row is not None
 
+    def get(self, farm_slot_id: int) -> SlotAssignment | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT farm_slot_id, rental_id, job_id, created_at
+                FROM slot_assignments WHERE farm_slot_id = ?
+                """,
+                (farm_slot_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return SlotAssignment(
+            farm_slot_id=int(row[0]),
+            rental_id=str(row[1]),
+            job_id=str(row[2]),
+            created_at=float(row[3]),
+        )
+
     def claim(self, farm_slot_id: int, rental_id: str, job_id: str) -> bool:
         now = time.time()
         with self._lock:

@@ -31,6 +31,7 @@ from application.inbound_sms_normalize import (
     normalize_inbound_for_lovable,
     provider_message_id_from_payload,
 )
+from application.farm_heartbeat_poller import FarmHeartbeatPoller
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.vps_lovable_routes import parse_route
@@ -41,6 +42,7 @@ from infrastructure.farm_task_client import FarmTaskClient
 from infrastructure.lovable_inbound_webhook import deliver_inbound_to_lovable
 from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
+from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.outbound_job_store import OutboundJobStore
@@ -63,6 +65,8 @@ from infrastructure.voidfix_webhook_http import (
 
 HEALTH_PATH = "/health"
 FARM_STATUS_PATH = "/farm/status"
+# Upper bound per background thread when shutting down (never indefinite).
+SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_WEBHOOK_PATH = "/voidfix/inbound"
 
 logger = logging.getLogger("vps_backend")
@@ -202,6 +206,11 @@ class Handler(BaseHTTPRequestHandler):
                 since_raw=(query.get("since") or [None])[0],
                 limit_raw=(query.get("limit") or [None])[0],
             )
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_status" and route.slot_public_id:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.get_slot_status(route.slot_public_id)
             self._send_json(result.http_status, result.body)
             return True
         return False
@@ -365,7 +374,7 @@ class Handler(BaseHTTPRequestHandler):
                     if self.farm_management_service is not None:
                         self.farm_management_service.record_event(
                             int(slot_id),
-                            "inbound_sms",
+                            "inbound_sms_received",
                             "provider_message_id=" + (provider_id or "unknown"),
                         )
             if self.outbound_dispatcher is not None:
@@ -472,20 +481,6 @@ def main() -> int:
             return {"ok": False, "error": "farm_agent_not_configured"}
         return fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
 
-    rate_limiter = VpsRateLimiter(
-        per_slot_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_PER_SLOT", "10")),
-        global_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_GLOBAL", "120")),
-    )
-    slot_sms_service = VpsSlotSmsService(
-        message_store=message_store,
-        farm_client=farm_client,
-        farm_status_fetcher=_farm_status,
-        known_farm_slots=known_slots,
-        slot_id_overrides=overrides,
-        rate_limiter=rate_limiter,
-        max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
-    )
-
     vps_jobs_db = os.getenv(
         "VPS_JOBS_DB_PATH",
         str(ROOT / "logs" / "vps_jobs.sqlite"),
@@ -511,6 +506,16 @@ def main() -> int:
         per_slot_limit=int(os.getenv("VPS_MGMT_RATE_LIMIT_PER_SLOT", "20")),
         global_limit=int(os.getenv("VPS_MGMT_RATE_LIMIT_GLOBAL", "200")),
     )
+    heartbeat_interval = float(os.getenv("VPS_FARM_HEARTBEAT_INTERVAL_SECONDS", "30"))
+    status_store = SlotStatusStore(Path(vps_jobs_db).with_name("slot_status.sqlite"))
+    heartbeat_poller = FarmHeartbeatPoller(
+        farm_status_fetcher=_farm_status,
+        status_store=status_store,
+        event_store=event_store,
+        known_farm_slots=known_slots,
+        interval_seconds=heartbeat_interval,
+    )
+    heartbeat_poller.start()
     farm_management_service = VpsFarmManagementService(
         job_store=vps_job_store,
         assignment_store=assignment_store,
@@ -521,6 +526,23 @@ def main() -> int:
         slot_id_overrides=overrides,
         default_box=os.getenv("FARM_DEFAULT_BOX", "POD_01"),
         rate_limiter=mgmt_rate,
+        status_store=status_store,
+        heartbeat_interval_seconds=heartbeat_interval,
+    )
+
+    sms_rate_limiter = VpsRateLimiter(
+        per_slot_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_PER_SLOT", "10")),
+        global_limit=int(os.getenv("VPS_SMS_RATE_LIMIT_GLOBAL", "120")),
+    )
+    slot_sms_service = VpsSlotSmsService(
+        message_store=message_store,
+        farm_client=farm_client,
+        farm_status_fetcher=_farm_status,
+        known_farm_slots=known_slots,
+        slot_id_overrides=overrides,
+        rate_limiter=sms_rate_limiter,
+        max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
+        event_recorder=event_store.append,
     )
 
     Handler.app_name = config.app_name
@@ -554,13 +576,16 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.info("shutting down")
     finally:
+        # Stop background workers (bounded join) before closing the stores they write to.
+        heartbeat_poller.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+        job_worker.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         store.close()
         job_store.close()
         message_store.close()
         vps_job_store.close()
         assignment_store.close()
         event_store.close()
-        job_worker.stop()
+        status_store.close()
     return 0
 
 

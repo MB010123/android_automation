@@ -121,6 +121,10 @@ def test_assign_and_job_done(tmp_path: Path):
     svc, worker, _, jobs = _mgmt(tmp_path, farm=farm)
     result = svc.assign_slot(1, _assign_payload())
     assert result.http_status == 202
+    assert result.body["ok"] is True
+    assert result.body["bay"] == 1
+    assert result.body["slot_id"] == SLOT1
+    assert result.body["status"] == "pending"
     job_id = result.body["job_id"]
     deadline = time.time() + 2.0
     while time.time() < deadline and svc.get_job(job_id).body.get("state") != "done":
@@ -128,6 +132,15 @@ def test_assign_and_job_done(tmp_path: Path):
     job = svc.get_job(job_id)
     assert job.body["state"] == "done"
     assert len(farm.calls) == 1
+
+
+def test_assign_idempotent_same_rental(tmp_path: Path):
+    svc, _, _, _ = _mgmt(tmp_path)
+    first = svc.assign_slot(1, _assign_payload())
+    second = svc.assign_slot(1, _assign_payload())
+    assert first.http_status == 202
+    assert second.http_status == 202
+    assert first.body["job_id"] == second.body["job_id"]
 
 
 def test_assign_invalid_bay_and_unavailable(tmp_path: Path):
@@ -166,6 +179,8 @@ def test_action_reboot_and_unsupported(tmp_path: Path):
     svc, worker, _, _ = _mgmt(tmp_path, farm=farm)
     reboot = svc.enqueue_action(SLOT1, "reboot", {})
     assert reboot.http_status == 202
+    assert reboot.body["ok"] is True
+    assert reboot.body["action"] == "reboot"
     worker.process_job(reboot.body["job_id"])
     assert svc.get_job(reboot.body["job_id"]).body["state"] == "done"
     bad = svc.enqueue_action(SLOT1, "not_real", {})

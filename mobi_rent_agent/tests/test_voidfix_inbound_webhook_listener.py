@@ -163,6 +163,30 @@ def test_http_invalid_webhook_secret_401():
         server.shutdown()
 
 
+def test_http_missing_webhook_secret_401_when_configured():
+    server, _thread, port = _start_server(MockDispatchService(webhook_secret="expected"))
+    try:
+        status, data = _post(
+            port,
+            json.dumps({"number": "+1", "message": "x"}).encode(),
+            "application/json",
+        )
+        assert status == 401
+        assert "expected" not in json.dumps(data)
+    finally:
+        server.shutdown()
+
+
+def test_http_malformed_json_body_400():
+    server, _thread, port = _start_server(MockDispatchService())
+    try:
+        status, data = _post(port, b"{not json", "application/json")
+        assert status == 400
+        assert data["ok"] is False
+    finally:
+        server.shutdown()
+
+
 def test_slot_mapping_device_1386_to_slot_1():
     device_map = {1: "1386", 2: "1389"}
     assert slot_for_voidfix_device("1386", device_map) == 1

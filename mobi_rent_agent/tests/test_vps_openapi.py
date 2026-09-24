@@ -36,6 +36,7 @@ REQUIRED_PATHS = [
     f"/slots/{{slot_id}}/messages",
     f"/slots/{{slot_id}}/actions/{{action}}",
     f"/slots/{{slot_id}}/events",
+    f"/slots/{{slot_id}}/status",
     "/voidfix/inbound",
 ]
 
@@ -73,8 +74,21 @@ def test_schemas_present():
         "ActionRequest",
         "ErrorResponse",
         "LovableInboundNormalizedPayload",
+        "SlotStatusResponse",
     ):
         assert name in schemas
+    assert schemas["SlotAvailability"]["required"] == ["bay", "box", "slot_id"]
+    assert "ok" in schemas["SlotAvailabilityList"]["properties"]
+    assert set(schemas["SlotEventsResponse"]["required"]) == {"ok", "slot_id", "events"}
+    assert "id" in schemas["SlotEvent"]["properties"]
+    assert schemas["ErrorResponse"]["properties"]["ok"]["enum"] == [False]
+    assert "AuthErrorResponse" in schemas
+    unauthorized = doc["components"]["responses"]["Unauthorized"]["content"]["application/json"]
+    assert unauthorized["schema"]["$ref"].endswith("/AuthErrorResponse")
+    assert unauthorized["example"] == {"error": "unauthorized"}
+    status_props = schemas["SlotStatusResponse"]["properties"]
+    assert status_props["cellular_status"]["enum"] == ["unknown"]
+    assert status_props["imei2_status"]["enum"] == ["unknown"]
 
 
 def test_unsupported_actions_documented():
