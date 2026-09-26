@@ -276,6 +276,38 @@ def test_status_busy_during_reboot(tmp_path: Path):
     assert "reboot_completed" in types
 
 
+def test_list_and_detail_slot_record(tmp_path: Path):
+    fx = Fixture(tmp_path)
+    fx.beat()
+    listed = fx.svc.list_all_slots().body
+    assert listed["ok"] is True
+    assert listed["count"] == 2
+    assert {s["bay"] for s in listed["slots"]} == {1, 2}
+    record = fx.svc.get_slot_record(SLOT1).body
+    assert record["motherboard_slot_num"] == 1
+    assert record["hardware_box_id"]
+    assert record["user_id"] is None
+    assert record["imei2"] is None
+    assert record["imei2_status"] == "unknown"
+    assert "proxy_auth" not in record
+    assert "gateway_api_key" not in record
+    assert record["phone_number"] is None
+
+
+def test_esim_assign_accepts_qr_code_url(tmp_path: Path):
+    fx = Fixture(tmp_path)
+    fx.beat()
+    payload = {
+        "rental_id": str(uuid.uuid4()),
+        "qr_code_url": "https://example.test/esim/qr.png",
+        "carrier": "test-carrier",
+    }
+    result = fx.svc.assign_slot_by_public_id(SLOT1, payload)
+    assert result.http_status == 202
+    assert result.body["bay"] == 1
+    assert result.body["slot_id"] == SLOT1
+
+
 def test_status_unknown_slot_404(tmp_path: Path):
     fx = Fixture(tmp_path)
     assert fx.svc.get_slot_status(public_id_for_farm_slot(9)).http_status == 404

@@ -17,6 +17,9 @@ Status vocabulary:
 | VPS health `GET /health` | `tools/vps_backend_server.py` | `test_vps_backend_*` | Verified earlier (public 200) | — | **READY** |
 | Farm connectivity proxy `GET /farm/status` | `_farm_status` | mocked tests | Verified 20/20 ADB online earlier | Farm Agent on Windows PC | **READY** |
 | Lovable → VPS auth (`FARM_SERVICE_TOKEN`) | `farm_agent_auth.authorize_farm_request` | `test_vps_slot_status::test_http_status_requires_auth_and_returns_body`, mgmt/sms tests | User confirmed token configured; **do not rotate** | Lovable secret store | **READY** |
+| User signup / login | VPS `AuthService` + `VpsAuthStore` (Argon2id/scrypt, JWT + revocable session) | `test_vps_user_auth` | **NOT VERIFIED** on live VPS | Operator must set `VPS_AUTH_JWT_SECRET` | **READY** (API/tests); email send for reset/verify is not wired |
+| Slot inventory `GET /slots` / `GET /slots/{id}` | `list_slots_for_user` / `list_all_slots`, `get_slot_record` | `test_vps_user_auth`, `test_vps_slot_status` | **NOT VERIFIED** | Ownership in `slot_ownership` | **READY**; users see owned slots only; farm token sees all |
+| eSIM by slot `POST /slots/{id}/esim` | User: `assign_esim_for_user` (storage key). Farm: `assign_slot_by_public_id` | `test_vps_user_auth`, `test_esim_assign_accepts_qr_code_url` | **NOT VERIFIED** | Private storage key or allowlisted prefix | **READY** (async job; no HTTP-time download) |
 | Slot availability `GET /farm/slots/available` | `VpsFarmManagementService.list_available` | `test_vps_farm_management_api` | Verified 200 earlier | — | **READY** |
 | Bay assignment `POST /farm/slots/{bay}/assign` | `assign_slot` (202 + job, idempotent per `rental_id`) | idempotent replay, 409 on other rental, response shape, failure releases bay | **NOT VERIFIED** (real device action) | — | **READY** (API) / provisioning outcome see below |
 | Async jobs `GET /jobs/{job_id}` | `VpsJobStore`, `VpsJobWorker` | pending→running→done/failed; `failure_class`; `provisioning_phase` matrix (`test_vps_slot_status`, `test_vps_api_contract`) | **NOT VERIFIED** | — | **READY** |
@@ -81,9 +84,13 @@ Truthfulness guarantees: `state: done` / `provisioning_phase: completed` is emit
 
 ## Lovable server-side contract
 
-Base URL: `https://api.loanerphones.com`. Auth header `Authorization: Bearer <FARM_SERVICE_TOKEN>` on every route except `/health`, `/docs`, `/openapi.json`, `/redoc`, `/voidfix/inbound`.
+Base URL: `https://api.loanerphones.com`.
 
-**Frontend security boundary:** Browser → Lovable server-side function (holds `FARM_SERVICE_TOKEN`) → VPS. The token must never be shipped to the browser, embedded in client JS, or logged.
+- Browser user APIs: `Authorization: Bearer <USER_ACCESS_TOKEN>` from `/auth/login`.
+- Lovable server-side farm/SMS: `Authorization: Bearer <FARM_SERVICE_TOKEN>`.
+- Public: `/health`, `/farm/status`, `/docs`, `/openapi.json`, `/redoc`, `/auth/signup`, `/auth/login`, `/voidfix/inbound`.
+
+**Frontend security boundary:** Browser holds only the user access token (or an HttpOnly cookie). `FARM_SERVICE_TOKEN` stays on the Lovable server. See `docs/VPS_USER_AUTH.md`.
 
 | Step | Request | Success | Notes |
 |---|---|---|---|

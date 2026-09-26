@@ -33,6 +33,15 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
             {"name": "Farm management", "description": "Slots, assignment, jobs, device actions, events."},
             {"name": "SMS", "description": "Lovable-facing outbound SMS (async dispatch)."},
             {"name": "Inbound", "description": "VoidFix webhook receiver on the VPS."},
+            {
+                "name": "Auth",
+                "description": (
+                    "VPS-authoritative user authentication. "
+                    "Browser calls `/auth/signup` and `/auth/login`; the VPS stores Argon2id/scrypt hashes "
+                    "and issues a short-lived USER_ACCESS_TOKEN. "
+                    "`FARM_SERVICE_TOKEN` remains a separate machine-to-machine credential."
+                ),
+            },
             {"name": "Integration", "description": "Outbound webhooks to Lovable (not inbound VPS routes)."},
         ],
         "paths": _paths(webhook_path),
@@ -42,6 +51,14 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
                     "type": "http",
                     "scheme": "bearer",
                     "description": "Use `Authorization: Bearer <FARM_SERVICE_TOKEN>` (server-side only).",
+                },
+                "UserAccessBearer": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "description": (
+                        "Use `Authorization: Bearer <USER_ACCESS_TOKEN>` from `/auth/login` or `/auth/signup`. "
+                        "Never send FARM_SERVICE_TOKEN, FARM_AGENT_API_TOKEN, or VOIDFIX_WEBHOOK_SECRET from the browser."
+                    ),
                 },
                 "VoidfixWebhookSecretHeader": {
                     "type": "apiKey",
@@ -347,6 +364,146 @@ def _schemas() -> dict[str, Any]:
                 "dispatch": {"type": "array", "items": {"type": "object"}},
             },
         },
+        "AuthCredentialsRequest": {
+            "type": "object",
+            "required": ["email", "password"],
+            "properties": {
+                "email": {"type": "string", "format": "email"},
+                "password": {"type": "string", "minLength": 12, "maxLength": 128},
+            },
+        },
+        "AuthUser": {
+            "type": "object",
+            "required": ["id", "email", "email_verified"],
+            "properties": {
+                "id": {"type": "string", "format": "uuid"},
+                "email": {"type": "string", "format": "email"},
+                "email_verified": {"type": "boolean"},
+                "created_at": {"type": "string", "format": "date-time"},
+                "last_login_at": {"type": "string", "format": "date-time", "nullable": True},
+                "role": {"type": "string", "enum": ["user", "admin"]},
+            },
+        },
+        "AuthSession": {
+            "type": "object",
+            "required": ["access_token", "token_type", "expires_in"],
+            "properties": {
+                "access_token": {"type": "string"},
+                "token_type": {"type": "string", "enum": ["Bearer"]},
+                "expires_in": {"type": "integer"},
+            },
+        },
+        "AuthSuccessResponse": {
+            "type": "object",
+            "required": ["ok", "user", "session"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "user": {"$ref": "#/components/schemas/AuthUser"},
+                "session": {"$ref": "#/components/schemas/AuthSession"},
+            },
+        },
+        "AuthMeResponse": {
+            "type": "object",
+            "required": ["ok", "user"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "user": {"$ref": "#/components/schemas/AuthUser"},
+            },
+        },
+        "InvalidCredentialsResponse": {
+            "type": "object",
+            "required": ["ok", "error"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [False]},
+                "error": {"type": "string", "enum": ["invalid_credentials"]},
+                "message": {"type": "string"},
+            },
+        },
+        "FarmServiceSessionResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "authenticated": {"type": "boolean"},
+                "audience": {"type": "string", "enum": ["farm_service", "user"]},
+                "token_type": {
+                    "type": "string",
+                    "enum": ["FARM_SERVICE_TOKEN", "USER_ACCESS_TOKEN"],
+                },
+                "session_id": {"type": "string", "format": "uuid"},
+                "user": {"$ref": "#/components/schemas/AuthUser"},
+                "message": {"type": "string"},
+            },
+        },
+        "SlotListResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {"type": "boolean"},
+                "count": {"type": "integer"},
+                "slots": {
+                    "type": "array",
+                    "items": {"$ref": "#/components/schemas/SlotStatusResponse"},
+                },
+            },
+            "required": ["ok", "slots"],
+        },
+        "SlotRecordResponse": {
+            "type": "object",
+            "description": (
+                "Lovable `public.slots`-shaped view of one farm bay. "
+                "`user_id` is the authenticated owner when the slot is claimed. "
+                "Carrier, phone, and IMEI2 stay null/unknown unless observed. "
+                "proxy_auth and gateway_api_key are never returned."
+            ),
+            "properties": {
+                "ok": {"type": "boolean"},
+                "slot_id": {"type": "string", "format": "uuid"},
+                "motherboard_slot_num": {"type": "integer"},
+                "hardware_box_id": {"type": "string"},
+                "user_id": {"type": "string", "format": "uuid", "nullable": True},
+                "rental_id": {"type": "string", "nullable": True},
+                "status": {"type": "string"},
+                "assigned": {"type": "boolean"},
+                "assigned_at": {"type": "string", "format": "date-time", "nullable": True},
+                "carrier_name": {"type": "string", "nullable": True},
+                "phone_number": {"type": "string", "nullable": True},
+                "imei2": {"type": "string", "nullable": True},
+                "imei2_status": {"type": "string", "enum": ["unknown"]},
+                "last_heartbeat": {"type": "string", "format": "date-time", "nullable": True},
+                "band_lock_setting": {"type": "string", "nullable": True},
+                "proxy_address": {"type": "string", "nullable": True},
+                "provisioning_phase": {"type": "string", "nullable": True},
+                "heartbeat": {"type": "string"},
+                "adb_online": {"type": "boolean", "nullable": True},
+                "checked_at": {"type": "string", "format": "date-time"},
+            },
+        },
+        "EsimAssignRequest": {
+            "type": "object",
+            "description": (
+                "User-owned eSIM assignment. Prefer an internal storage key. "
+                "Arbitrary external URLs are rejected unless they match VPS_ESIM_ALLOWED_URL_PREFIXES. "
+                "The HTTP handler does not download the file."
+            ),
+            "required": ["rental_id", "carrier"],
+            "properties": {
+                "rental_id": {"type": "string", "format": "uuid", "example": EXAMPLE_RENTAL_ID},
+                "carrier": {"type": "string"},
+                "storage_key": {
+                    "type": "string",
+                    "description": "Internal object identifier for private storage.",
+                },
+                "qr_code_url": {
+                    "type": "string",
+                    "description": "Storage key or allowlisted private-storage URL. Not fetched by the VPS.",
+                },
+                "esim_qr_url": {
+                    "type": "string",
+                    "description": "Alias for qr_code_url on farm-service assign.",
+                },
+                "band_lock": {"type": "string"},
+                "proxy": {"type": "string"},
+            },
+        },
         "LovableInboundNormalizedPayload": {
             "type": "object",
             "description": (
@@ -425,8 +582,224 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         ),
     }
     bearer: list[dict[str, list[str]]] = [{"FarmServiceBearer": []}]
+    user_bearer: list[dict[str, list[str]]] = [{"UserAccessBearer": []}]
+    user_or_farm: list[dict[str, list[str]]] = [{"UserAccessBearer": []}, {"FarmServiceBearer": []}]
+    auth_example = {
+        "email": "user@example.com",
+        "password": "strong-password-12",
+    }
 
     return {
+        "/auth/signup": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Create a user account and session",
+                "description": (
+                    "Authoritative VPS signup. Email is normalized to lowercase. "
+                    "Passwords are hashed (Argon2id when available, otherwise scrypt) and never returned. "
+                    "A client-supplied `role` is ignored; new accounts are `user`."
+                ),
+                "security": [],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/AuthCredentialsRequest"},
+                            "example": auth_example,
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AuthSuccessResponse"},
+                            }
+                        }
+                    },
+                    "400": {"description": "invalid_email, weak_password, invalid_request, invalid_json"},
+                    "429": {"description": "rate_limited"},
+                    "503": {"description": "auth_not_configured"},
+                },
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Authenticate and issue a user access token",
+                "description": (
+                    "Failures always return `invalid_credentials` (no user_not_found / wrong_password). "
+                    "Bounded temporary lockout after repeated failures."
+                ),
+                "security": [],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/AuthCredentialsRequest"},
+                            "example": auth_example,
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AuthSuccessResponse"},
+                            }
+                        }
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/InvalidCredentialsResponse"},
+                            }
+                        }
+                    },
+                    "429": {"description": "rate_limited"},
+                },
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Revoke the current user session",
+                "security": user_bearer,
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"ok": {"type": "boolean", "enum": [True]}},
+                                }
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
+        "/auth/me": {
+            "get": {
+                "tags": ["Auth"],
+                "summary": "Current authenticated user",
+                "security": user_bearer,
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AuthMeResponse"},
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
+        "/auth/session": {
+            "get": {
+                "tags": ["Auth"],
+                "summary": "Identify the presented credential class",
+                "description": (
+                    "USER_ACCESS_TOKEN returns the user session. "
+                    "FARM_SERVICE_TOKEN returns audience=farm_service and is never treated as a user. "
+                    "FARM_AGENT_API_TOKEN and VOIDFIX_WEBHOOK_SECRET do not authenticate this route."
+                ),
+                "security": user_or_farm,
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/FarmServiceSessionResponse"},
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
+        "/auth/forgot-password": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Request a password-reset token",
+                "description": (
+                    "Always returns `{ok:true}`. Tokens are stored hashed. "
+                    "Email delivery is not implemented on this VPS; hook `AuthService` token_sink / SMTP."
+                ),
+                "security": [],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {"email": {"type": "string", "format": "email"}},
+                            }
+                        }
+                    }
+                },
+                "responses": {"200": {"description": "Generic success (no account enumeration)"}},
+            }
+        },
+        "/auth/reset-password": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Consume a one-time reset token",
+                "security": [],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["token", "password"],
+                                "properties": {
+                                    "token": {"type": "string"},
+                                    "password": {"type": "string"},
+                                },
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {"description": "Password updated; existing sessions revoked"},
+                    "400": {"description": "invalid_request or weak_password"},
+                },
+            }
+        },
+        "/auth/verify-email": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Consume a one-time email verification token",
+                "security": [],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["token"],
+                                "properties": {"token": {"type": "string"}},
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {"description": "Email marked verified"},
+                    "400": {"description": "invalid_request"},
+                },
+            }
+        },
+        "/auth/resend-verification": {
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Issue a new email verification token",
+                "description": "Requires a user access token. Does not send email until an SMTP integration is wired.",
+                "security": user_bearer,
+                "responses": {
+                    "200": {"description": "ok"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
         "/health": {
             "get": {
                 "tags": ["Health"],
@@ -560,7 +933,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "get": {
                 "tags": ["Farm management"],
                 "summary": "Get async job status",
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [
                     {
                         "name": "job_id",
@@ -599,7 +972,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "**202** with `job_id` only — action runs on Farm via `/agent/tasks/run`. "
                     "Poll job status. `airplane_cycle` / `voidfix_repair` may end `failed` with `action_not_supported`."
                 ),
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [slot_param, action_param],
                 "requestBody": {
                     "content": {
@@ -633,6 +1006,88 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/slots": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "List slots visible to the caller",
+                "description": (
+                    "USER_ACCESS_TOKEN: only slots owned by that user. "
+                    "FARM_SERVICE_TOKEN: every configured bay (operations inventory). "
+                    "Cellular/IMEI2 remain unknown unless observed."
+                ),
+                "security": user_or_farm,
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/SlotListResponse"},
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
+        f"/slots/{{slot_id}}": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "One slot in Lovable public.slots field names",
+                "description": (
+                    "VPS `slot_id` is the public farm UUID. "
+                    "Users receive 404 for slots they do not own. "
+                    "`proxy_auth` and `gateway_api_key` are never returned."
+                ),
+                "security": user_or_farm,
+                "parameters": [slot_param],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/SlotRecordResponse"},
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"description": "slot_not_found"},
+                },
+            }
+        },
+        f"/slots/{{slot_id}}/esim": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Assign / provision eSIM by public slot UUID",
+                "description": (
+                    "User JWT: only if `slot_ownership` already exists for that user "
+                    "(created by a FARM_SERVICE_TOKEN assignment). Unowned bays return 404. "
+                    "Does not download arbitrary URLs. Farm-service callers may use `esim_qr_url` and optional `user_id` to establish ownership."
+                ),
+                "security": user_or_farm,
+                "parameters": [slot_param],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/EsimAssignRequest"},
+                        }
+                    },
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/JobAcceptedResponse"},
+                            }
+                        }
+                    },
+                    "400": {"description": "invalid_rental_id, invalid_request"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "slot_unavailable, device_offline"},
+                    "429": {"description": "rate_limited"},
+                    "503": {"$ref": "#/components/responses/FarmUnreachable"},
+                },
+            }
+        },
         f"/slots/{{slot_id}}/status": {
             "get": {
                 "tags": ["Farm management"],
@@ -648,7 +1103,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "not `status`, because the bay is released on assign failure. "
                     "Heartbeat is stale after 3× the poll interval or when the Farm Agent is unreachable."
                 ),
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [slot_param],
                 "responses": {
                     "200": {
@@ -667,7 +1122,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "get": {
                 "tags": ["Farm management"],
                 "summary": "List slot events",
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [
                     slot_param,
                     {
@@ -704,7 +1159,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "**202** — message is queued; dispatch is async to Farm Agent. "
                     "Same `(farm_slot, idempotency_key)` with identical `to`+`body` returns the existing message."
                 ),
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [slot_param],
                 "requestBody": {
                     "required": True,
@@ -740,7 +1195,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "get": {
                 "tags": ["SMS"],
                 "summary": "Get outbound message",
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [
                     {
                         "name": "message_id",
@@ -767,7 +1222,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "get": {
                 "tags": ["SMS"],
                 "summary": "List outbound messages for slot",
-                "security": bearer,
+                "security": user_or_farm,
                 "parameters": [
                     slot_param,
                     {

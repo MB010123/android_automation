@@ -37,6 +37,18 @@ REQUIRED_PATHS = [
     f"/slots/{{slot_id}}/actions/{{action}}",
     f"/slots/{{slot_id}}/events",
     f"/slots/{{slot_id}}/status",
+    "/slots",
+    f"/slots/{{slot_id}}",
+    f"/slots/{{slot_id}}/esim",
+    "/auth/signup",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/me",
+    "/auth/session",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+    "/auth/verify-email",
+    "/auth/resend-verification",
     "/voidfix/inbound",
 ]
 
@@ -49,7 +61,9 @@ def test_openapi_document_structure():
     assert "components" in doc
     schemes = doc["components"]["securitySchemes"]
     assert "FarmServiceBearer" in schemes
+    assert "UserAccessBearer" in schemes
     assert schemes["FarmServiceBearer"]["scheme"] == "bearer"
+    assert schemes["UserAccessBearer"]["scheme"] == "bearer"
 
 
 def test_required_paths_and_security():
@@ -75,6 +89,14 @@ def test_schemas_present():
         "ErrorResponse",
         "LovableInboundNormalizedPayload",
         "SlotStatusResponse",
+        "AuthSuccessResponse",
+        "AuthMeResponse",
+        "AuthCredentialsRequest",
+        "InvalidCredentialsResponse",
+        "FarmServiceSessionResponse",
+        "SlotListResponse",
+        "SlotRecordResponse",
+        "EsimAssignRequest",
     ):
         assert name in schemas
     assert schemas["SlotAvailability"]["required"] == ["bay", "box", "slot_id"]

@@ -14,6 +14,14 @@ Documentation endpoints are **unauthenticated** (read-only spec). Calling protec
 
 ## Authentication
 
+### Browser → VPS (user session)
+
+```http
+Authorization: Bearer <USER_ACCESS_TOKEN>
+```
+
+Issued by `POST /auth/signup` and `POST /auth/login`. See `docs/VPS_USER_AUTH.md`.
+
 ### Lovable / server → VPS (management + SMS)
 
 ```http

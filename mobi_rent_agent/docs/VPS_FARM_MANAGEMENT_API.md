@@ -1,6 +1,32 @@
 # VPS farm management API (Lovable server-side)
 
-Authentication for all endpoints below: `Authorization: Bearer <FARM_SERVICE_TOKEN>` (never expose to browsers).
+Farm/SMS machine routes: `Authorization: Bearer <FARM_SERVICE_TOKEN>` (never expose to browsers).
+
+User dashboard routes: `Authorization: Bearer <USER_ACCESS_TOKEN>` from VPS `/auth/login`. See [VPS_USER_AUTH.md](VPS_USER_AUTH.md).
+
+## User login and sign-up (VPS-authoritative)
+
+| Step | Where | What happens |
+|------|--------|----------------|
+| Sign-up | `POST https://api.loanerphones.com/auth/signup` | Password hashed on the VPS. Profile + session created. |
+| Login | `POST /auth/login` | Short-lived user JWT + revocable session. |
+| Current user | `GET /auth/me` | Identity from the validated token only. |
+| Farm calls | Lovable **server-side** function | `Authorization: Bearer <FARM_SERVICE_TOKEN>` → VPS. |
+
+## Lovable `public.slots` / messages / eSIM mapping
+
+| Lovable | VPS |
+|---------|-----|
+| `profiles` / users | `vps_auth` `users` + `profiles`. `user_id` is the VPS UUID. |
+| `slots.motherboard_slot_num` | `bay` / `motherboard_slot_num` (1–20) |
+| `slots.id` | VPS public farm UUID (`slot_id`). Ownership in `slot_ownership`. |
+| `slots.status` | `GET /slots`, `GET /slots/{id}/status` (ADB/heartbeat derived) |
+| `slots.imei2`, `phone_number`, `carrier_name` | Always null / `unknown` on VPS (Farm health is ADB-only) |
+| `slots.proxy_auth`, `gateway_api_key` | Never returned. |
+| `messages` | `POST /slots/{id}/sms/send`, `GET /messages/{id}`, `GET /slots/{id}/messages`; inbound via VoidFix → optional Lovable webhook |
+| `esim_uploads` | `POST /slots/{id}/esim` with a storage key (or allowlisted URL). File is not downloaded in the HTTP request. |
+
+`GET /slots` with a user token returns **that user's** slots. `FARM_SERVICE_TOKEN` still lists every configured bay. `GET /farm/slots/available` remains farm-service-only.
 
 Error shapes:
 

@@ -22,7 +22,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
+from application.vps_api_contract import error_body
 from infrastructure.inbound_message_store import InboundMessageStore
 from infrastructure.voidfix_api import SmsGatewayError, parse_inbound_payload
 from infrastructure.voidfix_devices import VoidFixDeviceMapError, load_voidfix_device_map
@@ -34,7 +34,16 @@ from application.inbound_sms_normalize import (
 from application.farm_heartbeat_poller import FarmHeartbeatPoller
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
-from application.vps_lovable_routes import parse_route
+from application.auth_middleware import resolve_auth_context
+from application.auth_service import AuthContext, AuthService, jwt_secret_usable
+from application.vps_lovable_routes import (
+    FARM_SERVICE_ONLY,
+    PUBLIC_AUTH_POST,
+    USER_OWNED_KINDS,
+    parse_route,
+)
+from infrastructure.auth_rate_limiter import AuthRateLimiter
+from infrastructure.vps_auth_store import VpsAuthStore
 from application.vps_slot_sms_service import VpsSlotSmsService
 from application.webhook_outbound_dispatcher import WebhookOutboundDispatcher
 from infrastructure.farm_sms_client import FarmSmsClient
@@ -77,6 +86,30 @@ def _env_webhook_path() -> str:
     return raw if raw.startswith("/") else f"/{raw}"
 
 
+def _parse_allowed_origins(raw: str) -> frozenset[str]:
+    extras = {part.strip() for part in raw.split(",") if part.strip()}
+    defaults = {
+        "http://localhost",
+        "https://localhost",
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+    }
+    return frozenset(defaults | extras)
+
+
+def _origin_is_localhost(origin: str) -> bool:
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    return parsed.hostname in {"localhost", "127.0.0.1"}
+
+
 def _check_webhook_secret(provided: str | None, expected: str | None) -> None:
     if not expected:
         return
@@ -113,6 +146,11 @@ class Handler(BaseHTTPRequestHandler):
     farm_service_token: str | None = None
     slot_sms_service: VpsSlotSmsService | None = None
     farm_management_service: VpsFarmManagementService | None = None
+    auth_service: AuthService | None = None
+    auth_rate_limiter: AuthRateLimiter | None = None
+    allowed_origins: frozenset[str] = frozenset()
+    auth_cookie_name: str | None = None
+    auth_cookie_secure: bool = False
     lovable_inbound_url: str | None = None
     lovable_inbound_secret: str | None = None
     request_timeout: float = 10.0
@@ -120,12 +158,42 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
 
-    def _authorized_service(self) -> bool:
-        token = extract_bearer_token(self.headers.get("Authorization"))
-        return authorize_farm_request(token, self.farm_service_token)
+    def _auth_context(self) -> AuthContext | None:
+        return resolve_auth_context(
+            authorization_header=self.headers.get("Authorization"),
+            cookie_header=self.headers.get("Cookie"),
+            cookie_name=self.auth_cookie_name,
+            farm_service_token=self.farm_service_token,
+            auth_service=self.auth_service,
+        )
+
+    def _cors_origin(self) -> str | None:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return None
+        if origin in self.allowed_origins or _origin_is_localhost(origin):
+            return origin
+        return None
+
+    def _apply_cors(self) -> None:
+        origin = self._cors_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
     def _read_json_body(self) -> dict[str, Any] | None:
         length = int(self.headers.get("Content-Length") or 0)
+        if length > 65536:
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            return None
         raw = self.rfile.read(length) if length else b""
         if not raw:
             return {}
@@ -135,11 +203,27 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return data if isinstance(data, dict) else None
 
-    def _send_json(self, code: int, body: dict[str, Any]) -> None:
+    def _send_json(self, code: int, body: dict[str, Any], *, set_auth_cookie: str | None = None) -> None:
         raw = json.dumps(body).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
+        self._apply_cors()
+        if set_auth_cookie is not None and self.auth_cookie_name:
+            flags = "HttpOnly; Path=/; SameSite=Lax"
+            if self.auth_cookie_secure:
+                flags += "; Secure"
+            if set_auth_cookie == "":
+                self.send_header(
+                    "Set-Cookie",
+                    f"{self.auth_cookie_name}=; {flags}; Max-Age=0",
+                )
+            else:
+                ttl = self.auth_service.access_ttl_seconds if self.auth_service else 3600
+                self.send_header(
+                    "Set-Cookie",
+                    f"{self.auth_cookie_name}={set_auth_cookie}; {flags}; Max-Age={ttl}",
+                )
         self.end_headers()
         self.wfile.write(raw)
 
@@ -148,8 +232,68 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        self._apply_cors()
         self.end_headers()
         self.wfile.write(raw)
+
+    def _user_owns(self, ctx: AuthContext, slot_public_id: str | None) -> bool:
+        if ctx.kind != "user" or ctx.user is None or not slot_public_id:
+            return False
+        if self.farm_management_service is None:
+            return False
+        return self.farm_management_service.user_owns_public_slot(ctx.user.user_id, slot_public_id)
+
+    def _rate_limit_auth(self, action: str, email: str | None) -> bool:
+        if self.auth_rate_limiter is None:
+            return True
+        ip = self.client_address[0] if self.client_address else "unknown"
+        allowed, retry = self.auth_rate_limiter.check(f"{action}:ip:{ip}")
+        if not allowed:
+            body = error_body("rate_limited")
+            body["retry_after"] = retry
+            self._send_json(429, body)
+            return False
+        if email:
+            allowed, retry = self.auth_rate_limiter.check(f"{action}:email:{email.strip().lower()}")
+            if not allowed:
+                body = error_body("rate_limited")
+                body["retry_after"] = retry
+                self._send_json(429, body)
+                return False
+        return True
+
+    def _authorize_route(self, route) -> AuthContext | None:
+        ctx = self._auth_context()
+        kind = route.kind
+        if kind in PUBLIC_AUTH_POST:
+            return ctx or AuthContext(kind="none")
+        if kind in {"auth_logout", "auth_me", "auth_resend"}:
+            if ctx is None or ctx.kind != "user":
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
+        if kind == "auth_session":
+            if ctx is None or ctx.kind not in {"user", "farm_service"}:
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
+        if kind in FARM_SERVICE_ONLY:
+            if ctx is None or ctx.kind != "farm_service":
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
+        if ctx is None or ctx.kind not in {"user", "farm_service"}:
+            self._send_json(401, {"error": "unauthorized"})
+            return None
+        if (
+            ctx.kind == "user"
+            and kind in USER_OWNED_KINDS
+            and route.slot_public_id
+            and not self._user_owns(ctx, route.slot_public_id)
+        ):
+            self._send_json(404, error_body("slot_not_found"))
+            return None
+        return ctx
 
     def _handle_api_docs(self, path: str) -> bool:
         if path == OPENAPI_JSON_PATH:
@@ -174,11 +318,29 @@ class Handler(BaseHTTPRequestHandler):
         if route.kind == "job" and route.job_id:
             assert self.farm_management_service is not None
             result = self.farm_management_service.get_job(route.job_id)
+            ctx = self._auth_context()
+            if (
+                ctx is not None
+                and ctx.kind == "user"
+                and result.http_status == 200
+                and not self._user_owns(ctx, result.body.get("slot_id"))
+            ):
+                self._send_json(404, error_body("job_not_found"))
+                return True
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "message" and route.message_id:
             assert self.slot_sms_service is not None
             result = self.slot_sms_service.get_message(route.message_id)
+            ctx = self._auth_context()
+            if (
+                ctx is not None
+                and ctx.kind == "user"
+                and result.http_status == 200
+                and not self._user_owns(ctx, result.body.get("slot_id"))
+            ):
+                self._send_json(404, {"error": "not_found"})
+                return True
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "slot_messages" and route.slot_public_id:
@@ -213,6 +375,51 @@ class Handler(BaseHTTPRequestHandler):
             result = self.farm_management_service.get_slot_status(route.slot_public_id)
             self._send_json(result.http_status, result.body)
             return True
+        if route.kind == "slots_list":
+            assert self.farm_management_service is not None
+            ctx = self._auth_context()
+            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
+                result = self.farm_management_service.list_slots_for_user(ctx.user.user_id)
+            else:
+                result = self.farm_management_service.list_all_slots()
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "slot_detail" and route.slot_public_id:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.get_slot_record(route.slot_public_id)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "auth_session":
+            ctx = self._auth_context() or AuthContext(kind="none")
+            if ctx.kind == "farm_service":
+                if self.auth_service is not None:
+                    result = self.auth_service.session_body(ctx)
+                    self._send_json(result.http_status, result.body)
+                    return True
+                self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "authenticated": True,
+                        "audience": "farm_service",
+                        "token_type": "FARM_SERVICE_TOKEN",
+                        "message": "Machine-to-machine farm service credential. Not a user session.",
+                    },
+                )
+                return True
+            if self.auth_service is None:
+                self._send_json(503, {"ok": False, "error": "auth_not_configured"})
+                return True
+            result = self.auth_service.session_body(ctx)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "auth_me":
+            if self.auth_service is None:
+                self._send_json(503, {"ok": False, "error": "auth_not_configured"})
+                return True
+            result = self.auth_service.me(self._auth_context() or AuthContext(kind="none"))
+            self._send_json(result.http_status, result.body)
+            return True
         return False
 
     def _handle_service_post(self, route, payload: dict[str, Any]) -> bool:
@@ -235,7 +442,81 @@ class Handler(BaseHTTPRequestHandler):
             result = self.slot_sms_service.enqueue_send(route.slot_public_id, payload)
             self._send_json(result.http_status, result.body)
             return True
+        if route.kind == "slot_esim" and route.slot_public_id:
+            assert self.farm_management_service is not None
+            ctx = self._auth_context()
+            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
+                result = self.farm_management_service.assign_esim_for_user(
+                    route.slot_public_id,
+                    payload,
+                    ctx.user.user_id,
+                )
+            else:
+                result = self.farm_management_service.assign_slot_by_public_id(
+                    route.slot_public_id,
+                    payload,
+                )
+            self._send_json(result.http_status, result.body)
+            return True
         return False
+
+    def _handle_auth_post(self, route, payload: dict[str, Any]) -> bool:
+        auth_kinds = PUBLIC_AUTH_POST | {"auth_logout", "auth_resend"}
+        if route.kind not in auth_kinds:
+            return False
+        if self.auth_service is None:
+            self._send_json(503, {"ok": False, "error": "auth_not_configured"})
+            return True
+        ip = self.client_address[0] if self.client_address else None
+        user_agent = self.headers.get("User-Agent")
+        email = payload.get("email") if isinstance(payload.get("email"), str) else None
+        if route.kind == "auth_signup":
+            if not self._rate_limit_auth("signup", email):
+                return True
+            result = self.auth_service.signup(payload, ip=ip, user_agent=user_agent)
+            self._send_json(result.http_status, result.body, set_auth_cookie=result.access_token)
+            return True
+        if route.kind == "auth_login":
+            if not self._rate_limit_auth("login", email):
+                return True
+            result = self.auth_service.login(payload, ip=ip, user_agent=user_agent)
+            self._send_json(result.http_status, result.body, set_auth_cookie=result.access_token)
+            return True
+        if route.kind == "auth_logout":
+            if not self._rate_limit_auth("logout", None):
+                return True
+            ctx = self._auth_context() or AuthContext(kind="none")
+            result = self.auth_service.logout(ctx)
+            self._send_json(result.http_status, result.body, set_auth_cookie="")
+            return True
+        if route.kind == "auth_forgot":
+            if not self._rate_limit_auth("forgot", email):
+                return True
+            result = self.auth_service.forgot_password(payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "auth_reset":
+            if not self._rate_limit_auth("reset", None):
+                return True
+            result = self.auth_service.reset_password(payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "auth_verify":
+            result = self.auth_service.verify_email(payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "auth_resend":
+            ctx = self._auth_context() or AuthContext(kind="none")
+            result = self.auth_service.resend_verification(ctx)
+            self._send_json(result.http_status, result.body)
+            return True
+        return False
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self._apply_cors()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -243,8 +524,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         route = parse_route(path)
         if route is not None:
-            if not self._authorized_service():
-                self._send_json(401, {"error": "unauthorized"})
+            if route.kind in PUBLIC_AUTH_POST or route.kind in {"auth_logout", "auth_resend"}:
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return
+            if self._authorize_route(route) is None:
                 return
             if self._handle_service_get(route):
                 return
@@ -292,12 +575,17 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         route = parse_route(path)
         if route is not None:
-            if not self._authorized_service():
-                self._send_json(401, {"error": "unauthorized"})
+            if route.kind in {"auth_me", "auth_session"}:
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
+            if route.kind not in PUBLIC_AUTH_POST:
+                if self._authorize_route(route) is None:
+                    return
             payload = self._read_json_body()
             if payload is None:
                 self._send_json(400, {"error": "invalid_json"})
+                return
+            if self._handle_auth_post(route, payload):
                 return
             if self._handle_service_post(route, payload):
                 return
@@ -516,6 +804,30 @@ def main() -> int:
         interval_seconds=heartbeat_interval,
     )
     heartbeat_poller.start()
+    auth_db = os.getenv(
+        "VPS_AUTH_DB_PATH",
+        str(ROOT / "logs" / "vps_auth.sqlite"),
+    )
+    auth_store = VpsAuthStore(Path(auth_db))
+    jwt_secret = (os.getenv("VPS_AUTH_JWT_SECRET") or "").strip()
+    auth_prefixes = tuple(
+        p.strip()
+        for p in (os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES") or "").split(",")
+        if p.strip()
+    )
+    auth_service: AuthService | None = None
+    if not jwt_secret:
+        logger.warning("VPS_AUTH_JWT_SECRET unset; user signup/login disabled")
+    elif not jwt_secret_usable(jwt_secret):
+        logger.error("VPS_AUTH_JWT_SECRET does not meet minimum length; user auth disabled")
+    else:
+        auth_service = AuthService(
+            auth_store,
+            jwt_secret=jwt_secret,
+            access_ttl_seconds=int(os.getenv("VPS_AUTH_ACCESS_TOKEN_TTL_SECONDS", "3600")),
+            lock_after=int(os.getenv("VPS_AUTH_LOCK_AFTER_FAILURES", "5")),
+            lock_seconds=float(os.getenv("VPS_AUTH_LOCK_SECONDS", "900")),
+        )
     farm_management_service = VpsFarmManagementService(
         job_store=vps_job_store,
         assignment_store=assignment_store,
@@ -528,6 +840,8 @@ def main() -> int:
         rate_limiter=mgmt_rate,
         status_store=status_store,
         heartbeat_interval_seconds=heartbeat_interval,
+        auth_store=auth_store,
+        esim_url_prefixes=auth_prefixes,
     )
 
     sms_rate_limiter = VpsRateLimiter(
@@ -556,6 +870,19 @@ def main() -> int:
     Handler.farm_service_token = os.getenv("FARM_SERVICE_TOKEN") or None
     Handler.slot_sms_service = slot_sms_service
     Handler.farm_management_service = farm_management_service
+    Handler.auth_service = auth_service
+    Handler.auth_rate_limiter = AuthRateLimiter(
+        limit=int(os.getenv("VPS_AUTH_RATE_LIMIT", "10")),
+        window_seconds=float(os.getenv("VPS_AUTH_RATE_WINDOW_SECONDS", "60")),
+        max_keys=int(os.getenv("VPS_AUTH_RATE_MAX_KEYS", "4096")),
+    )
+    Handler.allowed_origins = _parse_allowed_origins(os.getenv("VPS_ALLOWED_ORIGINS", ""))
+    Handler.auth_cookie_name = os.getenv("VPS_AUTH_COOKIE_NAME") or None
+    Handler.auth_cookie_secure = os.getenv("VPS_AUTH_COOKIE_SECURE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     Handler.lovable_inbound_url = os.getenv("LOVABLE_INBOUND_WEBHOOK_URL") or None
     Handler.lovable_inbound_secret = os.getenv("LOVABLE_INBOUND_WEBHOOK_HMAC_SECRET") or None
     Handler.request_timeout = config.request_timeout_seconds
@@ -586,6 +913,7 @@ def main() -> int:
         assignment_store.close()
         event_store.close()
         status_store.close()
+        auth_store.close()
     return 0
 
 

@@ -20,12 +20,19 @@ ERROR_MESSAGES: dict[str, str] = {
     "farm_unreachable": "Farm Agent is unreachable or not configured",
     "provisioning_failed": "Provisioning did not complete on the Farm Agent",
     "action_not_supported": "Farm Agent does not support this operation",
-    "unauthorized": "Missing or invalid FARM_SERVICE_TOKEN",
+    "unauthorized": "Missing or invalid credentials",
     "idempotency_conflict": "Idempotency key reused with different payload",
     "missing_idempotency_key": "idempotency_key is required",
     "invalid_destination": "SMS destination number is invalid",
     "invalid_message": "SMS body is missing or too long",
     "not_found": "Resource not found",
+    "auth_not_hosted_on_vps": (
+        "User sign-up and login are hosted by Lovable Cloud Auth, not this VPS"
+    ),
+    "invalid_credentials": "Email or password is incorrect",
+    "invalid_email": "email must be a valid address",
+    "weak_password": "Password does not meet production requirements",
+    "auth_not_configured": "User authentication is not configured on this VPS",
 }
 
 

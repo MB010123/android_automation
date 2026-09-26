@@ -23,8 +23,10 @@ from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_public_id import farm_slot_for_public_id, public_id_for_farm_slot
 from infrastructure.slot_status_store import SlotStatusStore
+from infrastructure.vps_auth_store import VpsAuthStore
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
+from application.auth_service import validate_esim_storage_key
 
 logger = logging.getLogger("vps_backend.farm_mgmt")
 
@@ -54,6 +56,8 @@ class VpsFarmManagementService:
         status_store: SlotStatusStore | None = None,
         heartbeat_interval_seconds: float = 30.0,
         clock: Callable[[], float] | None = None,
+        auth_store: VpsAuthStore | None = None,
+        esim_url_prefixes: tuple[str, ...] = (),
     ) -> None:
         self._jobs = job_store
         self._assignments = assignment_store
@@ -67,6 +71,8 @@ class VpsFarmManagementService:
         self._status_store = status_store
         self._heartbeat_interval = heartbeat_interval_seconds
         self._clock = clock or time.time
+        self._auth_store = auth_store
+        self._esim_url_prefixes = esim_url_prefixes
 
     def get_slot_status(self, slot_public_id: str) -> ApiResult:
         """Per-slot status derived from heartbeat + assignment + jobs (never from caller input)."""
@@ -128,6 +134,112 @@ class VpsFarmManagementService:
             "checked_at": iso_ts(now),
         }
         return ApiResult(200, body)
+
+    def list_all_slots(self) -> ApiResult:
+        """Inventory of every configured bay (dashboard / hardware-feed)."""
+        slots = []
+        for bay in sorted(self._known_slots):
+            result = self.get_slot_status(public_id_for_farm_slot(bay))
+            if result.http_status == 200:
+                slots.append(result.body)
+        return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
+
+    def get_slot_record(self, slot_public_id: str) -> ApiResult:
+        """Lovable public.slots-shaped view. Unobserved fields stay null/unknown."""
+        status = self.get_slot_status(slot_public_id)
+        if status.http_status != 200:
+            return status
+        s = status.body
+        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        owner = None
+        if farm_slot is not None and self._auth_store is not None:
+            owner = self._auth_store.owner_of_slot(farm_slot)
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "slot_id": s["slot_id"],
+                "motherboard_slot_num": s["bay"],
+                "hardware_box_id": s["box"],
+                "user_id": owner,
+                "rental_id": s["rental_id"],
+                "status": s["status"],
+                "assigned": s["assigned"],
+                "assigned_at": s["assigned_at"],
+                "carrier_name": None,
+                "phone_number": None,
+                "imei2": None,
+                "imei2_status": "unknown",
+                "last_heartbeat": s["last_seen_at"],
+                "band_lock_setting": None,
+                "proxy_address": None,
+                "provisioning_phase": s["provisioning_phase"],
+                "heartbeat": s["heartbeat"],
+                "adb_online": s["adb_online"],
+                "checked_at": s["checked_at"],
+            },
+        )
+
+    def user_owns_public_slot(self, user_id: str, slot_public_id: str) -> bool:
+        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        if farm_slot is None or farm_slot not in self._known_slots or self._auth_store is None:
+            return False
+        return self._auth_store.owner_of_slot(farm_slot) == user_id
+
+    def list_slots_for_user(self, user_id: str) -> ApiResult:
+        if self._auth_store is None:
+            return ApiResult(200, {"ok": True, "slots": [], "count": 0})
+        slots = []
+        for owned in self._auth_store.list_owned_slots(user_id):
+            result = self.get_slot_status(public_id_for_farm_slot(owned.farm_slot_id))
+            if result.http_status != 200:
+                continue
+            item = dict(result.body)
+            item["last_heartbeat"] = item.get("last_seen_at")
+            item["carrier_name"] = None
+            item["phone_number"] = None
+            item["imei2"] = None
+            slots.append(item)
+        return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
+
+    def assign_slot_by_public_id(self, slot_public_id: str, payload: dict[str, Any]) -> ApiResult:
+        """eSIM provision via public slot UUID (Lovable esim_uploads.qr_code_url)."""
+        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        if farm_slot is None or farm_slot not in self._known_slots:
+            return ApiResult(404, error_body("slot_not_found"))
+        body = dict(payload)
+        if not str(body.get("esim_qr_url") or "").strip():
+            qr = str(body.get("qr_code_url") or "").strip()
+            if qr:
+                body["esim_qr_url"] = qr
+        return self.assign_slot(farm_slot, body)
+
+    def assign_esim_for_user(self, slot_public_id: str, payload: dict[str, Any], user_id: str) -> ApiResult:
+        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        if farm_slot is None or farm_slot not in self._known_slots:
+            return ApiResult(404, error_body("slot_not_found"))
+        owner = self._auth_store.owner_of_slot(farm_slot) if self._auth_store is not None else None
+        if owner != user_id:
+            return ApiResult(404, error_body("slot_not_found"))
+        raw_ref = str(payload.get("storage_key") or payload.get("qr_code_url") or payload.get("esim_qr_url") or "")
+        storage_key = validate_esim_storage_key(raw_ref, allowed_url_prefixes=self._esim_url_prefixes)
+        if storage_key is None:
+            return ApiResult(400, error_body("invalid_request", message="eSIM reference must be a storage key or allowlisted URL"))
+        body = dict(payload)
+        body["esim_qr_url"] = storage_key
+        body.pop("user_id", None)
+        result = self.assign_slot(farm_slot, body)
+        if result.http_status == 202 and self._auth_store is not None:
+            rental_id = str(payload.get("rental_id") or "").strip() or None
+            self._auth_store.record_esim_upload(
+                user_id=user_id,
+                farm_slot_id=farm_slot,
+                storage_key=storage_key,
+                rental_id=rental_id,
+                carrier=str(payload.get("carrier") or "") or None,
+                job_id=result.body.get("job_id"),
+            )
+        return result
 
     def list_available_slots(self) -> ApiResult:
         try:
@@ -214,6 +326,9 @@ class VpsFarmManagementService:
         self._events.append(bay, "slot_assigned", f"rental_id={rental_id} job_id={record.job_id}")
         self._events.append(bay, "assignment_requested", f"job_id={record.job_id}")
         self._events.append(bay, "provisioning_started", f"job_id={record.job_id}")
+        owner = str(payload.get("user_id") or "").strip()
+        if owner and self._auth_store is not None:
+            self._auth_store.claim_slot(bay, owner, rental_id)
         logger.info("assignment_created job_id=%s bay=%s", record.job_id, bay)
         self._worker.enqueue_process(record.job_id)
         return ApiResult(202, assign_acceptance_body(job_id=record.job_id, bay=bay))
