@@ -36,10 +36,13 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
             {
                 "name": "Auth",
                 "description": (
-                    "VPS-authoritative user authentication. "
-                    "Browser calls `/auth/signup` and `/auth/login`; the VPS stores Argon2id/scrypt hashes "
-                    "and issues a short-lived USER_ACCESS_TOKEN. "
-                    "`FARM_SERVICE_TOKEN` remains a separate machine-to-machine credential."
+                    "Supabase/Lovable Auth is the user identity authority. "
+                    "The browser signs up, logs in, and resets passwords through Supabase Auth. "
+                    "Optional VPS `/auth/*` routes proxy GoTrue only; the VPS does not store "
+                    "passwords or issue a second user JWT. "
+                    "`FARM_SERVICE_TOKEN` is Lovable/server → VPS. "
+                    "VPS → Lovable tenant calls use a separate server-only machine credential "
+                    "that is never accepted on these inbound routes."
                 ),
             },
             {"name": "Integration", "description": "Outbound webhooks to Lovable (not inbound VPS routes)."},
@@ -56,8 +59,10 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
                     "type": "http",
                     "scheme": "bearer",
                     "description": (
-                        "Use `Authorization: Bearer <USER_ACCESS_TOKEN>` from `/auth/login` or `/auth/signup`. "
-                        "Never send FARM_SERVICE_TOKEN, FARM_AGENT_API_TOKEN, or VOIDFIX_WEBHOOK_SECRET from the browser."
+                        "Use `Authorization: Bearer <USER_ACCESS_TOKEN>` from Supabase Auth "
+                        "(or the optional VPS GoTrue proxy). "
+                        "Never send FARM_SERVICE_TOKEN, FARM_AGENT_API_TOKEN, VOIDFIX_WEBHOOK_SECRET, "
+                        "or any VPS↔Lovable machine credential from the browser."
                     ),
                 },
                 "VoidfixWebhookSecretHeader": {
@@ -283,8 +288,9 @@ def _schemas() -> dict[str, Any]:
             "description": (
                 "Derived from the VPS heartbeat store (Farm `GET /agent/health` polled every "
                 "`heartbeat_interval_seconds`), the assignment store and the job store. "
-                "Radio/carrier/IMEI2 are not observed by the Farm health endpoint and are always "
-                "reported as unknown/null — never inferred from ADB state."
+                "Farm health does not observe radio state; `cellular_status` stays unknown. "
+                "`carrier_name` and `imei2` come from the authoritative Supabase `slots` row "
+                "when present; otherwise they are null / unknown. Request bodies never supply IMEI2."
             ),
             "properties": {
                 "ok": {"type": "boolean"},
@@ -332,8 +338,9 @@ def _schemas() -> dict[str, Any]:
                 },
                 "cellular_status": {"type": "string", "enum": ["unknown"]},
                 "carrier": {"type": "string", "nullable": True},
+                "carrier_name": {"type": "string", "nullable": True},
                 "imei2": {"type": "string", "nullable": True},
-                "imei2_status": {"type": "string", "enum": ["unknown"]},
+                "imei2_status": {"type": "string", "enum": ["unknown", "known"]},
                 "checked_at": {"type": "string", "format": "date-time"},
             },
         },
@@ -451,7 +458,7 @@ def _schemas() -> dict[str, Any]:
             "description": (
                 "Lovable `public.slots`-shaped view of one farm bay. "
                 "`user_id` is the authenticated owner when the slot is claimed. "
-                "Carrier, phone, and IMEI2 stay null/unknown unless observed. "
+                "`carrier_name` and `imei2` are read from Supabase `slots` only. "
                 "proxy_auth and gateway_api_key are never returned."
             ),
             "properties": {
@@ -467,7 +474,7 @@ def _schemas() -> dict[str, Any]:
                 "carrier_name": {"type": "string", "nullable": True},
                 "phone_number": {"type": "string", "nullable": True},
                 "imei2": {"type": "string", "nullable": True},
-                "imei2_status": {"type": "string", "enum": ["unknown"]},
+                "imei2_status": {"type": "string", "enum": ["unknown", "known"]},
                 "last_heartbeat": {"type": "string", "format": "date-time", "nullable": True},
                 "band_lock_setting": {"type": "string", "nullable": True},
                 "proxy_address": {"type": "string", "nullable": True},
@@ -595,8 +602,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "tags": ["Auth"],
                 "summary": "Create a user account and session",
                 "description": (
-                    "Authoritative VPS signup. Email is normalized to lowercase. "
-                    "Passwords are hashed (Argon2id when available, otherwise scrypt) and never returned. "
+                    "Optional convenience proxy to Supabase Auth. The browser may also sign up "
+                    "directly through Lovable/Supabase Auth. Email is normalized to lowercase. "
+                    "Passwords are sent only to Supabase GoTrue and never stored or logged on the VPS. "
                     "A client-supplied `role` is ignored; new accounts are `user`."
                 ),
                 "security": [],
@@ -724,8 +732,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "tags": ["Auth"],
                 "summary": "Request a password-reset token",
                 "description": (
-                    "Always returns `{ok:true}`. Tokens are stored hashed. "
-                    "Email delivery is not implemented on this VPS; hook `AuthService` token_sink / SMTP."
+                    "Always returns `{ok:true}`. Recovery is issued by Supabase Auth. "
+                    "Configure SMTP on the Supabase project; the VPS does not send mail."
                 ),
                 "security": [],
                 "requestBody": {

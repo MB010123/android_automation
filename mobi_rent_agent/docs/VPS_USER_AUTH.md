@@ -1,67 +1,61 @@
 # VPS user authentication
 
-The VPS (`https://api.loanerphones.com`) is the authoritative application auth service.
+The VPS (`https://api.loanerphones.com`) is the farm/orchestration API. **Supabase Auth (Lovable Cloud) is the only identity authority.** The VPS does not issue a second user JWT and does not store passwords, password hashes, sessions, or reset tokens.
 
 ```
-Browser / Lovable frontend
-  → POST /auth/signup or /auth/login
-  → VPS users/sessions SQLite
-  → signed USER_ACCESS_TOKEN
-  → Authorization: Bearer <USER_ACCESS_TOKEN> on user APIs
+Browser
+  → Lovable / Supabase Auth (signup, login, logout, forgot/reset password)
+  → Authorization: Bearer <SUPABASE_ACCESS_TOKEN>
+  → VPS validates the token (HS256 with SUPABASE_JWT_SECRET, else GET /auth/v1/user)
+  → tenant reads/writes via Lovable server API (VPS_TO_LOVABLE_API_TOKEN)
 ```
 
-Do **not** send passwords to Lovable Cloud Auth for this product flow.
-Do **not** put `FARM_SERVICE_TOKEN`, `FARM_AGENT_API_TOKEN`, or `VOIDFIX_WEBHOOK_SECRET` in browser JavaScript.
+Optional VPS `/auth/signup` and `/auth/login` routes only proxy GoTrue. The frontend may call Supabase Auth directly.
+
+| Table / store | Role |
+|---|---|
+| `auth.users` | Email/password, sessions (Supabase Auth) |
+| `profiles` | Application profile (`id` = auth user id) |
+| `slots` | Ownership (`user_id`) and persistent radio fields |
+| `messages` | Tenant SMS inbox / outbox |
+| `esim_uploads` | QR / storage key per slot |
+| `esim-records` | Private Storage bucket |
+
+See [SQLITE_INVENTORY.md](SQLITE_INVENTORY.md) for operational SQLite that remains.
+See [VPS_LOVABLE_SERVER_API.md](VPS_LOVABLE_SERVER_API.md) for the VPS → Lovable contract.
+
+Do **not** put `FARM_SERVICE_TOKEN`, `FARM_AGENT_API_TOKEN`, `VOIDFIX_WEBHOOK_SECRET`, or `VPS_TO_LOVABLE_API_TOKEN` in browser JavaScript.
 
 ## Credential classes
 
 | Class | Used for | Not used for |
 |---|---|---|
-| `USER_ACCESS_TOKEN` | User dashboard: `/auth/me`, `/slots`, SMS, actions, eSIM | Farm Agent, VoidFix webhook |
-| `FARM_SERVICE_TOKEN` | Lovable **server-side** → VPS farm/SMS ops | User login / browser |
+| Supabase access token | User dashboard | Farm Agent, VoidFix webhook |
+| `FARM_SERVICE_TOKEN` | Lovable **server-side** → VPS farm/SMS ops | User login / browser / Lovable tenant API |
+| `VPS_TO_LOVABLE_API_TOKEN` | VPS → Lovable server tenant API | Browser, Farm Agent, inbound webhook |
 | `FARM_AGENT_API_TOKEN` | VPS → Farm Agent | Users or browsers |
-| `VOIDFIX_WEBHOOK_SECRET` | VoidFix inbound webhook only | Any `/auth/*` or `/slots/*` |
+| `VOIDFIX_WEBHOOK_SECRET` | VoidFix inbound only | `/auth/*` or `/slots/*` |
 
-## Frontend
+`SUPABASE_SERVICE_ROLE_KEY` is **not required** and is unused on the VPS production path.
 
-Base URL: `https://api.loanerphones.com`
+## Environment
 
-- `POST /auth/signup` `{email, password}`
-- `POST /auth/login` `{email, password}`
-- `GET /auth/me`
-- `GET /auth/session`
-- `POST /auth/logout`
+Required for user token validation: `SUPABASE_URL`, `SUPABASE_ANON_KEY`.
 
-Bearer tokens in `localStorage` are XSS-readable. Prefer `VPS_AUTH_COOKIE_NAME` (HttpOnly, Secure, SameSite=Lax) when the frontend origin is allowlisted in `VPS_ALLOWED_ORIGINS`. Tokens expire (`VPS_AUTH_ACCESS_TOKEN_TTL_SECONDS`, default 3600) and logout revokes the server session.
+Required for tenant reads/writes: `LOVABLE_API_URL`, `VPS_TO_LOVABLE_API_TOKEN` (minimum 32 characters; generate 32+ random bytes). Configure the token on the VPS production `.env` manually. Do not copy a local `.env` to production.
 
-CORS never uses `*`. Localhost / 127.0.0.1 are allowed for development. Production origins go in `VPS_ALLOWED_ORIGINS` (comma-separated). No secrets belong in CORS config.
+Optional local JWT verify: `SUPABASE_JWT_SECRET` (project JWT secret, never the anon key, never logged).
 
-## Password reset and email verification
+Optional cookie store for the **same** Supabase access token: `VPS_AUTH_COOKIE_NAME`.
 
-`POST /auth/forgot-password`, `/auth/reset-password`, `/auth/verify-email`, `/auth/resend-verification` persist hashed, single-use, expiring tokens.
+Auth route flood control: `VPS_AUTH_RATE_*`. CORS: `VPS_ALLOWED_ORIGINS`.
 
-**Email delivery is not implemented.** There is no SMTP/provider plugin in this repo. Do not treat forgot-password as having emailed the user.
-
-Production integration point: `AuthService(..., token_sink=your_mailer)` in `tools/vps_backend_server.py` after `create_user` / `forgot_password` / `resend_verification`. The sink receives `("verify"|"reset", raw_token)` and must send mail off-process. Never log the raw token or the password.
-
-## Environment (set by hand on the VPS)
-
-Copy names from `.env.example`. Do not overwrite production `.env`.
-
-Required for signup/login: `VPS_AUTH_JWT_SECRET` of at least 32 UTF-8 bytes (generate with `python tools/generate_vps_auth_secret.py --out /secure/path`, then paste into `.env`). Missing or shorter secrets disable user auth (`503 auth_not_configured`); the secret is never logged.
-
-Optional: `VPS_AUTH_ACCESS_TOKEN_TTL_SECONDS`, `VPS_AUTH_COOKIE_NAME`, `VPS_AUTH_COOKIE_SECURE`, `VPS_ALLOWED_ORIGINS`, `VPS_AUTH_DB_PATH`, lock/rate-limit knobs, `VPS_ESIM_ALLOWED_URL_PREFIXES`.
-
-## Database
-
-Dedicated SQLite `VPS_AUTH_DB_PATH` (default `logs/vps_auth.sqlite`). Schema is created with `CREATE TABLE IF NOT EXISTS` (idempotent). It is **not** the outbound SMS job database. Do not delete `*.sqlite3` / `*.sqlite` on deploy.
+Obsolete and unused: `VPS_AUTH_JWT_SECRET`, `VPS_AUTH_DB_PATH`, `VPS_AUTH_LOCK_*`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Ownership
 
-Identity comes from the validated user token (`sub` + session `jti`). Browser `user_id` is ignored.
+Identity comes from the validated token `sub`. Browser `user_id` is ignored.
 
-`FARM_SERVICE_TOKEN` assignment (with `user_id`) creates `slot_ownership`. A user JWT may call `POST /slots/{slot_id}/esim` only after that row exists for the authenticated user. Unowned deterministic slot UUIDs return **404**. User-owned slot/SMS/action routes also return **404** when the resource is not owned by that user.
+Farm assign claims authoritative `slots.user_id` through Lovable **before** creating a VPS job. User eSIM / SMS / actions return **404** when the caller does not own the slot.
 
-## Safe deploy
-
-Clone the commit into `/tmp`, compile, run tests, copy application files only, keep production `.env`, `slot_msisdn_map.json`, `voidfix_devices.json`, and SQLite files, restart systemd, then check `/health`, `/farm/status` (20/20), and `/auth/signup` against a throwaway account.
+Slot path IDs may be the deterministic farm UUID or the Lovable/Supabase `slots.id`.

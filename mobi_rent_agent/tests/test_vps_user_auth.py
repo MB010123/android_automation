@@ -1,10 +1,9 @@
-"""VPS-authoritative user auth, ownership, CORS, and credential separation."""
+"""Supabase-authoritative user auth, ownership, CORS, and credential separation."""
 from __future__ import annotations
 
 import importlib.util
 import json
 import logging
-import sqlite3
 import sys
 import threading
 import urllib.error
@@ -19,32 +18,26 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.auth_service import (
-    MIN_JWT_SECRET_LENGTH,
-    AuthService,
-    jwt_secret_usable,
-    validate_esim_storage_key,
-)
+from application.auth_service import AuthService, validate_esim_storage_key
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.vps_slot_sms_service import VpsSlotSmsService
 from infrastructure.auth_rate_limiter import AuthRateLimiter
 from infrastructure.farm_sms_client import FarmDispatchResponse
 from infrastructure.outbound_message_store import OutboundMessageStore
-from infrastructure.password_hasher import algorithm_name, hash_password, verify_password
 from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.slot_status_store import SlotStatusStore
-from infrastructure.user_jwt import sign_user_jwt, verify_user_jwt
-from infrastructure.vps_auth_store import VpsAuthStore
+from infrastructure.supabase_jwt import sign_supabase_access_token, verify_supabase_access_token
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
+from tests.fakes_supabase import MemoryGoTrue, MemoryTenant
 
 SLOT1 = public_id_for_farm_slot(1)
 SLOT2 = public_id_for_farm_slot(2)
 STRONG = "correct-horse-battery"
-JWT_SECRET = "unit-test-jwt-secret-not-for-production"
+JWT_SECRET = "unit-test-supabase-jwt-secret-not-for-production"
 FARM_TOKEN = "farm-service-secret"
 AGENT_TOKEN = "farm-agent-secret"
 WEBHOOK_SECRET = "voidfix-webhook-secret"
@@ -65,49 +58,12 @@ class MockFarmSms:
         return FarmDispatchResponse(ok=True, http_status=200, body={"ok": True}, error=None)
 
 
-def _service(tmp_path: Path, store: VpsAuthStore) -> tuple[AuthService, list[tuple[str, str]]]:
-    sink: list[tuple[str, str]] = []
-    svc = AuthService(
-        store,
-        jwt_secret=JWT_SECRET,
-        access_ttl_seconds=3600,
-        lock_after=3,
-        lock_seconds=60.0,
-        token_sink=lambda kind, raw: sink.append((kind, raw)),
-    )
-    return svc, sink
+def _service(gotrue: MemoryGoTrue | None = None, tenant: MemoryTenant | None = None) -> AuthService:
+    return AuthService(supabase=gotrue or MemoryGoTrue(), tenant=tenant or MemoryTenant())
 
 
-def test_password_hash_is_not_plaintext_and_verifies():
-    hashed = hash_password(STRONG)
-    assert hashed != STRONG
-    assert STRONG not in hashed
-    assert algorithm_name() in {"argon2id", "scrypt"}
-    assert verify_password(STRONG, hashed) is True
-    assert verify_password("wrong-password-xx", hashed) is False
-    if algorithm_name() == "scrypt":
-        assert hashed.startswith("scrypt$")
-    else:
-        assert hashed.startswith("$argon2")
-
-
-def test_jwt_rejects_expired_and_non_user_type():
-    token = sign_user_jwt(
-        user_id=str(uuid.uuid4()),
-        session_id=str(uuid.uuid4()),
-        secret=JWT_SECRET,
-        ttl_seconds=3600,
-        now=1_000.0,
-    )
-    assert verify_user_jwt(token, JWT_SECRET, now=1_000.0) is not None
-    assert verify_user_jwt(token, JWT_SECRET, now=5_000.0) is None
-    assert verify_user_jwt(FARM_TOKEN, JWT_SECRET) is None
-    assert verify_user_jwt(AGENT_TOKEN, JWT_SECRET) is None
-
-
-def test_signup_login_duplicate_and_validation(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "auth.sqlite")
-    svc, _ = _service(tmp_path, store)
+def test_signup_login_duplicate_and_validation():
+    svc = _service()
     created = svc.signup({"email": "A@Example.COM", "password": STRONG})
     assert created.http_status == 200
     assert created.body["user"]["email"] == "a@example.com"
@@ -115,6 +71,7 @@ def test_signup_login_duplicate_and_validation(tmp_path: Path):
     assert STRONG not in raw
     assert "password_hash" not in raw
     assert created.body["session"]["token_type"] == "Bearer"
+    assert created.access_token and created.access_token.startswith("sb-")
     dup = svc.signup({"email": "a@example.com", "password": STRONG})
     assert dup.http_status == 400
     assert dup.body["error"] == "invalid_request"
@@ -124,81 +81,60 @@ def test_signup_login_duplicate_and_validation(tmp_path: Path):
     assert ok.http_status == 200
     bad = svc.login({"email": "a@example.com", "password": "wrong-password-xx"})
     assert bad.http_status == 401
-    assert bad.body == {
-        "ok": False,
-        "error": "invalid_credentials",
-        "message": "Email or password is incorrect",
-    }
+    assert bad.body["error"] == "invalid_credentials"
     missing = svc.login({"email": "nobody@example.com", "password": STRONG})
     assert missing.http_status == 401
     assert missing.body["error"] == "invalid_credentials"
-    store.close()
 
 
-def test_inactive_and_locked_and_logout(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "auth.sqlite")
-    svc, _ = _service(tmp_path, store)
+def test_logout_revokes_supabase_token():
+    svc = _service()
     created = svc.signup({"email": "lock@example.com", "password": STRONG})
-    user_id = created.body["user"]["id"]
-    store.set_active(user_id, False)
-    inactive = svc.login({"email": "lock@example.com", "password": STRONG})
-    assert inactive.http_status == 401
-    assert inactive.body["error"] == "invalid_credentials"
-    store.set_active(user_id, True)
-    for _ in range(3):
-        fail = svc.login({"email": "lock@example.com", "password": "wrong-password-xx"})
-        assert fail.body["error"] == "invalid_credentials"
-    locked = svc.login({"email": "lock@example.com", "password": STRONG})
-    assert locked.http_status == 401
-    assert locked.body["error"] == "invalid_credentials"
     token = created.access_token
     ctx = svc.validate_user_token(token)
     assert ctx is not None
     assert svc.logout(ctx).http_status == 200
     assert svc.validate_user_token(token) is None
-    store.close()
 
 
-def test_expired_token_and_reset_revokes(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "auth.sqlite")
-    clock = {"t": 1_000.0}
-    sink: list[tuple[str, str]] = []
-    svc = AuthService(
-        store,
-        jwt_secret=JWT_SECRET,
-        access_ttl_seconds=10,
-        clock=lambda: clock["t"],
-        token_sink=lambda kind, raw: sink.append((kind, raw)),
+def test_supabase_jwt_rejects_expired_and_non_user_role():
+    token = sign_supabase_access_token(
+        user_id=str(uuid.uuid4()),
+        email="jwt@example.com",
+        secret=JWT_SECRET,
+        ttl_seconds=10,
+        now=1_000.0,
     )
-    created = svc.signup({"email": "exp@example.com", "password": STRONG})
-    token = created.access_token
-    assert svc.validate_user_token(token) is not None
-    clock["t"] += 11
+    assert verify_supabase_access_token(token, JWT_SECRET, now=1_000.0) is not None
+    assert verify_supabase_access_token(token, JWT_SECRET, now=1_020.0) is None
+    assert verify_supabase_access_token(FARM_TOKEN, JWT_SECRET) is None
+    svc = AuthService(supabase=MemoryGoTrue(), jwt_secret=JWT_SECRET)
     assert svc.validate_user_token(token) is None
-    clock["t"] += 1
-    forgot = svc.forgot_password({"email": "exp@example.com"})
-    assert forgot.body == {"ok": True}
-    unknown = svc.forgot_password({"email": "missing@example.com"})
-    assert unknown.body == {"ok": True}
-    reset_raw = next(raw for kind, raw in sink if kind == "reset")
-    assert svc.reset_password({"token": reset_raw, "password": "new-strong-pass"}).http_status == 200
-    clock["t"] = 1_000.0
-    assert svc.validate_user_token(token) is None
-    fresh = svc.login({"email": "exp@example.com", "password": "new-strong-pass"})
-    assert fresh.http_status == 200
-    store.close()
+    live = sign_supabase_access_token(
+        user_id="user-1",
+        email="jwt@example.com",
+        secret=JWT_SECRET,
+        ttl_seconds=3600,
+        issuer="https://example.supabase.co",
+    )
+    ctx = svc.validate_user_token(live)
+    assert ctx is not None
+    assert ctx.user is not None
+    assert ctx.user.user_id == "user-1"
+    assert ctx.user.password_hash == ""
 
 
-def test_sql_injection_email_is_parameterized(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "auth.sqlite")
-    svc, _ = _service(tmp_path, store)
+def test_forgot_password_is_generic():
+    svc = _service()
+    assert svc.forgot_password({"email": "exp@example.com"}).body == {"ok": True}
+    assert svc.forgot_password({"email": "missing@example.com"}).body == {"ok": True}
+
+
+def test_sql_injection_email_is_rejected():
+    svc = _service()
     payload = {"email": "a@example.com'; DROP TABLE users; --", "password": STRONG}
     result = svc.signup(payload)
     assert result.http_status == 400
-    assert store.get_user_by_email("a@example.com") is None
-    svc.signup({"email": "safe@example.com", "password": STRONG})
-    assert store.get_user_by_email("safe@example.com") is not None
-    store.close()
 
 
 def test_esim_storage_key_rejects_arbitrary_urls():
@@ -239,12 +175,12 @@ def _http(method: str, url: str, *, token: str | None = None, body: dict | None 
         return exc.code, parsed, dict(exc.headers)
 
 
-def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50, ttl: int = 3600):
+def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50):
     mod = _load_mod()
     Handler = mod.Handler
-    store = VpsAuthStore(tmp_path / "http-auth.sqlite")
-    auth, _sink = _service(tmp_path, store)
-    auth._ttl = ttl
+    gotrue = MemoryGoTrue()
+    tenant = MemoryTenant()
+    auth = AuthService(supabase=gotrue, tenant=tenant)
     jobs = VpsJobStore(tmp_path / "jobs.sqlite")
     assign = SlotAssignmentStore(tmp_path / "assign.sqlite")
     events = SlotEventStore(tmp_path / "events.sqlite")
@@ -265,7 +201,7 @@ def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50, ttl: int = 3600)
         known_farm_slots={1, 2},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         status_store=status,
-        auth_store=store,
+        auth_store=tenant,
     )
     messages = OutboundMessageStore(tmp_path / "sms.sqlite")
     sms = VpsSlotSmsService(
@@ -274,6 +210,7 @@ def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50, ttl: int = 3600)
         farm_status_fetcher=FarmStub(),
         known_farm_slots={1, 2},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        tenant_store=tenant,
     )
     Handler.farm_service_token = FARM_TOKEN
     Handler.auth_service = auth
@@ -283,14 +220,15 @@ def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50, ttl: int = 3600)
     Handler.allowed_origins = frozenset({"https://app.loanerphones.com"})
     Handler.auth_cookie_name = None
     Handler.webhook_secret = WEBHOOK_SECRET
+    Handler.tenant_store = tenant
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, server.server_address[1], store, auth
+    return server, server.server_address[1], tenant, auth
 
 
 def test_http_signup_login_me_logout_and_no_password_logs(tmp_path: Path, caplog):
     caplog.set_level(logging.DEBUG)
-    server, port, store, _auth = _start_auth_server(tmp_path)
+    server, port, _tenant, _auth = _start_auth_server(tmp_path)
     base = f"http://127.0.0.1:{port}"
     try:
         stream = StringIO()
@@ -323,11 +261,10 @@ def test_http_signup_login_me_logout_and_no_password_logs(tmp_path: Path, caplog
         assert STRONG.lower() not in logs
     finally:
         server.shutdown()
-        store.close()
 
 
 def test_http_credential_separation(tmp_path: Path):
-    server, port, store, _auth = _start_auth_server(tmp_path)
+    server, port, _tenant, _auth = _start_auth_server(tmp_path)
     base = f"http://127.0.0.1:{port}"
     try:
         _, created, _ = _http("POST", f"{base}/auth/signup", body={"email": "sep@example.com", "password": STRONG})
@@ -350,11 +287,10 @@ def test_http_credential_separation(tmp_path: Path):
         assert body["slots"] == []
     finally:
         server.shutdown()
-        store.close()
 
 
 def test_http_ownership_and_esim(tmp_path: Path):
-    server, port, store, _auth = _start_auth_server(tmp_path)
+    server, port, tenant, _auth = _start_auth_server(tmp_path)
     base = f"http://127.0.0.1:{port}"
     try:
         _, a, _ = _http("POST", f"{base}/auth/signup", body={"email": "a@example.com", "password": STRONG})
@@ -372,7 +308,7 @@ def test_http_ownership_and_esim(tmp_path: Path):
         status, unowned, _ = _http("POST", f"{base}/slots/{SLOT1}/esim", token=token_a, body=user_esim)
         assert status == 404
         assert unowned.get("error") == "slot_not_found"
-        assert store.owner_of_slot(1) is None
+        assert tenant.owner_of_slot(1) is None
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert listed["count"] == 0
 
@@ -389,7 +325,7 @@ def test_http_ownership_and_esim(tmp_path: Path):
         )
         assert status == 202
         assert farm_job["ok"] is True
-        assert store.owner_of_slot(1) == user_a
+        assert tenant.owner_of_slot(1) == user_a
 
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert listed["count"] == 1
@@ -414,7 +350,7 @@ def test_http_ownership_and_esim(tmp_path: Path):
             },
         )
         assert status == 404
-        assert store.owner_of_slot(2) is None
+        assert tenant.owner_of_slot(2) is None
 
         status, detail, _ = _http("GET", f"{base}/slots/{SLOT1}", token=token_a)
         assert status == 200
@@ -441,28 +377,32 @@ def test_http_ownership_and_esim(tmp_path: Path):
         assert farm_all["count"] == 2
     finally:
         server.shutdown()
-        store.close()
 
 
-def test_jwt_secret_missing_short_and_valid(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "jwt.sqlite")
-    assert jwt_secret_usable("") is False
-    assert jwt_secret_usable("x" * (MIN_JWT_SECRET_LENGTH - 1)) is False
-    assert jwt_secret_usable("x" * MIN_JWT_SECRET_LENGTH) is True
-    with pytest.raises(ValueError, match="jwt_secret_too_short"):
-        AuthService(store, jwt_secret="too-short-secret")
-    with pytest.raises(ValueError, match="jwt_secret_too_short"):
-        AuthService(store, jwt_secret="")
-    ok = AuthService(store, jwt_secret="x" * MIN_JWT_SECRET_LENGTH)
-    created = ok.signup({"email": "jwt@example.com", "password": STRONG})
-    assert created.http_status == 200
-    raw = json.dumps(created.body)
-    assert "x" * MIN_JWT_SECRET_LENGTH not in raw
-    store.close()
+def test_farm_assign_unknown_user_is_rejected(tmp_path: Path):
+    server, port, tenant, _auth = _start_auth_server(tmp_path)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        status, body, _ = _http(
+            "POST",
+            f"{base}/farm/slots/1/assign",
+            token=FARM_TOKEN,
+            body={
+                "rental_id": str(uuid.uuid4()),
+                "esim_qr_url": "https://example.test/private/qr",
+                "carrier": "T-Mobile",
+                "user_id": str(uuid.uuid4()),
+            },
+        )
+        assert status == 400
+        assert body["error"] == "invalid_request"
+        assert tenant.owner_of_slot(1) is None
+    finally:
+        server.shutdown()
 
 
 def test_http_signup_without_auth_service_is_not_configured(tmp_path: Path):
-    server, port, store, _auth = _start_auth_server(tmp_path)
+    server, port, _tenant, _auth = _start_auth_server(tmp_path)
     mod_handler = server.RequestHandlerClass
     previous = mod_handler.auth_service
     mod_handler.auth_service = None
@@ -479,28 +419,10 @@ def test_http_signup_without_auth_service_is_not_configured(tmp_path: Path):
     finally:
         mod_handler.auth_service = previous
         server.shutdown()
-        store.close()
-
-
-def test_auth_store_enforces_foreign_keys(tmp_path: Path):
-    store = VpsAuthStore(tmp_path / "fk.sqlite")
-    assert store.foreign_keys_enabled() is True
-    with pytest.raises(sqlite3.IntegrityError):
-        store._conn.execute(
-            """
-            INSERT INTO sessions (
-                id, user_id, token_hash, created_at, expires_at, revoked_at,
-                last_seen_at, ip, user_agent
-            ) VALUES (?, ?, ?, 1, 2, NULL, 1, NULL, NULL)
-            """,
-            ("sess-1", "missing-user", "hash-1"),
-        )
-        store._conn.commit()
-    store.close()
 
 
 def test_http_cors_and_rate_limit_and_malformed(tmp_path: Path):
-    server, port, store, _auth = _start_auth_server(tmp_path, rate_limit=3)
+    server, port, _tenant, _auth = _start_auth_server(tmp_path, rate_limit=3)
     base = f"http://127.0.0.1:{port}"
     try:
         req = urllib.request.Request(
@@ -550,7 +472,6 @@ def test_http_cors_and_rate_limit_and_malformed(tmp_path: Path):
         assert limited["error"] == "rate_limited"
     finally:
         server.shutdown()
-        store.close()
 
 
 def test_auth_rate_limiter_is_bounded():

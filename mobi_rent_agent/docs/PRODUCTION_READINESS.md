@@ -17,8 +17,9 @@ Status vocabulary:
 | VPS health `GET /health` | `tools/vps_backend_server.py` | `test_vps_backend_*` | Verified earlier (public 200) | — | **READY** |
 | Farm connectivity proxy `GET /farm/status` | `_farm_status` | mocked tests | Verified 20/20 ADB online earlier | Farm Agent on Windows PC | **READY** |
 | Lovable → VPS auth (`FARM_SERVICE_TOKEN`) | `farm_agent_auth.authorize_farm_request` | `test_vps_slot_status::test_http_status_requires_auth_and_returns_body`, mgmt/sms tests | User confirmed token configured; **do not rotate** | Lovable secret store | **READY** |
-| User signup / login | VPS `AuthService` + `VpsAuthStore` (Argon2id/scrypt, JWT + revocable session) | `test_vps_user_auth` | **NOT VERIFIED** on live VPS | Operator must set `VPS_AUTH_JWT_SECRET` | **READY** (API/tests); email send for reset/verify is not wired |
-| Slot inventory `GET /slots` / `GET /slots/{id}` | `list_slots_for_user` / `list_all_slots`, `get_slot_record` | `test_vps_user_auth`, `test_vps_slot_status` | **NOT VERIFIED** | Ownership in `slot_ownership` | **READY**; users see owned slots only; farm token sees all |
+| User signup / login | Supabase Auth is authoritative; VPS optionally proxies GoTrue and validates access tokens (no VPS user JWT) | `test_vps_user_auth`, `test_supabase_auth` | **NOT VERIFIED** on live VPS | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, optional `SUPABASE_JWT_SECRET` | **READY** (API/tests); SMTP is configured in Supabase |
+| VPS → Lovable tenant API | `LovableServerClient` + `LovableTenantStore` (`VPS_TO_LOVABLE_API_TOKEN`) | `test_lovable_server_api` | **NOT VERIFIED** | Lovable must implement `docs/VPS_LOVABLE_SERVER_API.md` | **PARTIALLY READY** — VPS client is code-complete; Lovable endpoints are still required |
+| Slot inventory `GET /slots` / `GET /slots/{id}` | `list_slots_for_user` / `list_all_slots`, `get_slot_record` | `test_vps_user_auth`, `test_slot_imei2_response` | **NOT VERIFIED** | Authoritative `slots.user_id`, `imei2`, `carrier_name` via Lovable | **READY** (VPS); users see owned slots only; farm token sees all |
 | eSIM by slot `POST /slots/{id}/esim` | User: `assign_esim_for_user` (storage key). Farm: `assign_slot_by_public_id` | `test_vps_user_auth`, `test_esim_assign_accepts_qr_code_url` | **NOT VERIFIED** | Private storage key or allowlisted prefix | **READY** (async job; no HTTP-time download) |
 | Slot availability `GET /farm/slots/available` | `VpsFarmManagementService.list_available` | `test_vps_farm_management_api` | Verified 200 earlier | — | **READY** |
 | Bay assignment `POST /farm/slots/{bay}/assign` | `assign_slot` (202 + job, idempotent per `rental_id`) | idempotent replay, 409 on other rental, response shape, failure releases bay | **NOT VERIFIED** (real device action) | — | **READY** (API) / provisioning outcome see below |
@@ -86,11 +87,12 @@ Truthfulness guarantees: `state: done` / `provisioning_phase: completed` is emit
 
 Base URL: `https://api.loanerphones.com`.
 
-- Browser user APIs: `Authorization: Bearer <USER_ACCESS_TOKEN>` from `/auth/login`.
+- Browser user APIs: `Authorization: Bearer <USER_ACCESS_TOKEN>` from Supabase Auth (or optional VPS `/auth/login`).
 - Lovable server-side farm/SMS: `Authorization: Bearer <FARM_SERVICE_TOKEN>`.
+- VPS → Lovable tenant API: `Authorization: Bearer <VPS_TO_LOVABLE_API_TOKEN>` (server-side only).
 - Public: `/health`, `/farm/status`, `/docs`, `/openapi.json`, `/redoc`, `/auth/signup`, `/auth/login`, `/voidfix/inbound`.
 
-**Frontend security boundary:** Browser holds only the user access token (or an HttpOnly cookie). `FARM_SERVICE_TOKEN` stays on the Lovable server. See `docs/VPS_USER_AUTH.md`.
+**Frontend security boundary:** Browser holds only the user access token (or an HttpOnly cookie). `FARM_SERVICE_TOKEN` and `VPS_TO_LOVABLE_API_TOKEN` stay server-side. See `docs/VPS_USER_AUTH.md`.
 
 | Step | Request | Success | Notes |
 |---|---|---|---|
@@ -162,6 +164,7 @@ Until the Farm Agent is redeployed, `assign` jobs will fail with whatever the ol
 - **Unattended eSIM**: Android companion + env gates (`ESIM_LIVE_DOWNLOAD_ARMED`, allowlist) — outside this change.
 - **Radio / carrier / IMEI2 truth**: requires a new read-only Farm endpoint; until then `unknown`.
 - **Airplane / VoidFix repair**: capability gaps, 501.
+- **Lovable tenant API**: implement `docs/VPS_LOVABLE_SERVER_API.md` and set `LOVABLE_API_URL` + `VPS_TO_LOVABLE_API_TOKEN` on the VPS (do not copy local `.env`).
 - **Lovable receiver + secrets**: `LOVABLE_INBOUND_WEBHOOK_URL`, `LOVABLE_INBOUND_WEBHOOK_HMAC_SECRET`, receiver implementation.
 - **Hardware queue**: Lovable/Supabase endpoint.
 - **Production verification**: no VPS SSH from this workstation; the read-only steps above must be run by an operator.

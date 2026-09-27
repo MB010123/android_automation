@@ -23,6 +23,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"),
     re.compile(r"FARM_SERVICE_TOKEN\s*=\s*\S+"),
     re.compile(r"FARM_AGENT_API_TOKEN\s*=\s*\S+"),
+    re.compile(r"VPS_TO_LOVABLE_API_TOKEN\s*=\s*\S+"),
 ]
 
 REQUIRED_PATHS = [
@@ -110,7 +111,9 @@ def test_schemas_present():
     assert unauthorized["example"] == {"error": "unauthorized"}
     status_props = schemas["SlotStatusResponse"]["properties"]
     assert status_props["cellular_status"]["enum"] == ["unknown"]
-    assert status_props["imei2_status"]["enum"] == ["unknown"]
+    assert status_props["imei2_status"]["enum"] == ["unknown", "known"]
+    assert "carrier_name" in status_props
+    assert schemas["SlotRecordResponse"]["properties"]["imei2_status"]["enum"] == ["unknown", "known"]
 
 
 def test_unsupported_actions_documented():

@@ -94,6 +94,23 @@ def _validate_vps_role(
         report.add("warn", "farm_agent_url", "FARM_AGENT_URL unset; /farm/status proxy will be unavailable")
     if not os.getenv("FARM_AGENT_API_TOKEN"):
         report.add("error", "farm_agent_token", "FARM_AGENT_API_TOKEN required on VPS for farm status proxy")
+    if not (os.getenv("LOVABLE_API_URL") or "").strip():
+        report.add("error", "lovable_api_url", "LOVABLE_API_URL required on VPS for tenant data")
+    token = (os.getenv("VPS_TO_LOVABLE_API_TOKEN") or "").strip()
+    if not token:
+        report.add("error", "lovable_machine_token", "VPS_TO_LOVABLE_API_TOKEN required on VPS")
+    elif len(token) < 32:
+        report.add(
+            "error",
+            "lovable_machine_token_weak",
+            "VPS_TO_LOVABLE_API_TOKEN must be at least 32 characters",
+        )
+    if (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip():
+        report.add(
+            "warn",
+            "supabase_service_role_unused",
+            "SUPABASE_SERVICE_ROLE_KEY is unused; tenant access is via the Lovable server API",
+        )
 
     inbound_db = os.getenv("INBOUND_MESSAGES_DB_PATH")
     if inbound_db:

@@ -33,6 +33,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "invalid_email": "email must be a valid address",
     "weak_password": "Password does not meet production requirements",
     "auth_not_configured": "User authentication is not configured on this VPS",
+    "auth_unavailable": "Authentication service is temporarily unavailable",
 }
 
 

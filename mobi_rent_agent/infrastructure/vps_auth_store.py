@@ -1,4 +1,9 @@
-"""SQLite persistence for VPS user auth, sessions, tokens, slot ownership, eSIM records."""
+"""Legacy VPS SQLite auth store.
+
+Unused by the production server. Tenant identity and data live in Supabase.
+Kept only so old local files are not imported by accident during the cutover.
+Do not wire this into `vps_backend_server.py`.
+"""
 from __future__ import annotations
 
 import sqlite3

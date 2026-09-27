@@ -23,7 +23,6 @@ from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_public_id import farm_slot_for_public_id, public_id_for_farm_slot
 from infrastructure.slot_status_store import SlotStatusStore
-from infrastructure.vps_auth_store import VpsAuthStore
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
 from application.auth_service import validate_esim_storage_key
@@ -32,6 +31,13 @@ logger = logging.getLogger("vps_backend.farm_mgmt")
 
 SUPPORTED_ACTIONS = {"reboot", "airplane_cycle", "voidfix_repair"}
 RENTAL_ID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+def _optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 @dataclass
@@ -56,7 +62,7 @@ class VpsFarmManagementService:
         status_store: SlotStatusStore | None = None,
         heartbeat_interval_seconds: float = 30.0,
         clock: Callable[[], float] | None = None,
-        auth_store: VpsAuthStore | None = None,
+        auth_store: Any = None,
         esim_url_prefixes: tuple[str, ...] = (),
     ) -> None:
         self._jobs = job_store
@@ -74,9 +80,22 @@ class VpsFarmManagementService:
         self._auth_store = auth_store
         self._esim_url_prefixes = esim_url_prefixes
 
+    def resolve_farm_slot(self, slot_ref: str) -> int | None:
+        farm_slot = farm_slot_for_public_id(slot_ref, self._overrides)
+        if farm_slot is not None:
+            return farm_slot
+        resolver = getattr(self._auth_store, "farm_slot_for_slot_id", None)
+        if not callable(resolver):
+            return None
+        try:
+            return resolver(slot_ref)
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            logger.warning("tenant_slot_id_lookup_failed")
+            return None
+
     def get_slot_status(self, slot_public_id: str) -> ApiResult:
         """Per-slot status derived from heartbeat + assignment + jobs (never from caller input)."""
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
         now = self._clock()
@@ -129,10 +148,12 @@ class VpsFarmManagementService:
             # carrier, IP and IMEI2 are not observed here; never guessed.
             "cellular_status": "unknown",
             "carrier": None,
+            "carrier_name": None,
             "imei2": None,
             "imei2_status": "unknown",
             "checked_at": iso_ts(now),
         }
+        self._overlay_tenant_slot(body, farm_slot)
         return ApiResult(200, body)
 
     def list_all_slots(self) -> ApiResult:
@@ -150,29 +171,34 @@ class VpsFarmManagementService:
         if status.http_status != 200:
             return status
         s = status.body
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         owner = None
+        tenant_row: dict[str, Any] = {}
         if farm_slot is not None and self._auth_store is not None:
             owner = self._auth_store.owner_of_slot(farm_slot)
+            tenant_row = self._tenant_slot_row(farm_slot)
+        radio = self._tenant_radio_fields(farm_slot) if farm_slot is not None else {"carrier_name": None, "imei2": None}
+        box = tenant_row.get("hardware_box_id") or s["box"]
         return ApiResult(
             200,
             {
                 "ok": True,
                 "slot_id": s["slot_id"],
                 "motherboard_slot_num": s["bay"],
-                "hardware_box_id": s["box"],
-                "user_id": owner,
+                "hardware_box_id": box,
+                "user_id": owner or tenant_row.get("user_id"),
                 "rental_id": s["rental_id"],
                 "status": s["status"],
                 "assigned": s["assigned"],
                 "assigned_at": s["assigned_at"],
-                "carrier_name": None,
-                "phone_number": None,
-                "imei2": None,
-                "imei2_status": "unknown",
-                "last_heartbeat": s["last_seen_at"],
-                "band_lock_setting": None,
-                "proxy_address": None,
+                "carrier_name": radio["carrier_name"],
+                "phone_number": tenant_row.get("phone_number"),
+                "imei2": radio["imei2"],
+                "imei2_status": "known" if radio["imei2"] else "unknown",
+                "last_heartbeat": s["last_seen_at"] or tenant_row.get("last_heartbeat"),
+                "band_lock_setting": tenant_row.get("band_lock_setting"),
+                "proxy_address": tenant_row.get("proxy_address"),
+                "gateway_provider": tenant_row.get("gateway_provider"),
                 "provisioning_phase": s["provisioning_phase"],
                 "heartbeat": s["heartbeat"],
                 "adb_online": s["adb_online"],
@@ -181,7 +207,7 @@ class VpsFarmManagementService:
         )
 
     def user_owns_public_slot(self, user_id: str, slot_public_id: str) -> bool:
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots or self._auth_store is None:
             return False
         return self._auth_store.owner_of_slot(farm_slot) == user_id
@@ -195,16 +221,17 @@ class VpsFarmManagementService:
             if result.http_status != 200:
                 continue
             item = dict(result.body)
-            item["last_heartbeat"] = item.get("last_seen_at")
-            item["carrier_name"] = None
-            item["phone_number"] = None
-            item["imei2"] = None
+            item["last_heartbeat"] = item.get("last_seen_at") or item.get("last_heartbeat")
+            radio = self._tenant_radio_fields(owned.farm_slot_id)
+            item["carrier_name"] = radio["carrier_name"]
+            item["imei2"] = radio["imei2"]
+            item["imei2_status"] = "known" if radio["imei2"] else "unknown"
             slots.append(item)
         return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
 
     def assign_slot_by_public_id(self, slot_public_id: str, payload: dict[str, Any]) -> ApiResult:
         """eSIM provision via public slot UUID (Lovable esim_uploads.qr_code_url)."""
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
         body = dict(payload)
@@ -215,7 +242,7 @@ class VpsFarmManagementService:
         return self.assign_slot(farm_slot, body)
 
     def assign_esim_for_user(self, slot_public_id: str, payload: dict[str, Any], user_id: str) -> ApiResult:
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
         owner = self._auth_store.owner_of_slot(farm_slot) if self._auth_store is not None else None
@@ -303,6 +330,19 @@ class VpsFarmManagementService:
         if bay in (farm.get("offline_slots") or []):
             return ApiResult(409, error_body("device_offline"))
 
+        owner = str(payload.get("user_id") or "").strip()
+        blocked = self._reject_occupied_tenant_slot(bay, owner)
+        if blocked is not None:
+            return blocked
+        if owner and self._auth_store is not None:
+            try:
+                claimed = bool(self._auth_store.claim_slot(bay, owner, rental_id))
+            except (TypeError, ValueError, OSError, requests.RequestException):
+                logger.warning("tenant_claim_failed bay=%s", bay)
+                return ApiResult(503, error_body("auth_unavailable"))
+            if not claimed:
+                return ApiResult(409, error_body("slot_unavailable"))
+
         safe_payload = {
             "rental_id": rental_id,
             "carrier": carrier,
@@ -326,9 +366,6 @@ class VpsFarmManagementService:
         self._events.append(bay, "slot_assigned", f"rental_id={rental_id} job_id={record.job_id}")
         self._events.append(bay, "assignment_requested", f"job_id={record.job_id}")
         self._events.append(bay, "provisioning_started", f"job_id={record.job_id}")
-        owner = str(payload.get("user_id") or "").strip()
-        if owner and self._auth_store is not None:
-            self._auth_store.claim_slot(bay, owner, rental_id)
         logger.info("assignment_created job_id=%s bay=%s", record.job_id, bay)
         self._worker.enqueue_process(record.job_id)
         return ApiResult(202, assign_acceptance_body(job_id=record.job_id, bay=bay))
@@ -342,7 +379,7 @@ class VpsFarmManagementService:
     def enqueue_action(self, slot_public_id: str, action: str, payload: dict[str, Any]) -> ApiResult:
         if action not in SUPPORTED_ACTIONS:
             return ApiResult(400, error_body("unsupported_action"))
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
         allowed, retry_after = self._rate.check(farm_slot)
@@ -401,7 +438,7 @@ class VpsFarmManagementService:
         since_raw: str | None,
         limit_raw: str | None,
     ) -> ApiResult:
-        farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
+        farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
         since: float | None = None
@@ -437,3 +474,61 @@ class VpsFarmManagementService:
 
     def _slot_has_active_job(self, farm_slot_id: int) -> bool:
         return self._jobs.has_active_job_for_slot(farm_slot_id)
+
+    def _reject_occupied_tenant_slot(self, bay: int, requested_user_id: str) -> ApiResult | None:
+        if self._auth_store is None:
+            return None
+        if getattr(self._auth_store, "privileged", True) is False:
+            return ApiResult(503, error_body("auth_not_configured"))
+        try:
+            if requested_user_id:
+                exists = getattr(self._auth_store, "profile_exists", None)
+                if callable(exists) and not exists(requested_user_id):
+                    return ApiResult(400, error_body("invalid_request", message="Unknown user_id"))
+            current = self._auth_store.owner_of_slot(bay)
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            logger.warning("tenant_ownership_lookup_failed bay=%s", bay)
+            return ApiResult(503, error_body("auth_unavailable"))
+        if current and current != requested_user_id:
+            return ApiResult(409, error_body("slot_unavailable"))
+        return None
+
+    def _tenant_slot_row(self, farm_slot_id: int) -> dict[str, Any]:
+        getter = getattr(self._auth_store, "get_slot_row", None)
+        if not callable(getter):
+            return {}
+        try:
+            row = getter(farm_slot_id)
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            logger.warning("tenant_slot_lookup_failed bay=%s", farm_slot_id)
+            return {}
+        return row if isinstance(row, dict) else {}
+
+    def _tenant_radio_fields(self, farm_slot_id: int) -> dict[str, str | None]:
+        row = self._tenant_slot_row(farm_slot_id)
+        carrier = _optional_text(row.get("carrier_name"))
+        imei2 = _optional_text(row.get("imei2"))
+        return {"carrier_name": carrier, "imei2": imei2}
+
+    def _overlay_tenant_slot(self, body: dict[str, Any], farm_slot_id: int) -> None:
+        row = self._tenant_slot_row(farm_slot_id)
+        radio = self._tenant_radio_fields(farm_slot_id)
+        body["carrier_name"] = radio["carrier_name"]
+        body["imei2"] = radio["imei2"]
+        body["imei2_status"] = "known" if radio["imei2"] else "unknown"
+        if radio["carrier_name"]:
+            body["carrier"] = radio["carrier_name"]
+        if not row:
+            return
+        if row.get("phone_number"):
+            body["phone_number"] = row.get("phone_number")
+        if row.get("hardware_box_id"):
+            body["box"] = row.get("hardware_box_id")
+        if row.get("band_lock_setting"):
+            body["band_lock_setting"] = row.get("band_lock_setting")
+        if row.get("proxy_address"):
+            body["proxy_address"] = row.get("proxy_address")
+        if row.get("gateway_provider"):
+            body["gateway_provider"] = row.get("gateway_provider")
+        if row.get("user_id"):
+            body["user_id"] = row.get("user_id")

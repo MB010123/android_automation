@@ -35,7 +35,7 @@ from application.farm_heartbeat_poller import FarmHeartbeatPoller
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.auth_middleware import resolve_auth_context
-from application.auth_service import AuthContext, AuthService, jwt_secret_usable
+from application.auth_service import AuthContext, AuthService
 from application.vps_lovable_routes import (
     FARM_SERVICE_ONLY,
     PUBLIC_AUTH_POST,
@@ -43,7 +43,8 @@ from application.vps_lovable_routes import (
     parse_route,
 )
 from infrastructure.auth_rate_limiter import AuthRateLimiter
-from infrastructure.vps_auth_store import VpsAuthStore
+from infrastructure.supabase_gateway import gotrue_from_env
+from infrastructure.lovable_tenant_store import tenant_store_from_env
 from application.vps_slot_sms_service import VpsSlotSmsService
 from application.webhook_outbound_dispatcher import WebhookOutboundDispatcher
 from infrastructure.farm_sms_client import FarmSmsClient
@@ -103,6 +104,18 @@ def _parse_allowed_origins(raw: str) -> frozenset[str]:
     return frozenset(defaults | extras)
 
 
+def _auth_and_tenant_from_env() -> tuple[Any, Any]:
+    gateway = gotrue_from_env()
+    tenant = tenant_store_from_env(default_box=os.getenv("FARM_DEFAULT_BOX", "POD_01"))
+    if gateway is None:
+        logger.error("SUPABASE_URL and SUPABASE_ANON_KEY required; user token validation disabled")
+    if not getattr(tenant, "privileged", False):
+        logger.error(
+            "LOVABLE_API_URL and VPS_TO_LOVABLE_API_TOKEN required; tenant reads/writes disabled"
+        )
+    return gateway, tenant
+
+
 def _origin_is_localhost(origin: str) -> bool:
     parsed = urlparse(origin)
     if parsed.scheme not in {"http", "https"}:
@@ -154,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
     lovable_inbound_url: str | None = None
     lovable_inbound_secret: str | None = None
     request_timeout: float = 10.0
+    tenant_store: Any = None
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
@@ -331,16 +345,14 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if route.kind == "message" and route.message_id:
             assert self.slot_sms_service is not None
-            result = self.slot_sms_service.get_message(route.message_id)
             ctx = self._auth_context()
-            if (
-                ctx is not None
-                and ctx.kind == "user"
-                and result.http_status == 200
-                and not self._user_owns(ctx, result.body.get("slot_id"))
-            ):
-                self._send_json(404, {"error": "not_found"})
-                return True
+            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
+                result = self.slot_sms_service.get_tenant_message(
+                    route.message_id,
+                    user_id=ctx.user.user_id,
+                )
+            else:
+                result = self.slot_sms_service.get_message(route.message_id)
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "slot_messages" and route.slot_public_id:
@@ -642,6 +654,16 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 stored_ids.append(row_id)
                 logger.info("inbound_stored row_id=%s slot=%s created=%s", row_id, slot_id, created)
+                if created and slot_id is not None and self.tenant_store is not None:
+                    inbound_id = provider_id or f"inbound-{row_id}"
+                    self.tenant_store.record_message(
+                        farm_slot_id=int(slot_id),
+                        message_id=str(inbound_id),
+                        direction="inbound",
+                        phone_number=msg.from_number,
+                        message_body=msg.message,
+                        status="received",
+                    )
                 if created and slot_id is not None:
                     normalized = normalize_inbound_for_lovable(
                         msg,
@@ -804,29 +826,22 @@ def main() -> int:
         interval_seconds=heartbeat_interval,
     )
     heartbeat_poller.start()
-    auth_db = os.getenv(
-        "VPS_AUTH_DB_PATH",
-        str(ROOT / "logs" / "vps_auth.sqlite"),
-    )
-    auth_store = VpsAuthStore(Path(auth_db))
-    jwt_secret = (os.getenv("VPS_AUTH_JWT_SECRET") or "").strip()
     auth_prefixes = tuple(
         p.strip()
         for p in (os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES") or "").split(",")
         if p.strip()
     )
+    gateway, tenant_store = _auth_and_tenant_from_env()
     auth_service: AuthService | None = None
-    if not jwt_secret:
-        logger.warning("VPS_AUTH_JWT_SECRET unset; user signup/login disabled")
-    elif not jwt_secret_usable(jwt_secret):
-        logger.error("VPS_AUTH_JWT_SECRET does not meet minimum length; user auth disabled")
-    else:
+    if gateway is not None:
+        storage_prefix = f"{gateway.project_url}/storage/v1/object/"
+        if storage_prefix not in auth_prefixes:
+            auth_prefixes = auth_prefixes + (storage_prefix,)
         auth_service = AuthService(
-            auth_store,
-            jwt_secret=jwt_secret,
+            supabase=gateway,
+            tenant=tenant_store,
+            jwt_secret=(os.getenv("SUPABASE_JWT_SECRET") or "").strip(),
             access_ttl_seconds=int(os.getenv("VPS_AUTH_ACCESS_TOKEN_TTL_SECONDS", "3600")),
-            lock_after=int(os.getenv("VPS_AUTH_LOCK_AFTER_FAILURES", "5")),
-            lock_seconds=float(os.getenv("VPS_AUTH_LOCK_SECONDS", "900")),
         )
     farm_management_service = VpsFarmManagementService(
         job_store=vps_job_store,
@@ -840,7 +855,7 @@ def main() -> int:
         rate_limiter=mgmt_rate,
         status_store=status_store,
         heartbeat_interval_seconds=heartbeat_interval,
-        auth_store=auth_store,
+        auth_store=tenant_store,
         esim_url_prefixes=auth_prefixes,
     )
 
@@ -857,6 +872,7 @@ def main() -> int:
         rate_limiter=sms_rate_limiter,
         max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
         event_recorder=event_store.append,
+        tenant_store=tenant_store,
     )
 
     Handler.app_name = config.app_name
@@ -871,6 +887,7 @@ def main() -> int:
     Handler.slot_sms_service = slot_sms_service
     Handler.farm_management_service = farm_management_service
     Handler.auth_service = auth_service
+    Handler.tenant_store = tenant_store
     Handler.auth_rate_limiter = AuthRateLimiter(
         limit=int(os.getenv("VPS_AUTH_RATE_LIMIT", "10")),
         window_seconds=float(os.getenv("VPS_AUTH_RATE_WINDOW_SECONDS", "60")),
@@ -913,7 +930,8 @@ def main() -> int:
         assignment_store.close()
         event_store.close()
         status_store.close()
-        auth_store.close()
+        if tenant_store is not None:
+            tenant_store.close()
     return 0
 
 
