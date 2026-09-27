@@ -20,7 +20,7 @@ from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.supabase_gateway import SupabaseGateway
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
-from tests.fakes_supabase import MemoryGoTrue, MemoryTenant
+from tests.fakes_supabase import MemoryGoTrue, MemoryTenant, seed_owned_slot
 from tests.test_supabase_auth import FakeHTTP
 from tests.test_vps_user_auth import (
     FARM_TOKEN,
@@ -52,6 +52,7 @@ def _farm_svc(tmp_path: Path, tenant: MemoryTenant | None = None):
         event_store=events,
         farm_task_client=None,
         poll_interval_seconds=3600.0,
+        auth_store=tenant,
     )
     svc = VpsFarmManagementService(
         job_store=jobs,
@@ -62,6 +63,7 @@ def _farm_svc(tmp_path: Path, tenant: MemoryTenant | None = None):
         known_farm_slots={1, 2},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         auth_store=tenant,
+        esim_url_prefixes=("https://example.test/",),
     )
     return svc, jobs, assign
 
@@ -77,25 +79,31 @@ def _assign_body(user_id: str | None = None) -> dict:
     return body
 
 
-def test_unowned_slot_assignment_allowed(tmp_path: Path):
+def test_unowned_slot_assignment_rejected(tmp_path: Path):
     tenant = MemoryTenant()
     user = str(uuid.uuid4())
     tenant.ensure_profile(user, "a@example.com")
     svc, jobs, assign = _farm_svc(tmp_path, tenant)
     result = svc.assign_slot(1, _assign_body(user))
-    assert result.http_status == 202
-    assert tenant.owner_of_slot(1) == user
-    assert jobs.get(result.body["job_id"]) is not None
-    assert assign.is_assigned(1) is True
+    assert result.http_status == 404
+    assert list(jobs._conn.execute("SELECT job_id FROM vps_jobs")) == []
+    assert assign.is_assigned(1) is False
 
 
 def test_same_user_retry_does_not_steal(tmp_path: Path):
     tenant = MemoryTenant()
     user = str(uuid.uuid4())
     tenant.ensure_profile(user, "a@example.com")
-    tenant.claim_slot(1, user, None)
     svc, _jobs, _assign = _farm_svc(tmp_path, tenant)
     payload = _assign_body(user)
+    seed_owned_slot(
+        tenant,
+        bay=1,
+        rental_id=str(payload["rental_id"]),
+        user_id=user,
+        qr_code_url=str(payload["esim_qr_url"]),
+        carrier_name="T-Mobile",
+    )
     first = svc.assign_slot(1, payload)
     assert first.http_status == 202
     replay = svc.assign_slot(1, payload)
@@ -110,10 +118,13 @@ def test_other_owner_rejected_before_job(tmp_path: Path):
     other = str(uuid.uuid4())
     tenant.ensure_profile(owner, "a@example.com")
     tenant.ensure_profile(other, "b@example.com")
-    tenant.claim_slot(1, owner, None)
     svc, jobs, assign = _farm_svc(tmp_path, tenant)
+    rental = str(uuid.uuid4())
+    seed_owned_slot(tenant, bay=1, rental_id=rental, user_id=owner, qr_code_url="https://example.test/private/qr")
     before = list(jobs._conn.execute("SELECT job_id FROM vps_jobs"))
-    result = svc.assign_slot(1, _assign_body(other))
+    body = _assign_body(other)
+    body["rental_id"] = rental
+    result = svc.assign_slot(1, body)
     assert result.http_status == 409
     assert result.body["error"] == "slot_unavailable"
     after = list(jobs._conn.execute("SELECT job_id FROM vps_jobs"))

@@ -83,6 +83,17 @@ def test_http_user_slot_imei2_isolation_and_payload_ignored(tmp_path: Path):
         token_b = b["session"]["access_token"]
         user_a = a["user"]["id"]
         rental = str(uuid.uuid4())
+        from tests.fakes_supabase import seed_owned_slot
+
+        seed_owned_slot(
+            tenant,
+            bay=1,
+            rental_id=rental,
+            user_id=user_a,
+            qr_code_url="https://example.test/private/qr",
+            carrier_name="Verizon",
+            imei2=IMEI2,
+        )
 
         status, farm_job, _ = _http(
             "POST",
@@ -90,16 +101,13 @@ def test_http_user_slot_imei2_isolation_and_payload_ignored(tmp_path: Path):
             token=FARM_TOKEN,
             body={
                 "rental_id": rental,
-                "esim_qr_url": "https://example.test/private/qr",
-                "carrier": "Verizon",
+                "esim_qr_url": "https://evil.example/override",
+                "carrier": "client-carrier",
                 "user_id": user_a,
                 "imei2": "000000000000000",
             },
         )
-        assert status == 202
-        assert farm_job["ok"] is True
-        tenant.slots[1]["imei2"] = IMEI2
-        tenant.slots[1]["carrier_name"] = "Verizon"
+        assert status == 400
 
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert status == 200
@@ -145,7 +153,18 @@ def test_http_user_slot_imei2_isolation_and_payload_ignored(tmp_path: Path):
                 "imei2": "111111111111111",
             },
         )
-        assert status in {202, 409}
+        assert status == 400
+        status, user_esim, _ = _http(
+            "POST",
+            f"{base}/slots/{SLOT1}/esim",
+            token=token_a,
+            body={
+                "rental_id": rental,
+                "qr_code_url": "users/a/esim/qr",
+                "carrier": "Verizon",
+            },
+        )
+        assert status in {202, 409, 503}
         status, after, _ = _http("GET", f"{base}/slots/{SLOT1}", token=token_a)
         assert status == 200
         assert after["imei2"] == IMEI2

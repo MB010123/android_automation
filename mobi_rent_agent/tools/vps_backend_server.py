@@ -805,11 +805,14 @@ def main() -> int:
             farm_token,
             timeout_seconds=config.webhook_farm_dispatch_timeout_seconds,
         )
+    gateway, tenant_store = _auth_and_tenant_from_env()
     job_worker = VpsJobWorker(
         job_store=vps_job_store,
         assignment_store=assignment_store,
         event_store=event_store,
         farm_task_client=farm_task_client,
+        auth_store=tenant_store,
+        running_stale_seconds=config.webhook_farm_dispatch_timeout_seconds,
     )
     job_worker.start()
     mgmt_rate = VpsRateLimiter(
@@ -831,7 +834,6 @@ def main() -> int:
         for p in (os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES") or "").split(",")
         if p.strip()
     )
-    gateway, tenant_store = _auth_and_tenant_from_env()
     auth_service: AuthService | None = None
     if gateway is not None:
         storage_prefix = f"{gateway.project_url}/storage/v1/object/"

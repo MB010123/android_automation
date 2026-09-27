@@ -67,7 +67,34 @@ Responses must include authoritative:
 - `user_id`
 - `motherboard_slot_num`
 
+`GET /slots/{slot_id}` is the rental-id lookup used by farm assign. The
+response must include an **authoritative eSIM fetch reference**. First match
+wins among:
+
+1. `esim_storage_key`
+2. `qr_code_url`
+3. `esim_qr_url`
+4. `storage_key`
+
+Contract gap (fail-closed on the VPS today):
+
+- A storage key without `://` is accepted as a tenant record reference, but
+  the Farm Agent cannot fetch it. Assign returns `503 esim_ref_unavailable`.
+- A raw URL is used only when it is HTTPS, not private/loopback/link-local/
+  metadata, and matches `VPS_ESIM_ALLOWED_URL_PREFIXES`.
+- The VPS never treats client `esim_qr_url`, `carrier`, or `imei2` as
+  authority.
+
+Lovable must return a fetchable allowlisted HTTPS URL (signed object URL is
+fine) on `GET /slots/{id}` before Bay-1 live download. Do not invent extra
+field names on the VPS.
+
 The VPS does not encode Verizon/T-Mobile/AT&T purchase rules.
+
+`POST /esim-uploads` is called by the VPS worker after
+`INSTALL_ACCEPTED` or `INSTALL_VERIFIED`, never by the Farm Agent.
+Idempotency-Key is `esim-{job_id}` when `job_id` is present. Do not store a
+decoded LPA activation code.
 
 ## Trust boundaries
 

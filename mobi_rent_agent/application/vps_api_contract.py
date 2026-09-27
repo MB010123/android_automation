@@ -34,6 +34,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "weak_password": "Password does not meet production requirements",
     "auth_not_configured": "User authentication is not configured on this VPS",
     "auth_unavailable": "Authentication service is temporarily unavailable",
+    "esim_ref_unavailable": "Authoritative eSIM reference is missing from Lovable slot data",
 }
 
 
@@ -111,9 +112,21 @@ def job_response_body(record: VpsJobRecord) -> dict[str, Any]:
     if klass is not None:
         body["failure_class"] = klass
     if record.result_payload:
-        safe = {k: v for k, v in record.result_payload.items() if k not in ("activation_code", "qr_url")}
+        safe = {
+            k: v
+            for k, v in record.result_payload.items()
+            if k not in ("activation_code", "qr_url", "esim_qr_url")
+        }
         if safe:
             body["result"] = safe
+    if isinstance(record.result_payload, dict):
+        install_state = record.result_payload.get("install_state")
+        if install_state:
+            body["install_state"] = install_state
+        if "activation_code_sent" in record.result_payload:
+            body["activation_code_sent"] = bool(record.result_payload.get("activation_code_sent"))
+        if record.result_payload.get("tenant_record_error"):
+            body["tenant_record_error"] = True
     return body
 
 

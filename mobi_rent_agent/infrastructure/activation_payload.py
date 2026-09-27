@@ -10,6 +10,7 @@ from PIL import Image, UnidentifiedImageError
 
 from domain.models import ActivationJob
 from domain.ports import ActivationPayloadResolver
+from infrastructure.esim_qr_security import esim_fetch_url_is_public_https
 
 
 class ActivationPayloadError(RuntimeError):
@@ -31,6 +32,8 @@ class QrActivationPayloadResolver(ActivationPayloadResolver):
         parsed = urlparse(job.qr_url)
         if parsed.scheme != "https" or not parsed.hostname:
             raise ActivationPayloadError("QR image URL must use HTTPS")
+        if not esim_fetch_url_is_public_https(job.qr_url):
+            raise ActivationPayloadError("QR image URL host is not allowed")
 
         try:
             response = self._session.get(job.qr_url, timeout=self._timeout, stream=True)

@@ -31,7 +31,7 @@ from infrastructure.outbound_message_store import OutboundMessageRecord, Outboun
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.supabase_gateway import SupabaseGateway, gotrue_from_env
 from infrastructure.vps_openapi_spec import build_vps_openapi_document
-from tests.fakes_supabase import MemoryGoTrue, MemoryTenant
+from tests.fakes_supabase import MemoryGoTrue, MemoryTenant, seed_owned_slot
 from tests.test_blocker_fixes import _assign_body, _farm_svc
 from tests.test_supabase_auth import FakeHTTP, FakeResponse
 from tests.test_vps_user_auth import FARM_TOKEN, STRONG, _http, _start_auth_server
@@ -232,10 +232,12 @@ def test_farm_assign_claims_before_job_and_conflict_creates_none(tmp_path: Path)
     tenant = MemoryTenant()
     tenant.ensure_profile(USER_A, "a@example.com")
     tenant.ensure_profile(USER_B, "b@example.com")
-    tenant.claim_slot(1, USER_A, None)
-    tenant.slots[1]["imei2"] = IMEI2
+    rental = str(uuid.uuid4())
+    seed_owned_slot(tenant, bay=1, rental_id=rental, user_id=USER_A, imei2=IMEI2)
     svc, jobs, assign = _farm_svc(tmp_path, tenant)
-    result = svc.assign_slot(1, _assign_body(USER_B))
+    body = _assign_body(USER_B)
+    body["rental_id"] = rental
+    result = svc.assign_slot(1, body)
     assert result.http_status == 409
     assert list(jobs._conn.execute("SELECT job_id FROM vps_jobs")) == []
     assert assign.is_assigned(1) is False
@@ -280,21 +282,28 @@ def test_http_user_isolation_and_authoritative_imei2(tmp_path: Path):
         token_a = a["session"]["access_token"]
         token_b = b["session"]["access_token"]
         user_a = a["user"]["id"]
+        rental = str(uuid.uuid4())
+        seed_owned_slot(
+            tenant,
+            bay=1,
+            rental_id=rental,
+            user_id=user_a,
+            qr_code_url="https://example.test/private/qr",
+            carrier_name="Verizon",
+            imei2=IMEI2,
+        )
         status, farm_job, _ = _http(
             "POST",
             f"{base}/farm/slots/1/assign",
             token=FARM_TOKEN,
             body={
-                "rental_id": str(uuid.uuid4()),
-                "esim_qr_url": "https://example.test/private/qr",
-                "carrier": "Verizon",
+                "rental_id": rental,
+                "esim_qr_url": "https://evil.example/override",
+                "carrier": "client-carrier",
                 "user_id": user_a,
-                "imei2": "000000000000000",
             },
         )
         assert status == 202
-        tenant.slots[1]["imei2"] = IMEI2
-        tenant.slots[1]["carrier_name"] = "Verizon"
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert status == 200
         assert listed["slots"][0]["imei2"] == IMEI2

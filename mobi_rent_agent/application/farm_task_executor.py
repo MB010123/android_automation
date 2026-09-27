@@ -7,10 +7,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
+from application.install_state import (
+    INSTALL_FAILED,
+    INSTALL_VERIFIED,
+    KEEP_ASSIGNMENT_STATES,
+)
 from domain.models import ActivationJob
 from domain.ports import ActivationPayloadResolver, SubscriptionProvisioner
 from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
 from infrastructure.activation_payload import ActivationPayloadError, QrActivationPayloadResolver
+from infrastructure.esim_qr_security import esim_fetch_url_is_public_https
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.adb_health import AdbDeviceHealthController
 from infrastructure.config import AgentConfig
@@ -142,7 +148,13 @@ def _run_assign(
     slot_id = int(request.farm_slot_id)
     serial = _serial_for_slot(slot_map, slot_id)
     if not serial:
-        return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
+        return FarmTaskResult(
+            ok=False,
+            http_status=404,
+            error="slot_not_found",
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
+        )
 
     if deps.provisioner is not None:
         provisioner = deps.provisioner
@@ -163,6 +175,8 @@ def _run_assign(
             http_status=422,
             error="provisioning_failed",
             message=str(exc),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     if not isolation.allows(slot_id):
@@ -174,6 +188,8 @@ def _run_assign(
                 f"slot {slot_id} is outside the provisioning allowlist "
                 f"{sorted(isolation.allowed_slot_ids)}"
             ),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     qr_url = str(request.payload.get("esim_qr_url") or "").strip()
@@ -183,6 +199,17 @@ def _run_assign(
             http_status=422,
             error="invalid_assignment",
             message="esim_qr_url is required",
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
+        )
+    if not esim_fetch_url_is_public_https(qr_url):
+        return FarmTaskResult(
+            ok=False,
+            http_status=422,
+            error="invalid_assignment",
+            message="esim_qr_url is not a public HTTPS URL",
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     runner = deps.command_runner or AdbCommandRunner(
@@ -197,6 +224,8 @@ def _run_assign(
                 http_status=409,
                 error="device_offline",
                 message=f"ADB state is {state or 'unknown'}",
+                install_state=INSTALL_FAILED,
+                activation_code_sent=False,
             )
     except AdbCommandError as exc:
         return FarmTaskResult(
@@ -204,6 +233,8 @@ def _run_assign(
             http_status=409,
             error="device_offline",
             message=str(exc),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     try:
@@ -214,6 +245,8 @@ def _run_assign(
             http_status=422,
             error="invalid_assignment",
             message=str(exc),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     assert payload_resolver is not None
@@ -225,6 +258,8 @@ def _run_assign(
             http_status=422,
             error="provisioning_failed",
             message=str(exc),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
     logger.info(
@@ -241,14 +276,25 @@ def _run_assign(
             http_status=422,
             error="provisioning_failed",
             message=str(exc),
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )
 
-    if result.success:
-        logger.info("farm_task_assign_ok slot=%s job_id=%s", slot_id, request.job_id)
+    install_state = result.install_state or (INSTALL_VERIFIED if result.success else INSTALL_FAILED)
+    sent = bool(result.activation_code_sent)
+    if install_state in KEEP_ASSIGNMENT_STATES:
+        logger.info(
+            "farm_task_assign_finished slot=%s job_id=%s install_state=%s",
+            slot_id,
+            request.job_id,
+            install_state,
+        )
         return FarmTaskResult(
             ok=True,
             http_status=200,
-            message="provisioning_completed",
+            message=result.error or "provisioning_completed",
+            install_state=install_state,
+            activation_code_sent=sent,
         )
 
     detail = result.error or "provisioning failed"
@@ -263,6 +309,8 @@ def _run_assign(
         http_status=422,
         error="provisioning_failed",
         message=detail,
+        install_state=INSTALL_FAILED,
+        activation_code_sent=sent,
     )
 
 

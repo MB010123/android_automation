@@ -149,6 +149,8 @@ class ProvisioningResult:
     error: str | None = None
     active_phone_number: str | None = None
     verdict: ActivationVerdict | None = None
+    install_state: str | None = None
+    activation_code_sent: bool = False
 
     def __post_init__(self) -> None:
         confirmed = self.verdict is ActivationVerdict.ACTIVATION_CONFIRMED
@@ -169,6 +171,21 @@ class ProvisioningResult:
         error: str | None = None,
         device_code: int | None = None,
     ) -> ProvisioningResult:
+        from domain.provisioning_state import (
+            INSTALL_ACCEPTED,
+            INSTALL_FAILED,
+            INSTALL_VERIFICATION_UNKNOWN,
+            INSTALL_VERIFIED,
+        )
+
+        if verdict is ActivationVerdict.ACTIVATION_CONFIRMED:
+            state = INSTALL_VERIFIED
+        elif verdict is ActivationVerdict.ACTIVATION_PARTIAL:
+            state = INSTALL_ACCEPTED
+        elif verdict is ActivationVerdict.VERIFICATION_UNKNOWN:
+            state = INSTALL_VERIFICATION_UNKNOWN
+        else:
+            state = INSTALL_FAILED
         return cls(
             success=verdict.success,
             job_id=job_id,
@@ -176,6 +193,8 @@ class ProvisioningResult:
             device_code=device_code,
             error=error,
             verdict=verdict,
+            install_state=state,
+            activation_code_sent=False,
         )
 
     def to_dict(self) -> dict:
@@ -192,6 +211,9 @@ class ProvisioningResult:
             payload["active_phone_number"] = self.active_phone_number
         if self.verdict is not None:
             payload["verdict"] = self.verdict.value
+        if self.install_state:
+            payload["install_state"] = self.install_state
+        payload["activation_code_sent"] = self.activation_code_sent
         return payload
 
 

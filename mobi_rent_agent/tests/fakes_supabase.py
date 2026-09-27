@@ -70,6 +70,28 @@ class MemoryGoTrue:
         return True
 
 
+def seed_owned_slot(
+    tenant: MemoryTenant,
+    *,
+    bay: int,
+    rental_id: str,
+    user_id: str,
+    qr_code_url: str = "https://example.test/private/qr",
+    carrier_name: str = "T-Mobile",
+    imei2: str = "353456789012345",
+) -> None:
+    tenant.ensure_profile(user_id, "user@example.com")
+    tenant.slots[int(bay)] = {
+        "id": rental_id,
+        "user_id": user_id,
+        "rental_id": rental_id,
+        "motherboard_slot_num": int(bay),
+        "qr_code_url": qr_code_url,
+        "carrier_name": carrier_name,
+        "imei2": imei2,
+    }
+
+
 class MemoryTenant:
     privileged = True
 
@@ -120,9 +142,10 @@ class MemoryTenant:
         previous = dict(existing or {})
         self.slots[bay] = {
             **previous,
-            "id": previous.get("id") or str(uuid.uuid4()),
+            "id": previous.get("id") or rental_id or str(uuid.uuid4()),
             "user_id": user_id,
             "rental_id": rental_id,
+            "motherboard_slot_num": previous.get("motherboard_slot_num") or bay,
         }
         return True
 
@@ -130,9 +153,20 @@ class MemoryTenant:
         return self.slots.get(int(farm_slot_id))
 
     def farm_slot_for_slot_id(self, slot_id: str) -> int | None:
+        row = self.get_slot_by_id(slot_id)
+        if row is None:
+            return None
+        return int(row.get("motherboard_slot_num") or row.get("bay") or 0) or None
+
+    def get_slot_by_id(self, slot_id: str) -> dict | None:
+        text = str(slot_id or "").strip()
+        if not text:
+            return None
         for bay, row in self.slots.items():
-            if str(row.get("id") or "") == str(slot_id):
-                return bay
+            if str(row.get("id") or "") == text:
+                out = dict(row)
+                out.setdefault("motherboard_slot_num", bay)
+                return out
         return None
 
     def record_esim_upload(
@@ -147,6 +181,9 @@ class MemoryTenant:
         now: float | None = None,
     ) -> str:
         record_id = str(uuid.uuid4())
+        for existing in self.esims:
+            if job_id and existing.get("job_id") == job_id:
+                return str(existing.get("id") or "")
         self.esims.append(
             {
                 "id": record_id,

@@ -58,6 +58,7 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
         "VOIDFIX_DELIVERY_POLL_ENABLED",
         "VOIDFIX_DELIVERY_POLL_INTERVAL_SECONDS",
         "VOIDFIX_DELIVERY_POLL_TIMEOUT_SECONDS",
+        "WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS",
         "FARM_MAX_CONCURRENT",
         "SMS_MAX_ATTEMPTS",
     ):
@@ -88,6 +89,7 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
     assert config.voidfix_delivery_poll_enabled is False
     assert config.voidfix_delivery_poll_interval_seconds == 5.0
     assert config.voidfix_delivery_poll_timeout_seconds == 180.0
+    assert config.webhook_farm_dispatch_timeout_seconds == 180.0
     assert config.farm_max_concurrent == 4
     assert config.sms_max_attempts == 1
 

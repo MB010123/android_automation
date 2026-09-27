@@ -50,6 +50,10 @@ class UnconfiguredTenantStore:
         del slot_id
         return None
 
+    def get_slot_by_id(self, slot_id: str) -> dict[str, Any] | None:
+        del slot_id
+        return None
+
     def record_esim_upload(self, **kwargs: Any) -> str:
         del kwargs
         return ""
@@ -149,14 +153,22 @@ class LovableTenantStore:
         return row or None
 
     def farm_slot_for_slot_id(self, slot_id: str) -> int | None:
+        row = self.get_slot_by_id(slot_id)
+        if row is None:
+            return None
+        return _as_int(row.get("motherboard_slot_num") or row.get("bay"))
+
+    def get_slot_by_id(self, slot_id: str) -> dict[str, Any] | None:
         text = str(slot_id or "").strip()
         if not text:
             return None
         result = self._require(self._client.request("GET", f"/slots/{text}"))
-        if result.error:
+        if result.error == "not_found":
             return None
-        row = _as_object(result.body, key="slot") or {}
-        return _as_int(row.get("motherboard_slot_num") or row.get("bay"))
+        if result.error:
+            raise OSError("lovable_unavailable")
+        row = _as_object(result.body, key="slot")
+        return row or None
 
     def record_esim_upload(
         self,
@@ -170,6 +182,7 @@ class LovableTenantStore:
         now: float | None = None,
     ) -> str:
         del now
+        idem = f"esim-{job_id}" if job_id else f"esim-{farm_slot_id}-{storage_key}"
         result = self._client.request(
             "POST",
             "/esim-uploads",
@@ -181,7 +194,7 @@ class LovableTenantStore:
                 "carrier": carrier,
                 "job_id": job_id,
             },
-            idempotency_key=f"esim-{farm_slot_id}-{storage_key}",
+            idempotency_key=idem,
         )
         if result.error:
             logger.warning("lovable_esim_upload_failed bay=%s", farm_slot_id)

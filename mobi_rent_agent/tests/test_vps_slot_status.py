@@ -30,6 +30,7 @@ from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.vps_job_store import VpsJobRecord, VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
+from tests.fakes_supabase import MemoryTenant, seed_owned_slot
 
 SLOT1 = public_id_for_farm_slot(1)
 SLOT2 = public_id_for_farm_slot(2)
@@ -94,12 +95,15 @@ class Fixture:
             known_farm_slots={1, 2},
             interval_seconds=INTERVAL,
         )
+        self.tenant = MemoryTenant()
+        self.owner = str(uuid.uuid4())
         self.worker = SyncWorker(
             job_store=self.jobs,
             assignment_store=self.assign,
             event_store=self.events,
             farm_task_client=self.task_client,
             poll_interval_seconds=3600.0,
+            auth_store=self.tenant,
         )
         self.svc = VpsFarmManagementService(
             job_store=self.jobs,
@@ -112,7 +116,22 @@ class Fixture:
             status_store=self.status,
             heartbeat_interval_seconds=INTERVAL,
             clock=lambda: self.now,
+            auth_store=self.tenant,
+            esim_url_prefixes=("https://example.test/",),
         )
+
+    def seed_and_assign(self, bay: int = 1, **kw: object):
+        payload = _payload()
+        payload.update(kw)
+        seed_owned_slot(
+            self.tenant,
+            bay=bay,
+            rental_id=str(payload["rental_id"]),
+            user_id=self.owner,
+            qr_code_url=str(payload["esim_qr_url"]),
+            carrier_name=str(payload["carrier"]),
+        )
+        return self.svc.assign_slot(bay, payload)
 
     def beat(self) -> None:
         self.poller.poll_once(now=self.now)
@@ -193,7 +212,7 @@ def test_status_farm_unreachable_marks_heartbeat(tmp_path: Path):
 def test_status_provisioning_then_online(tmp_path: Path):
     fx = Fixture(tmp_path)
     fx.beat()
-    result = fx.svc.assign_slot(1, _payload())
+    result = fx.seed_and_assign(1)
     assert result.http_status == 202
     job_id = result.body["job_id"]
     # worker not run yet -> pending assign job
@@ -213,7 +232,7 @@ def test_status_requires_manual_action(tmp_path: Path):
     fx = Fixture(tmp_path)
     fx.beat()
     fx.task_client.mode = "manual"
-    result = fx.svc.assign_slot(1, _payload())
+    result = fx.seed_and_assign(1)
     fx.worker.process_job(result.body["job_id"])
     job = fx.svc.get_job(result.body["job_id"]).body
     assert job["state"] == "failed"
@@ -230,7 +249,7 @@ def test_status_failed_after_permanent_failure(tmp_path: Path):
     fx = Fixture(tmp_path)
     fx.beat()
     fx.task_client.mode = "down"
-    result = fx.svc.assign_slot(1, _payload())
+    result = fx.seed_and_assign(1)
     fx.worker.process_job(result.body["job_id"])
     job = fx.svc.get_job(result.body["job_id"]).body
     assert job["failure_class"] == "temporary"
@@ -242,7 +261,7 @@ def test_status_unsupported_phase(tmp_path: Path):
     fx = Fixture(tmp_path)
     fx.beat()
     fx.task_client.mode = "unsupported"
-    result = fx.svc.assign_slot(1, _payload())
+    result = fx.seed_and_assign(1)
     fx.worker.process_job(result.body["job_id"])
     job = fx.svc.get_job(result.body["job_id"]).body
     assert job["ok"] is True  # envelope only; outcome is in state/phase
@@ -297,8 +316,17 @@ def test_list_and_detail_slot_record(tmp_path: Path):
 def test_esim_assign_accepts_qr_code_url(tmp_path: Path):
     fx = Fixture(tmp_path)
     fx.beat()
+    rental_id = str(uuid.uuid4())
+    seed_owned_slot(
+        fx.tenant,
+        bay=1,
+        rental_id=rental_id,
+        user_id=fx.owner,
+        qr_code_url="https://example.test/esim/qr.png",
+        carrier_name="test-carrier",
+    )
     payload = {
-        "rental_id": str(uuid.uuid4()),
+        "rental_id": rental_id,
         "qr_code_url": "https://example.test/esim/qr.png",
         "carrier": "test-carrier",
     }

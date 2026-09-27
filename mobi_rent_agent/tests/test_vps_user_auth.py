@@ -32,7 +32,7 @@ from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.supabase_jwt import sign_supabase_access_token, verify_supabase_access_token
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
-from tests.fakes_supabase import MemoryGoTrue, MemoryTenant
+from tests.fakes_supabase import MemoryGoTrue, MemoryTenant, seed_owned_slot
 
 SLOT1 = public_id_for_farm_slot(1)
 SLOT2 = public_id_for_farm_slot(2)
@@ -191,6 +191,7 @@ def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50):
         event_store=events,
         farm_task_client=None,
         poll_interval_seconds=3600.0,
+        auth_store=tenant,
     )
     farm_svc = VpsFarmManagementService(
         job_store=jobs,
@@ -202,6 +203,7 @@ def _start_auth_server(tmp_path: Path, *, rate_limit: int = 50):
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         status_store=status,
         auth_store=tenant,
+        esim_url_prefixes=("https://example.test/",),
     )
     messages = OutboundMessageStore(tmp_path / "sms.sqlite")
     sms = VpsSlotSmsService(
@@ -312,14 +314,22 @@ def test_http_ownership_and_esim(tmp_path: Path):
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert listed["count"] == 0
 
+        seed_owned_slot(
+            tenant,
+            bay=1,
+            rental_id=rental,
+            user_id=user_a,
+            qr_code_url="https://example.test/private/qr",
+            carrier_name="T-Mobile",
+        )
         status, farm_job, _ = _http(
             "POST",
             f"{base}/farm/slots/1/assign",
             token=FARM_TOKEN,
             body={
                 "rental_id": rental,
-                "esim_qr_url": "https://example.test/private/qr",
-                "carrier": "T-Mobile",
+                "esim_qr_url": "https://evil.example/override",
+                "carrier": "client-carrier",
                 "user_id": user_a,
             },
         )
@@ -394,8 +404,8 @@ def test_farm_assign_unknown_user_is_rejected(tmp_path: Path):
                 "user_id": str(uuid.uuid4()),
             },
         )
-        assert status == 400
-        assert body["error"] == "invalid_request"
+        assert status == 404
+        assert body["error"] == "slot_not_found"
         assert tenant.owner_of_slot(1) is None
     finally:
         server.shutdown()

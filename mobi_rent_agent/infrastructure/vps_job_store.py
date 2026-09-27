@@ -10,6 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+_SECRET_PAYLOAD_KEYS = frozenset({"activation_code"})
+
+
+def _without_secrets(payload: dict | None) -> dict | None:
+    if not isinstance(payload, dict):
+        return payload
+    return {key: value for key, value in payload.items() if key not in _SECRET_PAYLOAD_KEYS}
 
 
 @dataclass
@@ -95,6 +102,7 @@ class VpsJobStore:
     ) -> VpsJobRecord:
         job_id = str(uuid.uuid4())
         now = time.time()
+        request_payload = _without_secrets(request_payload) or {}
         record = VpsJobRecord(
             job_id=job_id,
             type=job_type,
@@ -202,6 +210,19 @@ class VpsJobStore:
             row = self._conn.execute(query, params).fetchone()
         return _row_to_record(row) if row else None
 
+    def list_running(self, limit: int = 20) -> list[VpsJobRecord]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM vps_jobs
+                WHERE status = 'running'
+                ORDER BY started_at ASC, created_at ASC
+                LIMIT ?
+                """,
+                (max(1, limit),),
+            ).fetchall()
+        return [_row_to_record(r) for r in rows]
+
     def list_pending(self, limit: int = 20) -> list[VpsJobRecord]:
         with self._lock:
             rows = self._conn.execute(
@@ -237,7 +258,7 @@ class VpsJobStore:
             values.append(progress)
         if result_payload is not None:
             fields.append("result_payload = ?")
-            values.append(json.dumps(result_payload))
+            values.append(json.dumps(_without_secrets(result_payload)))
         if error is not None:
             fields.append("error = ?")
             values.append(error)

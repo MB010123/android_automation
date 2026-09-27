@@ -6,6 +6,7 @@ privileged/carrier/managed-device implementation is separately authorized.
 """
 from __future__ import annotations
 
+from application.install_state import INSTALL_FAILED
 from domain.models import ActivationJob, ProvisioningResult
 from domain.ports import EsimProvisioningProvider, ProviderCapabilities, SubmitResult, SubscriptionProvisioner
 from domain.provisioning_state import ActivationVerdict, JobState
@@ -81,4 +82,6 @@ class HumanActivationProvider(EsimProvisioningProvider, SubscriptionProvisioner)
             job_id=job.job_id,
             slot_id=job.slot_id,
             error=submitted.error,
+            install_state=INSTALL_FAILED,
+            activation_code_sent=False,
         )

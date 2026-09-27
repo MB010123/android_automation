@@ -26,6 +26,7 @@ from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
 from application.auth_service import validate_esim_storage_key
+from infrastructure.esim_qr_security import extract_authoritative_esim_ref, validate_authoritative_esim_ref
 
 logger = logging.getLogger("vps_backend.farm_mgmt")
 
@@ -256,16 +257,6 @@ class VpsFarmManagementService:
         body["esim_qr_url"] = storage_key
         body.pop("user_id", None)
         result = self.assign_slot(farm_slot, body)
-        if result.http_status == 202 and self._auth_store is not None:
-            rental_id = str(payload.get("rental_id") or "").strip() or None
-            self._auth_store.record_esim_upload(
-                user_id=user_id,
-                farm_slot_id=farm_slot,
-                storage_key=storage_key,
-                rental_id=rental_id,
-                carrier=str(payload.get("carrier") or "") or None,
-                job_id=result.body.get("job_id"),
-            )
         return result
 
     def list_available_slots(self) -> ApiResult:
@@ -290,13 +281,11 @@ class VpsFarmManagementService:
     def assign_slot(self, bay: int, payload: dict[str, Any]) -> ApiResult:
         if bay not in self._known_slots:
             return ApiResult(404, error_body("slot_not_found"))
+        if payload.get("imei2") not in (None, ""):
+            return ApiResult(400, error_body("invalid_request", message="client imei2 is not accepted"))
         rental_id = str(payload.get("rental_id") or "").strip()
         if not RENTAL_ID_RE.match(rental_id):
             return ApiResult(400, error_body("invalid_rental_id"))
-        esim_qr_url = str(payload.get("esim_qr_url") or "").strip()
-        carrier = str(payload.get("carrier") or "").strip()
-        if not esim_qr_url or not carrier:
-            return ApiResult(400, error_body("invalid_request"))
         allowed, retry_after = self._rate.check(bay)
         if not allowed:
             body = error_body("rate_limited")
@@ -330,26 +319,33 @@ class VpsFarmManagementService:
         if bay in (farm.get("offline_slots") or []):
             return ApiResult(409, error_body("device_offline"))
 
-        owner = str(payload.get("user_id") or "").strip()
+        resolved = self._resolve_authoritative_assignment(bay, payload, rental_id)
+        if isinstance(resolved, ApiResult):
+            return resolved
+        owner = resolved["user_id"]
         blocked = self._reject_occupied_tenant_slot(bay, owner)
         if blocked is not None:
             return blocked
-        if owner and self._auth_store is not None:
-            try:
-                claimed = bool(self._auth_store.claim_slot(bay, owner, rental_id))
-            except (TypeError, ValueError, OSError, requests.RequestException):
-                logger.warning("tenant_claim_failed bay=%s", bay)
-                return ApiResult(503, error_body("auth_unavailable"))
-            if not claimed:
-                return ApiResult(409, error_body("slot_unavailable"))
+        try:
+            claimed = bool(self._auth_store.claim_slot(bay, owner, rental_id))
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            logger.warning("tenant_claim_failed bay=%s", bay)
+            return ApiResult(503, error_body("auth_unavailable"))
+        if not claimed:
+            return ApiResult(409, error_body("slot_unavailable"))
 
         safe_payload = {
             "rental_id": rental_id,
-            "carrier": carrier,
+            "user_id": owner,
+            "carrier": resolved["carrier"],
+            "carrier_name": resolved["carrier"],
+            "imei2": resolved["imei2"],
+            "esim_storage_key": resolved["esim_storage_key"],
             "band_lock": str(payload.get("band_lock") or ""),
             "proxy": str(payload.get("proxy") or ""),
-            "esim_qr_url": esim_qr_url,
         }
+        if resolved["esim_qr_url"]:
+            safe_payload["esim_qr_url"] = resolved["esim_qr_url"]
         record = self._jobs.create(
             job_type="assign",
             farm_slot_id=bay,
@@ -471,6 +467,63 @@ class VpsFarmManagementService:
                 ],
             },
         )
+
+    def _resolve_authoritative_assignment(
+        self,
+        bay: int,
+        payload: dict[str, Any],
+        rental_id: str,
+    ) -> dict[str, Any] | ApiResult:
+        if self._auth_store is None or getattr(self._auth_store, "privileged", True) is False:
+            return ApiResult(503, error_body("auth_not_configured"))
+        getter = getattr(self._auth_store, "get_slot_by_id", None)
+        if not callable(getter):
+            return ApiResult(503, error_body("esim_ref_unavailable"))
+        try:
+            row = getter(rental_id)
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            logger.warning("tenant_slot_id_lookup_failed")
+            return ApiResult(503, error_body("auth_unavailable"))
+        if not isinstance(row, dict) or not row:
+            return ApiResult(404, error_body("slot_not_found"))
+        mapped_bay = None
+        for key in ("motherboard_slot_num", "bay"):
+            try:
+                if row.get(key) is not None:
+                    mapped_bay = int(row.get(key))
+                    break
+            except (TypeError, ValueError):
+                mapped_bay = None
+        if mapped_bay != bay:
+            return ApiResult(404, error_body("slot_not_found"))
+        owner = str(row.get("user_id") or "").strip()
+        if not owner:
+            return ApiResult(409, error_body("slot_unavailable"))
+        requested = str(payload.get("user_id") or "").strip()
+        if requested and requested != owner:
+            return ApiResult(409, error_body("slot_unavailable"))
+        carrier = _optional_text(row.get("carrier_name")) or _optional_text(row.get("carrier"))
+        if not carrier:
+            return ApiResult(503, error_body("esim_ref_unavailable"))
+        raw_ref = extract_authoritative_esim_ref(row)
+        if not raw_ref:
+            return ApiResult(503, error_body("esim_ref_unavailable"))
+        storage_key = validate_authoritative_esim_ref(
+            raw_ref,
+            allowed_url_prefixes=self._esim_url_prefixes,
+        )
+        if storage_key is None:
+            return ApiResult(400, error_body("invalid_request", message="authoritative eSIM reference is not allowlisted"))
+        if "://" not in storage_key:
+            return ApiResult(503, error_body("esim_ref_unavailable"))
+        esim_qr_url = storage_key
+        return {
+            "user_id": owner,
+            "carrier": carrier,
+            "imei2": _optional_text(row.get("imei2")),
+            "esim_storage_key": storage_key,
+            "esim_qr_url": esim_qr_url,
+        }
 
     def _slot_has_active_job(self, farm_slot_id: int) -> bool:
         return self._jobs.has_active_job_for_slot(farm_slot_id)

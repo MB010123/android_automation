@@ -27,6 +27,10 @@ from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.vps_rate_limiter import VpsRateLimiter
+from tests.fakes_supabase import MemoryTenant, seed_owned_slot
+
+ESIM_PREFIXES = ("https://example.com/", "https://example.test/")
+OWNER = str(uuid.uuid4())
 
 SLOT1 = public_id_for_farm_slot(1)
 RENTAL = str(uuid.uuid4())
@@ -74,12 +78,14 @@ def _mgmt(tmp_path: Path, *, farm: MockFarmTaskClient | None = None, offline: li
             "adb_online": 20,
         }
 
+    tenant = MemoryTenant()
     worker = VpsJobWorker(
         job_store=jobs,
         assignment_store=assign,
         event_store=events,
         farm_task_client=farm,
         poll_interval_seconds=3600.0,
+        auth_store=tenant,
     )
     svc = VpsFarmManagementService(
         job_store=jobs,
@@ -89,8 +95,10 @@ def _mgmt(tmp_path: Path, *, farm: MockFarmTaskClient | None = None, offline: li
         farm_status_fetcher=status,
         known_farm_slots={1, 2, 4},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        auth_store=tenant,
+        esim_url_prefixes=ESIM_PREFIXES,
     )
-    return svc, worker, farm, jobs
+    return svc, worker, farm, jobs, tenant
 
 
 def _assign_payload(**kw: object) -> dict:
@@ -105,10 +113,23 @@ def _assign_payload(**kw: object) -> dict:
     return base
 
 
+def _seed(tenant: MemoryTenant, bay: int, payload: dict) -> None:
+    seed_owned_slot(
+        tenant,
+        bay=bay,
+        rental_id=str(payload["rental_id"]),
+        user_id=OWNER,
+        qr_code_url=str(payload.get("esim_qr_url") or "https://example.com/qr"),
+        carrier_name=str(payload.get("carrier") or "test-carrier"),
+    )
+
+
 def test_available_slots_excludes_offline_and_assigned(tmp_path: Path):
-    svc, _, _, _ = _mgmt(tmp_path, offline=[2])
+    svc, _, _, _, tenant = _mgmt(tmp_path, offline=[2])
     assert svc.list_available_slots().body["available"]
-    svc.assign_slot(4, _assign_payload())
+    payload = _assign_payload()
+    _seed(tenant, 4, payload)
+    svc.assign_slot(4, payload)
     body = svc.list_available_slots().body
     bays = {item["bay"] for item in body["available"]}
     assert 2 not in bays
@@ -118,8 +139,10 @@ def test_available_slots_excludes_offline_and_assigned(tmp_path: Path):
 
 def test_assign_and_job_done(tmp_path: Path):
     farm = MockFarmTaskClient()
-    svc, worker, _, jobs = _mgmt(tmp_path, farm=farm)
-    result = svc.assign_slot(1, _assign_payload())
+    svc, worker, _, jobs, tenant = _mgmt(tmp_path, farm=farm)
+    payload = _assign_payload()
+    _seed(tenant, 1, payload)
+    result = svc.assign_slot(1, payload)
     assert result.http_status == 202
     assert result.body["ok"] is True
     assert result.body["bay"] == 1
@@ -135,27 +158,37 @@ def test_assign_and_job_done(tmp_path: Path):
 
 
 def test_assign_idempotent_same_rental(tmp_path: Path):
-    svc, _, _, _ = _mgmt(tmp_path)
-    first = svc.assign_slot(1, _assign_payload())
-    second = svc.assign_slot(1, _assign_payload())
+    svc, _, _, _, tenant = _mgmt(tmp_path)
+    payload = _assign_payload()
+    _seed(tenant, 1, payload)
+    first = svc.assign_slot(1, payload)
+    second = svc.assign_slot(1, payload)
     assert first.http_status == 202
     assert second.http_status == 202
     assert first.body["job_id"] == second.body["job_id"]
 
 
 def test_assign_invalid_bay_and_unavailable(tmp_path: Path):
-    svc, _, _, _ = _mgmt(tmp_path)
+    svc, _, _, _, tenant = _mgmt(tmp_path)
     assert svc.assign_slot(99, _assign_payload()).http_status == 404
-    svc.assign_slot(1, _assign_payload())
-    assert svc.assign_slot(1, _assign_payload(rental_id=str(uuid.uuid4()))).http_status == 409
+    payload = _assign_payload()
+    _seed(tenant, 1, payload)
+    svc.assign_slot(1, payload)
+    other = _assign_payload(rental_id=str(uuid.uuid4()))
+    _seed(tenant, 1, other)
+    assert svc.assign_slot(1, other).http_status == 409
 
 
 def test_farm_unreachable_on_assign(tmp_path: Path):
     farm = MockFarmTaskClient()
     farm.fail = True
-    svc, worker, _, _ = _mgmt(tmp_path, farm=farm)
-    svc.assign_slot(1, _assign_payload())
-    job_id = svc.assign_slot(4, _assign_payload(rental_id=str(uuid.uuid4()))).body.get("job_id")
+    svc, worker, _, _, tenant = _mgmt(tmp_path, farm=farm)
+    first = _assign_payload()
+    _seed(tenant, 1, first)
+    svc.assign_slot(1, first)
+    second = _assign_payload(rental_id=str(uuid.uuid4()))
+    _seed(tenant, 4, second)
+    job_id = svc.assign_slot(4, second).body.get("job_id")
     if job_id:
         worker.process_job(job_id)
     assert svc.get_job(job_id or "").http_status in (404, 200)
@@ -164,9 +197,11 @@ def test_farm_unreachable_on_assign(tmp_path: Path):
 def test_assign_provisioning_failure_releases_bay(tmp_path: Path):
     farm = MockFarmTaskClient()
     farm.provision_fail = True
-    svc, worker, _, _ = _mgmt(tmp_path, farm=farm)
+    svc, worker, _, _, tenant = _mgmt(tmp_path, farm=farm)
     assign = SlotAssignmentStore(tmp_path / "assign.sqlite")
-    result = svc.assign_slot(1, _assign_payload())
+    payload = _assign_payload()
+    _seed(tenant, 1, payload)
+    result = svc.assign_slot(1, payload)
     job_id = result.body["job_id"]
     worker.process_job(job_id)
     assert svc.get_job(job_id).body["state"] == "failed"
@@ -176,7 +211,7 @@ def test_assign_provisioning_failure_releases_bay(tmp_path: Path):
 
 def test_action_reboot_and_unsupported(tmp_path: Path):
     farm = MockFarmTaskClient()
-    svc, worker, _, _ = _mgmt(tmp_path, farm=farm)
+    svc, worker, _, _, _ = _mgmt(tmp_path, farm=farm)
     reboot = svc.enqueue_action(SLOT1, "reboot", {})
     assert reboot.http_status == 202
     assert reboot.body["ok"] is True
@@ -188,7 +223,7 @@ def test_action_reboot_and_unsupported(tmp_path: Path):
 
 
 def test_events_and_invalid_since(tmp_path: Path):
-    svc, _, _, _ = _mgmt(tmp_path)
+    svc, _, _, _, _ = _mgmt(tmp_path)
     svc.record_event(1, "device_online", "test")
     events = svc.list_events(SLOT1, since_raw=None, limit_raw="10")
     assert events.body["events"]
@@ -234,7 +269,9 @@ def test_http_assign_e2e_mock(tmp_path: Path):
     spec.loader.exec_module(mod)
     Handler = mod.Handler
     farm = MockFarmTaskClient()
-    svc, worker, _, _ = _mgmt(tmp_path / "http", farm=farm)
+    svc, worker, _, _, tenant = _mgmt(tmp_path / "http", farm=farm)
+    payload = _assign_payload()
+    _seed(tenant, 1, payload)
     Handler.farm_service_token = "service-secret"
     Handler.farm_management_service = svc
     Handler.slot_sms_service = None
@@ -243,7 +280,7 @@ def test_http_assign_e2e_mock(tmp_path: Path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        payload = json.dumps(_assign_payload()).encode()
+        payload = json.dumps(payload).encode()
         req = urllib.request.Request(
             f"http://127.0.0.1:{port}/farm/slots/1/assign",
             data=payload,
@@ -278,7 +315,7 @@ def test_auth_required(tmp_path: Path):
     assert spec and spec.loader
     spec.loader.exec_module(mod)
     Handler = mod.Handler
-    svc, _, _, _ = _mgmt(tmp_path)
+    svc, _, _, _, _ = _mgmt(tmp_path)
     Handler.farm_service_token = "service-secret"
     Handler.farm_management_service = svc
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

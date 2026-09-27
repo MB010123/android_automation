@@ -28,7 +28,7 @@ Off by default.
 | `WEBHOOK_AUTO_REPLY_ENABLED` | `false` | Must be true to dispatch outbound SMS |
 | `WEBHOOK_AUTO_REPLY_RULES` | empty | Rules when enabled |
 | `WEBHOOK_AUTO_REPLY_BODY_PREFIX` | empty | Optional prefix on reply body |
-| `WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS` | `120` | VPS → Farm HTTP timeout |
+| `WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS` | `180` | VPS → Farm HTTP timeout (must be >= companion 180s provision timeout) |
 | `WEBHOOK_FARM_DISPATCH_MAX_ATTEMPTS` | `3` | Retries (same idempotency key) |
 | `OUTBOUND_JOBS_DB_PATH` | `logs/outbound_jobs.sqlite` | VPS outbound job SQLite |
 

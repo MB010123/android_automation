@@ -11,12 +11,13 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -25,11 +26,13 @@ from application.farm_agent_tasks import execute_farm_task, parse_farm_task_body
 from application.farm_sms_command import execute_farm_sms_send, parse_farm_sms_send_body
 from infrastructure.config import AgentConfig
 from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
+from infrastructure.farm_job_result_cache import FarmJobResultCache, should_reuse_assign_result
 
 HEALTH_PATH = "/agent/health"
 STATUS_PATH = "/agent/status"
 SMS_SEND_PATH = "/agent/sms/send"
 TASKS_RUN_PATH = "/agent/tasks/run"
+JOB_PATH_RE = re.compile(r"^/agent/jobs/([^/]+)$")
 
 logger = logging.getLogger("farm_agent_status")
 
@@ -88,6 +91,7 @@ class Handler(BaseHTTPRequestHandler):
     adb_path: str = "adb"
     slot_map: dict[int, str] = {}
     agent_config: AgentConfig | None = None
+    job_cache: FarmJobResultCache | None = None
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
@@ -106,6 +110,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        job_match = JOB_PATH_RE.match(path)
+        if job_match:
+            if not self._authorized():
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return
+            job_id = unquote(job_match.group(1)).strip()
+            cached = self.job_cache.get(job_id) if self.job_cache is not None else None
+            if cached is None:
+                self._send_json(404, {"ok": False, "error": "job_not_found", "job_id": job_id})
+                return
+            self._send_json(200, cached)
+            return
         if path not in (HEALTH_PATH, STATUS_PATH):
             self._send_json(404, {"ok": False, "error": "not found"})
             return
@@ -136,6 +152,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == TASKS_RUN_PATH:
             try:
                 task = parse_farm_task_body(data)
+                if task.task_type == "assign" and self.job_cache is not None:
+                    cached = self.job_cache.get(task.job_id)
+                    if cached is not None and should_reuse_assign_result(cached):
+                        self._send_json(200 if cached.get("ok") else 422, cached)
+                        return
                 result = execute_farm_task(
                     adb_path=self.adb_path,
                     slot_map=self.slot_map,
@@ -152,6 +173,11 @@ class Handler(BaseHTTPRequestHandler):
             }
             if result.message:
                 body["message"] = result.message
+            if result.install_state:
+                body["install_state"] = result.install_state
+            body["activation_code_sent"] = bool(result.activation_code_sent)
+            if task.task_type == "assign" and self.job_cache is not None:
+                body = self.job_cache.remember_assign(task.job_id, result)
             self._send_json(result.http_status, body)
             return
         if self.agent_config is None:
@@ -222,6 +248,8 @@ def main() -> int:
     Handler.adb_path = config.adb_path
     Handler.slot_map = slot_map
     Handler.agent_config = config
+    cache_path = Path(os.getenv("FARM_JOB_RESULT_CACHE_PATH") or (ROOT / "logs" / "farm_job_results.json"))
+    Handler.job_cache = FarmJobResultCache(cache_path)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(

@@ -71,7 +71,7 @@ class AgentConfig:
     sms_outbox_db_path: str | None = None
     app_name: str = "mobi-rent-agent"
     slot_msisdn_map_path: str | None = None
-    webhook_farm_dispatch_timeout_seconds: float = 120.0
+    webhook_farm_dispatch_timeout_seconds: float = 180.0,
     webhook_farm_dispatch_max_attempts: int = 3
 
     @property
@@ -184,7 +184,7 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             or "mobi-rent-agent",
             slot_msisdn_map_path=os.getenv("SLOT_MSISDN_MAP_PATH") or None,
             webhook_farm_dispatch_timeout_seconds=float(
-                os.getenv("WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS", "120")
+                os.getenv("WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS", "180")
             ),
             webhook_farm_dispatch_max_attempts=_read_int_range(
                 "WEBHOOK_FARM_DISPATCH_MAX_ATTEMPTS", 3, 1, 10

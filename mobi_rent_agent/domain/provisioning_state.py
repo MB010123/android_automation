@@ -28,6 +28,29 @@ class ActivationVerdict(str, Enum):
         return self is ActivationVerdict.ACTIVATION_CONFIRMED
 
 
+INSTALL_FAILED = "INSTALL_FAILED"
+INSTALL_ACCEPTED = "INSTALL_ACCEPTED"
+INSTALL_VERIFIED = "INSTALL_VERIFIED"
+INSTALL_VERIFICATION_UNKNOWN = "INSTALL_VERIFICATION_UNKNOWN"
+
+INSTALL_STATES = frozenset(
+    {
+        INSTALL_FAILED,
+        INSTALL_ACCEPTED,
+        INSTALL_VERIFIED,
+        INSTALL_VERIFICATION_UNKNOWN,
+    }
+)
+
+KEEP_ASSIGNMENT_STATES = frozenset(
+    {
+        INSTALL_ACCEPTED,
+        INSTALL_VERIFIED,
+        INSTALL_VERIFICATION_UNKNOWN,
+    }
+)
+
+
 class InvalidJobTransition(ValueError):
     """Raised when a job state transition is not in the approved table."""
 

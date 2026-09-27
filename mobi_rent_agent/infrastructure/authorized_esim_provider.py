@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from application.install_state import (
+    INSTALL_ACCEPTED,
+    INSTALL_FAILED,
+    INSTALL_VERIFICATION_UNKNOWN,
+    INSTALL_VERIFIED,
+)
 from domain.esim_capabilities import (
     LEGITIMATE_AUTHORIZATION_SOURCES,
     AndroidAuthorizationSnapshot,
@@ -217,23 +223,47 @@ class AuthorizedEsimProvider(EsimProvisioningProvider, SubscriptionProvisioner):
                 job_id=job.job_id,
                 slot_id=job.slot_id,
                 error=submitted.error,
+                install_state=INSTALL_FAILED,
+                activation_code_sent=bool(submitted.activation_code_sent),
             )
         if self._verification_source is None:
-            return ProvisioningResult.from_verdict(
+            return ProvisioningResult(
+                success=False,
                 job_id=job.job_id,
                 slot_id=job.slot_id,
-                verdict=ActivationVerdict.VERIFICATION_UNKNOWN,
                 error="download accepted; four-layer verification snapshot missing",
+                verdict=ActivationVerdict.VERIFICATION_UNKNOWN,
+                install_state=INSTALL_VERIFICATION_UNKNOWN,
+                activation_code_sent=True,
             )
         snapshot = self._verification_source(serial, job)
         if snapshot is None:
-            return ProvisioningResult.from_verdict(
+            return ProvisioningResult(
+                success=False,
                 job_id=job.job_id,
                 slot_id=job.slot_id,
-                verdict=ActivationVerdict.VERIFICATION_UNKNOWN,
                 error="four-layer verification observation is incomplete",
+                verdict=ActivationVerdict.VERIFICATION_UNKNOWN,
+                install_state=INSTALL_VERIFICATION_UNKNOWN,
+                activation_code_sent=True,
             )
-        return self.verify_profile(serial, job, snapshot)
+        verified = self.verify_profile(serial, job, snapshot)
+        if verified.verdict is ActivationVerdict.ACTIVATION_CONFIRMED:
+            install_state = INSTALL_VERIFIED
+        elif verified.verdict is ActivationVerdict.VERIFICATION_UNKNOWN:
+            install_state = INSTALL_VERIFICATION_UNKNOWN
+        else:
+            install_state = INSTALL_ACCEPTED
+        return ProvisioningResult(
+            success=verified.verdict is ActivationVerdict.ACTIVATION_CONFIRMED,
+            job_id=job.job_id,
+            slot_id=job.slot_id,
+            device_code=verified.device_code,
+            error=verified.error,
+            verdict=verified.verdict,
+            install_state=install_state,
+            activation_code_sent=True,
+        )
 
     @staticmethod
     def _refuse(state: JobState, error: str) -> SubmitResult:

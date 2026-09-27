@@ -21,3 +21,5 @@ class FarmTaskResult:
     http_status: int
     error: str | None = None
     message: str | None = None
+    install_state: str | None = None
+    activation_code_sent: bool = False
