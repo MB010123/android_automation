@@ -22,6 +22,7 @@ from application.install_state import (
     INSTALL_VERIFICATION_UNKNOWN,
     INSTALL_VERIFIED,
 )
+from application.auth_service import MAX_ESIM_URL_FIELD, MAX_JSON_FIELD, validate_esim_storage_key
 from application.vps_api_contract import job_response_body
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
@@ -38,7 +39,11 @@ from domain.verification import (
 )
 from infrastructure.android_authorization_probe import StaticAuthorizationProbe
 from infrastructure.authorized_esim_provider import AuthorizedEsimProvider
-from infrastructure.esim_qr_security import esim_fetch_url_is_public_https, esim_fetch_url_is_safe
+from infrastructure.esim_qr_security import (
+    esim_fetch_url_is_public_https,
+    esim_fetch_url_is_safe,
+    validate_authoritative_esim_ref,
+)
 from infrastructure.farm_task_client import FarmTaskResponse
 from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
@@ -52,6 +57,17 @@ PREFIXES = ("https://files.loanerphones.com/", "https://example.test/")
 OWNER = "11111111-1111-4111-8111-111111111111"
 LOVABLE_QR = "https://files.loanerphones.com/slots/rental/qr.png"
 SECRET = "LPA:1$sm-v4-prod-external.prod.ondemandconnectivity.com$UNIT-TEST-NOT-REAL"
+SUPABASE_SIGN_PREFIX = (
+    "https://khnaaupuzxypuucstxzv.supabase.co/storage/v1/object/sign/esim-records/"
+)
+SUPABASE_PREFIXES = (SUPABASE_SIGN_PREFIX,)
+
+
+def _padded_url(prefix: str, length: int) -> str:
+    """Exact-length synthetic URL. Padding is not a signed-URL token."""
+    if length < len(prefix):
+        raise ValueError("length shorter than prefix")
+    return prefix + ("x" * (length - len(prefix)))
 
 
 class SyncWorker(VpsJobWorker):
@@ -250,6 +266,90 @@ def test_https_allowlisted_qr_works(tmp_path: Path):
     worker.process_job(result.body["job_id"])
     assert farm.calls[0]["payload"]["esim_qr_url"] == LOVABLE_QR
     assert assign.is_assigned(1) is True
+
+
+def test_esim_storage_key_accepts_short_and_max_length_keys():
+    short_key = "users/abc/esim.png"
+    max_key = "a" * MAX_JSON_FIELD
+    assert validate_esim_storage_key(short_key) == short_key
+    assert validate_esim_storage_key(max_key) == max_key
+    assert len(max_key) == 512
+
+
+def test_esim_storage_key_rejects_over_json_field_limit():
+    too_long = "a" * (MAX_JSON_FIELD + 1)
+    assert len(too_long) == 513
+    assert validate_esim_storage_key(too_long) is None
+
+
+def test_esim_storage_key_accepts_allowlisted_supabase_https_under_url_limit():
+    short_url = SUPABASE_SIGN_PREFIX + "user/slot/qr.png"
+    assert len(short_url) <= MAX_JSON_FIELD
+    assert validate_esim_storage_key(short_url, allowed_url_prefixes=SUPABASE_PREFIXES) == short_url
+    assert (
+        validate_authoritative_esim_ref(short_url, allowed_url_prefixes=SUPABASE_PREFIXES) == short_url
+    )
+
+
+def test_esim_storage_key_accepts_allowlisted_supabase_https_over_512():
+    long_url = _padded_url(SUPABASE_SIGN_PREFIX, MAX_JSON_FIELD + 64)
+    assert MAX_JSON_FIELD < len(long_url) <= MAX_ESIM_URL_FIELD
+    assert validate_esim_storage_key(long_url, allowed_url_prefixes=SUPABASE_PREFIXES) == long_url
+    assert (
+        validate_authoritative_esim_ref(long_url, allowed_url_prefixes=SUPABASE_PREFIXES) == long_url
+    )
+
+
+def test_esim_storage_key_rejects_allowlisted_url_over_url_limit():
+    too_long = _padded_url(SUPABASE_SIGN_PREFIX, MAX_ESIM_URL_FIELD + 1)
+    assert len(too_long) == 4097
+    assert validate_esim_storage_key(too_long, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_authoritative_esim_ref(too_long, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+
+
+def test_esim_storage_key_rejects_wrong_host_and_wrong_supabase_path():
+    wrong_host = "https://evil.example/storage/v1/object/sign/esim-records/qr.png"
+    wrong_path = (
+        "https://khnaaupuzxypuucstxzv.supabase.co/storage/v1/object/public/esim-records/qr.png"
+    )
+    assert validate_esim_storage_key(wrong_host, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_esim_storage_key(wrong_path, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_authoritative_esim_ref(wrong_host, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_authoritative_esim_ref(wrong_path, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+
+
+def test_esim_storage_key_rejects_non_https_and_missing_allowlist():
+    http_url = "http://khnaaupuzxypuucstxzv.supabase.co/storage/v1/object/sign/esim-records/qr.png"
+    https_url = SUPABASE_SIGN_PREFIX + "user/slot/qr.png"
+    assert validate_esim_storage_key(http_url, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_esim_storage_key(https_url) is None
+    assert validate_esim_storage_key(https_url, allowed_url_prefixes=()) is None
+    assert validate_authoritative_esim_ref(http_url, allowed_url_prefixes=SUPABASE_PREFIXES) is None
+    assert validate_authoritative_esim_ref(https_url, allowed_url_prefixes=()) is None
+
+
+def test_authoritative_ssrf_still_rejects_private_and_localhost_urls():
+    loopback = "https://127.0.0.1/qr.png"
+    localhost = "https://localhost/qr.png"
+    private = "https://10.0.0.8/qr.png"
+    assert validate_authoritative_esim_ref(loopback, allowed_url_prefixes=("https://127.0.0.1/",)) is None
+    assert validate_authoritative_esim_ref(localhost, allowed_url_prefixes=("https://localhost/",)) is None
+    assert validate_authoritative_esim_ref(private, allowed_url_prefixes=("https://10.0.0.8/",)) is None
+    assert esim_fetch_url_is_safe(loopback, allowed_url_prefixes=("https://127.0.0.1/",)) is False
+    assert esim_fetch_url_is_public_https(loopback) is False
+    assert esim_fetch_url_is_public_https(localhost) is False
+    assert esim_fetch_url_is_public_https(private) is False
+
+
+def test_assign_accepts_allowlisted_qr_url_longer_than_512(tmp_path: Path):
+    long_url = _padded_url("https://files.loanerphones.com/", MAX_JSON_FIELD + 64)
+    svc, _w, _f, jobs, assign, tenant, _now = _harness(tmp_path)
+    rental = _seed(tenant, str(uuid.uuid4()), qr_code_url=long_url)
+    result = svc.assign_slot(1, _assign_body(rental))
+    assert result.http_status == 202
+    assert assign.is_assigned(1) is True
+    record = jobs.get(result.body["job_id"])
+    assert record.request_payload["esim_qr_url"] == long_url
 
 
 def test_activation_code_never_returned_by_get_jobs(tmp_path: Path):

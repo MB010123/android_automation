@@ -140,9 +140,12 @@ def test_sql_injection_email_is_rejected():
 def test_esim_storage_key_rejects_arbitrary_urls():
     assert validate_esim_storage_key("users/abc/esim.png") == "users/abc/esim.png"
     assert validate_esim_storage_key("https://evil.example/qr.png") is None
-    assert validate_esim_storage_key(
-        "https://files.loanerphones.com/private/a",
-        allowed_url_prefixes=("https://files.loanerphones.com/",),
+    assert (
+        validate_esim_storage_key(
+            "https://files.loanerphones.com/private/a",
+            allowed_url_prefixes=("https://files.loanerphones.com/",),
+        )
+        == "https://files.loanerphones.com/private/a"
     )
 
 

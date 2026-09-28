@@ -18,6 +18,7 @@ MAX_EMAIL_LEN = 254
 MIN_PASSWORD_LEN = 12
 MAX_PASSWORD_LEN = 128
 MAX_JSON_FIELD = 512
+MAX_ESIM_URL_FIELD = 4096
 
 
 @dataclass
@@ -276,11 +277,15 @@ def _password_error(password: str, *, email: str) -> str | None:
 def validate_esim_storage_key(value: str, *, allowed_url_prefixes: tuple[str, ...] = ()) -> str | None:
     """Accept an internal object key or an allowlisted private-storage URL. Never fetch it."""
     key = value.strip()
-    if not key or len(key) > MAX_JSON_FIELD:
+    if not key:
         return None
     if "://" in key:
+        if len(key) > MAX_ESIM_URL_FIELD:
+            return None
         if any(key.startswith(prefix) for prefix in allowed_url_prefixes if prefix):
             return key
+        return None
+    if len(key) > MAX_JSON_FIELD:
         return None
     if re.fullmatch(r"[A-Za-z0-9/_.\-]+", key):
         return key
