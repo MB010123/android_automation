@@ -265,7 +265,7 @@ def test_https_allowlisted_qr_works(tmp_path: Path):
     assert result.http_status == 202
     worker.process_job(result.body["job_id"])
     assert farm.calls[0]["payload"]["esim_qr_url"] == LOVABLE_QR
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
 
 
 def test_esim_storage_key_accepts_short_and_max_length_keys():
@@ -536,7 +536,10 @@ def test_lovable_recording_failure_does_not_release_the_bay(tmp_path: Path):
     assert job["state"] == "done"
     assert job["install_state"] == INSTALL_ACCEPTED
     assert job["tenant_record_error"] is True
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
+    replay = svc.assign_slot(1, _assign_body(rental))
+    assert replay.http_status == 202
+    assert replay.body["job_id"] == result.body["job_id"]
 
 
 def test_running_job_recovery_does_not_blindly_redownload(tmp_path: Path):

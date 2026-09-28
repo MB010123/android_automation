@@ -294,19 +294,13 @@ class VpsFarmManagementService:
 
         idempotency_key = f"assign-{rental_id}"
         existing_job = self._jobs.get_by_idempotency("assign", bay, idempotency_key)
-        if existing_job is not None:
-            current = self._assignments.get(bay)
-            if (
-                current is not None
-                and current.job_id == existing_job.job_id
-                and current.rental_id == rental_id
-            ):
-                logger.info("assign_idempotent_replay bay=%s job_id=%s", bay, existing_job.job_id)
-                return ApiResult(
-                    202,
-                    assign_acceptance_body(job_id=existing_job.job_id, bay=bay, status=existing_job.status),
-                )
-            return ApiResult(409, error_body("slot_unavailable"))
+        if self._jobs.is_replayable(existing_job):
+            assert existing_job is not None
+            logger.info("assign_idempotent_replay bay=%s job_id=%s", bay, existing_job.job_id)
+            return ApiResult(
+                202,
+                assign_acceptance_body(job_id=existing_job.job_id, bay=bay, status=existing_job.status),
+            )
 
         if self._assignments.is_assigned(bay) or self._slot_has_active_job(bay):
             return ApiResult(409, error_body("slot_unavailable"))

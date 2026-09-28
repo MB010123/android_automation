@@ -9,8 +9,9 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SECRET_PAYLOAD_KEYS = frozenset({"activation_code"})
+_REPLAYABLE_STATUSES = frozenset({"pending", "running", "done"})
 
 
 def _without_secrets(payload: dict | None) -> dict | None:
@@ -86,11 +87,35 @@ class VpsJobStore:
                 "CREATE INDEX idx_vps_jobs_slot ON vps_jobs (farm_slot_id, status)"
             )
             self._conn.execute(
-                "CREATE UNIQUE INDEX idx_vps_jobs_idempotency "
+                "CREATE UNIQUE INDEX idx_vps_jobs_idempotency_active "
                 "ON vps_jobs (type, farm_slot_id, idempotency_key) "
-                "WHERE idempotency_key IS NOT NULL"
+                "WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'running')"
             )
             self._conn.commit()
+        self._migrate_schema()
+
+    def _schema_version(self) -> int:
+        row = self._conn.execute("SELECT version FROM vps_job_schema_version").fetchone()
+        return int(row[0]) if row else 0
+
+    def _migrate_schema(self) -> None:
+        version = self._schema_version()
+        if version >= SCHEMA_VERSION:
+            return
+        if version < 2:
+            self._conn.execute("DROP INDEX IF EXISTS idx_vps_jobs_idempotency")
+            self._conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_vps_jobs_idempotency_active
+                ON vps_jobs (type, farm_slot_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL AND status IN ('pending', 'running')
+                """
+            )
+        self._conn.execute(
+            "UPDATE vps_job_schema_version SET version = ?",
+            (SCHEMA_VERSION,),
+        )
+        self._conn.commit()
 
     def create(
         self,
@@ -170,10 +195,20 @@ class VpsJobStore:
                 """
                 SELECT * FROM vps_jobs
                 WHERE type = ? AND farm_slot_id = ? AND idempotency_key = ?
+                ORDER BY CASE status
+                    WHEN 'pending' THEN 0
+                    WHEN 'running' THEN 0
+                    WHEN 'done' THEN 1
+                    ELSE 2
+                END, created_at DESC
+                LIMIT 1
                 """,
                 (job_type, farm_slot_id, idempotency_key),
             ).fetchone()
         return _row_to_record(row) if row else None
+
+    def is_replayable(self, record: VpsJobRecord | None) -> bool:
+        return record is not None and record.status in _REPLAYABLE_STATUSES
 
     def has_active_job_for_slot(self, farm_slot_id: int) -> bool:
         with self._lock:

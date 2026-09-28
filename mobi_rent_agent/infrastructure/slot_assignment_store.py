@@ -96,12 +96,18 @@ class SlotAssignmentStore:
                 self._conn.rollback()
                 return False
 
-    def release(self, farm_slot_id: int) -> None:
+    def release(self, farm_slot_id: int, job_id: str | None = None) -> None:
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM slot_assignments WHERE farm_slot_id = ?",
-                (farm_slot_id,),
-            )
+            if job_id:
+                self._conn.execute(
+                    "DELETE FROM slot_assignments WHERE farm_slot_id = ? AND job_id = ?",
+                    (farm_slot_id, job_id),
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM slot_assignments WHERE farm_slot_id = ?",
+                    (farm_slot_id,),
+                )
             self._conn.commit()
 
     def close(self) -> None:

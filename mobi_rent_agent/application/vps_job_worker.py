@@ -214,8 +214,8 @@ class VpsJobWorker:
                 result_payload=result_payload,
                 completed_at=self._clock(),
             )
+            self._release_reservation(record, install_state)
             if record.farm_slot_id is not None:
-                self._assignments.release(record.farm_slot_id)
                 self._events.append(record.farm_slot_id, "provisioning_failed", response.error or "task_failed")
                 self._events.append(record.farm_slot_id, "assignment_failed", response.error or "task_failed")
             logger.warning("farm_task_failed job_id=%s type=%s error=%s", job_id, record.type, response.error)
@@ -257,11 +257,20 @@ class VpsJobWorker:
             error=None,
             completed_at=self._clock(),
         )
+        self._release_reservation(record, install_state)
         if record.farm_slot_id is not None:
             self._events.append(record.farm_slot_id, event, f"job_id={job_id}")
             if install_state == INSTALL_VERIFIED:
                 self._events.append(record.farm_slot_id, "assignment_completed", f"job_id={job_id}")
         logger.info("farm_task_completed job_id=%s type=%s bay=%s", job_id, record.type, record.farm_slot_id)
+
+    def _release_reservation(self, record: VpsJobRecord, install_state: str) -> None:
+        """Drop the bay lock for this job only. Never wipe a newer reservation."""
+        if record.farm_slot_id is None:
+            return
+        if install_state == INSTALL_VERIFICATION_UNKNOWN:
+            return
+        self._assignments.release(record.farm_slot_id, record.job_id)
 
     def _record_esim_if_needed(self, record: VpsJobRecord, install_state: str) -> bool | None:
         if install_state not in {INSTALL_ACCEPTED, INSTALL_VERIFIED}:

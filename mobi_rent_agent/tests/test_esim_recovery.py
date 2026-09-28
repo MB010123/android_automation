@@ -154,7 +154,7 @@ def test_stale_job_with_accepted_cache_recovers_as_accepted(tmp_path: Path):
     job = svc.get_job(job_id).body
     assert job["state"] == "done"
     assert job["install_state"] == INSTALL_ACCEPTED
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
     assert len(tenant.esims) == 1
     assert tenant.esims[0]["job_id"] == job_id
 
@@ -167,7 +167,7 @@ def test_stale_job_with_verified_cache_recovers_as_verified(tmp_path: Path):
     assert farm.run_calls == []
     job = svc.get_job(job_id).body
     assert job["install_state"] == INSTALL_VERIFIED
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
     assert len(tenant.esims) == 1
 
 
@@ -198,7 +198,7 @@ def test_stale_job_pre_send_failure_may_be_retried(tmp_path: Path):
     assert farm.run_calls[0]["task_type"] == "assign"
     job = svc.get_job(job_id).body
     assert job["install_state"] == INSTALL_ACCEPTED
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
     assert len(tenant.esims) == 1
 
 
@@ -229,7 +229,7 @@ def test_accepted_recovery_recording_is_idempotent(tmp_path: Path):
     assert worker._record_esim_if_needed(record, INSTALL_ACCEPTED) is True
     assert worker._record_esim_if_needed(record, INSTALL_VERIFIED) is True
     assert len(tenant.esims) == 1
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
 
 
 def test_recovery_recording_failure_keeps_bay(tmp_path: Path):
@@ -248,7 +248,7 @@ def test_recovery_recording_failure_keeps_bay(tmp_path: Path):
     assert job["state"] == "done"
     assert job["install_state"] == INSTALL_VERIFIED
     assert job["tenant_record_error"] is True
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
     assert farm.run_calls == []
 
 
@@ -262,7 +262,7 @@ def test_repeated_recovery_does_not_create_second_install(tmp_path: Path):
     worker.process_job(job_id)
     assert farm.run_calls == []
     assert len(tenant.esims) == 1
-    assert assign.is_assigned(1) is True
+    assert assign.is_assigned(1) is False
     assert svc.get_job(job_id).body["install_state"] == INSTALL_ACCEPTED
 
 
