@@ -209,7 +209,14 @@ def test_status_farm_unreachable_marks_heartbeat(tmp_path: Path):
     assert body["last_seen_at"] is not None
 
 
-def test_status_provisioning_then_online(tmp_path: Path):
+def test_status_provisioning_then_available_after_completed_assign(tmp_path: Path):
+    """Successful assign completes the job and drops the bay reservation.
+
+    ``online`` means assigned + completed + fresh ADB (see derive_slot_state).
+    The job worker releases the reservation on INSTALL_ACCEPTED/VERIFIED
+    (test_c_terminal_success_releases_reservation), so an unassigned bay with
+    ADB up and last phase ``completed`` is ``available``, never ``online``.
+    """
     fx = Fixture(tmp_path)
     fx.beat()
     result = fx.seed_and_assign(1)
@@ -220,12 +227,16 @@ def test_status_provisioning_then_online(tmp_path: Path):
     assert body["status"] == "provisioning"
     assert body["active_job_id"] == job_id
     assert body["provisioning_phase"] == "queued"
+    assert body["assigned"] is True
     fx.worker.process_job(job_id)
     body = fx.status_of()
-    assert body["status"] == "online"
     assert body["provisioning_phase"] == "completed"
-    assert body["assigned"] is True
-    assert body["rental_id"] is not None
+    assert body["last_assign_job_id"] == job_id
+    assert body["active_job_id"] is None
+    assert body["assigned"] is False
+    assert body["rental_id"] is None
+    assert body["status"] == "available"
+    assert body["adb_online"] is True
 
 
 def test_status_requires_manual_action(tmp_path: Path):

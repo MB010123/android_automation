@@ -27,6 +27,13 @@ RE_AUTH_FORGOT = re.compile(r"^/auth/forgot-password$")
 RE_AUTH_RESET = re.compile(r"^/auth/reset-password$")
 RE_AUTH_VERIFY = re.compile(r"^/auth/verify-email$")
 RE_AUTH_RESEND = re.compile(r"^/auth/resend-verification$")
+# Remote-access POC (Slot 1). Keyed by rental only: the browser never names
+# a slot or device; the backend derives both from the rental row.
+RE_REMOTE_ACCESS = re.compile(rf"^/rentals/({_UUID})/remote-access$")
+RE_REMOTE_ACCESS_ACTION = re.compile(
+    rf"^/rentals/({_UUID})/remote-access/(revoke|release|device-status|reboot|prepare-esim|activation-status)$"
+)
+REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
 
 PUBLIC_AUTH_POST = frozenset(
     {"auth_signup", "auth_login", "auth_forgot", "auth_reset", "auth_verify"}
@@ -53,9 +60,14 @@ class ParsedRoute:
     job_id: str | None = None
     farm_bay: int | None = None
     action: str | None = None
+    rental_id: str | None = None
 
 
 def parse_route(path: str) -> ParsedRoute | None:
+    if m := RE_REMOTE_ACCESS.match(path):
+        return ParsedRoute(kind="remote_access", rental_id=m.group(1))
+    if m := RE_REMOTE_ACCESS_ACTION.match(path):
+        return ParsedRoute(kind="remote_access_action", rental_id=m.group(1), action=m.group(2))
     if m := RE_FARM_AVAILABLE.match(path):
         return ParsedRoute(kind="farm_available")
     if m := RE_FARM_ASSIGN.match(path):

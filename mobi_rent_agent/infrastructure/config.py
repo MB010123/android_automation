@@ -73,6 +73,20 @@ class AgentConfig:
     slot_msisdn_map_path: str | None = None
     webhook_farm_dispatch_timeout_seconds: float = 180.0,
     webhook_farm_dispatch_max_attempts: int = 3
+    # Remote-access proof of concept (GADS behind the Mobi-Rent backend).
+    # Off by default; only slots in the allowlist may ever be exposed.
+    # This is remote screen/input for the customer's *manual* Android eSIM
+    # flow. It is not eSIM authorization and never touches EuiccManager.
+    remote_access_poc_enabled: bool = False
+    remote_access_poc_slot_ids: tuple[int, ...] = (1,)
+    remote_access_platform_url: str | None = None
+    remote_access_public_url: str | None = None
+    remote_access_admin_username: str | None = None
+    remote_access_admin_password: str | None = None
+    remote_access_workspace_id: str | None = None
+    remote_access_session_ttl_minutes: int = 60
+    remote_access_reboot_timeout_seconds: float = 180.0
+    remote_access_qr_url_prefixes: tuple[str, ...] = ()
 
     @property
     def sms_enabled(self) -> bool:
@@ -189,6 +203,27 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             webhook_farm_dispatch_max_attempts=_read_int_range(
                 "WEBHOOK_FARM_DISPATCH_MAX_ATTEMPTS", 3, 1, 10
             ),
+            remote_access_poc_enabled=_read_bool("REMOTE_ACCESS_POC_ENABLED", False),
+            remote_access_poc_slot_ids=parse_allowed_slot_ids(
+                os.getenv("REMOTE_ACCESS_POC_SLOT_IDS"),
+                default=(1,),
+                name="REMOTE_ACCESS_POC_SLOT_IDS",
+            ),
+            remote_access_platform_url=os.getenv("REMOTE_ACCESS_PLATFORM_URL") or None,
+            remote_access_public_url=os.getenv("REMOTE_ACCESS_PUBLIC_URL") or None,
+            remote_access_admin_username=os.getenv("REMOTE_ACCESS_ADMIN_USERNAME") or None,
+            remote_access_admin_password=os.getenv("REMOTE_ACCESS_ADMIN_PASSWORD") or None,
+            remote_access_workspace_id=os.getenv("REMOTE_ACCESS_WORKSPACE_ID") or None,
+            # GADS caps API leases at 360 minutes.
+            remote_access_session_ttl_minutes=_read_int_range(
+                "REMOTE_ACCESS_SESSION_TTL_MINUTES", 60, 5, 360
+            ),
+            remote_access_reboot_timeout_seconds=float(
+                os.getenv("REMOTE_ACCESS_REBOOT_TIMEOUT_SECONDS", "180")
+            ),
+            remote_access_qr_url_prefixes=_parse_url_prefixes(
+                os.getenv("REMOTE_ACCESS_QR_URL_PREFIXES") or os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES")
+            ),
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc
@@ -198,6 +233,7 @@ def parse_allowed_slot_ids(
     raw: str | None,
     *,
     default: tuple[int, ...] = (1,),
+    name: str = "PROVISIONING_ALLOWED_SLOT_IDS",
 ) -> tuple[int, ...]:
     """Parse a CSV slot allowlist.
 
@@ -218,9 +254,9 @@ def parse_allowed_slot_ids(
         try:
             slot_id = int(token)
         except ValueError as exc:
-            raise ValueError(f"PROVISIONING_ALLOWED_SLOT_IDS contains a non-integer: {token}") from exc
+            raise ValueError(f"{name} contains a non-integer: {token}") from exc
         if not 1 <= slot_id <= 20:
-            raise ValueError(f"PROVISIONING_ALLOWED_SLOT_IDS slot must be 1-20, got {slot_id}")
+            raise ValueError(f"{name} slot must be 1-20, got {slot_id}")
         if slot_id not in ids:
             ids.append(slot_id)
     return tuple(ids)
@@ -236,6 +272,17 @@ def _read_bool(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be true or false")
+
+
+def _parse_url_prefixes(raw: str | None) -> tuple[str, ...]:
+    if not raw or not str(raw).strip():
+        return ()
+    values: list[str] = []
+    for part in str(raw).split(","):
+        token = part.strip()
+        if token and token not in values:
+            values.append(token)
+    return tuple(values)
 
 
 def _parse_csv(raw: str | None) -> tuple[str, ...]:

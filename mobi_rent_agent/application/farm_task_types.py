@@ -4,7 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-SUPPORTED_TASK_TYPES = {"reboot", "assign", "airplane_cycle", "voidfix_repair"}
+SUPPORTED_TASK_TYPES = {
+    "reboot",
+    "assign",
+    "airplane_cycle",
+    "voidfix_repair",
+    "remote_access_place_qr",
+    "remote_access_activation_status",
+}
 
 
 @dataclass
@@ -23,3 +30,4 @@ class FarmTaskResult:
     message: str | None = None
     install_state: str | None = None
     activation_code_sent: bool = False
+    details: dict[str, Any] | None = None

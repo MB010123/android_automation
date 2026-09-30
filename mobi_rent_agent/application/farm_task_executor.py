@@ -96,6 +96,26 @@ def execute_controlled_farm_task(
             error="action_not_supported",
             message=VOIDFIX_REPAIR_UNSUPPORTED_REASON,
         )
+    if request.task_type == "remote_access_place_qr":
+        from application.remote_access_farm_task import run_remote_access_place_qr
+
+        return run_remote_access_place_qr(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            agent_config=agent_config,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "remote_access_activation_status":
+        from application.remote_access_farm_task import run_remote_access_activation_status
+
+        return run_remote_access_activation_status(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            agent_config=agent_config,
+            command_runner=deps.command_runner,
+        )
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 

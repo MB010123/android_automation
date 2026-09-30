@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -11,7 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
 
 PRODUCTION_MAP = {slot: f"SERIAL-{slot}" for slot in range(1, 21)}
-EXPECTED_SLOT_MAP_SHA256 = "86754037C135740CE0E32F71C0921C9213EDD3499764C86E87D5AA13DA641F89"
+# Gitignored farm/VPS map. Tests must not pin its contents; they may still
+# assert the allowlist never writes this path if the file happens to exist.
 SLOT_MAP_PATH = Path(__file__).resolve().parents[1] / "slot_map.json"
 
 
@@ -66,19 +68,32 @@ def test_invalid_allowed_slot_is_rejected():
         SlotIsolationPolicy({21})
 
 
-def test_allowlist_does_not_mutate_slot_map_json():
-    if not SLOT_MAP_PATH.exists():
-        pytest.skip("production slot_map.json is not present")
-    before = SLOT_MAP_PATH.read_bytes()
-    digest = hashlib.sha256(before).hexdigest().upper()
-    assert digest == EXPECTED_SLOT_MAP_SHA256
-    import json
+def test_allowlist_does_not_mutate_slot_map_json(tmp_path: Path):
+    """Allowlist/claim logic must never rewrite slot_map.json.
 
+    Uses a controlled fixture so this does not depend on a machine-specific
+    gitignored production map. If a live map is present, it must also be
+    byte-identical after the same operations.
+    """
+    fixture = tmp_path / "slot_map.json"
+    fixture.write_text(
+        json.dumps({str(slot): f"SERIAL-{slot}" for slot in range(1, 21)}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    before = fixture.read_bytes()
+    digest = hashlib.sha256(before).hexdigest()
     mapped = {int(k): v for k, v in json.loads(before.decode()).items()}
     assert len(mapped) == 20
+    live_before = SLOT_MAP_PATH.read_bytes() if SLOT_MAP_PATH.exists() else None
+
     policy = SlotIsolationPolicy({1})
     assert policy.claim_ids(mapped) == [1]
     policy.claim_payload(mapped)
-    after = SLOT_MAP_PATH.read_bytes()
+    policy.refuse_if_empty(mapped)
+    policy.max_workers(20, mapped)
+
+    after = fixture.read_bytes()
     assert after == before
-    assert hashlib.sha256(after).hexdigest().upper() == EXPECTED_SLOT_MAP_SHA256
+    assert hashlib.sha256(after).hexdigest() == digest
+    if live_before is not None:
+        assert SLOT_MAP_PATH.read_bytes() == live_before

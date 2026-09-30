@@ -559,6 +559,15 @@ def _shared_responses() -> dict[str, Any]:
     }
 
 
+_RENTAL_PARAM = {
+    "name": "rental_id",
+    "in": "path",
+    "required": True,
+    "schema": {"type": "string", "format": "uuid"},
+    "description": "Lovable rental/slot record id owned by the authenticated customer.",
+}
+
+
 def _paths(webhook_path: str) -> dict[str, Any]:
     slot_param = {
         "name": "slot_id",
@@ -805,6 +814,85 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "responses": {
                     "200": {"description": "ok"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
+                },
+            }
+        },
+        "/rentals/{rental_id}/remote-access": {
+            "get": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "Current remote-access session for the caller's rental",
+                "description": (
+                    "Proof of concept, disabled unless `REMOTE_ACCESS_POC_ENABLED=true` and the rental's slot is in "
+                    "`REMOTE_ACCESS_POC_SLOT_IDS`. The backend verifies customer -> rental -> slot -> device "
+                    "server-side; any failure is `403 forbidden`. Never returns platform credentials."
+                    " Includes `activation_state` (REMOTE_ACCESS_READY | DEVICE_REBOOTING | "
+                    "CUSTOMER_ACTIVATION_REQUIRED | ACTIVATING | ACTIVE | FAILED), `qr_ready`, and `guidance`."
+                ),
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "200": {"description": "Session view (status none|active|expired|revoked|released)"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                },
+            },
+            "post": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "Create (or rotate) temporary remote access for the caller's rental",
+                "description": (
+                    "Creates a per-rental, non-admin login on the remote-control platform, leases the slot's "
+                    "device to it for at most `REMOTE_ACCESS_SESSION_TTL_MINUTES` (capped by the rental end), and "
+                    "returns the one-time `platform_login` (url/username/password). The request body is ignored: the "
+                    "browser cannot choose a slot or device. The customer then performs the normal Android eSIM UI "
+                    "flow through the remote screen. This is not eSIM authorization."
+                ),
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "201": {"description": "Created; `platform_login` is shown exactly once"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                    "409": {"description": "remote_access_busy"},
+                    "502": {"description": "remote_access_platform_error"},
+                    "503": {"description": "remote_access_not_configured"},
+                },
+            },
+        },
+        "/rentals/{rental_id}/remote-access/{action}": {
+            "post": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status",
+                "description": (
+                    "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
+                    "return the device to the pool when the rental ends. `device-status`: platform/ADB state of the "
+                    "rental's device; requires an active session. `reboot`: reboot via the existing Farm Agent ADB "
+                    "task, then wait for ADB and platform reconnect (async; poll GET). `prepare-esim`: Farm Agent "
+                    "downloads the rental's authoritative, allowlisted QR image and places it in "
+                    "`/sdcard/DCIM/Camera/`, then reboots and waits (async; poll GET `prepare_state` / "
+                    "`activation_state`). `activation-status`: read-only four-layer observation; `ACTIVE` only if "
+                    "activation is CONFIRMED. Customer request bodies are ignored. "
+                    "No `provision_esim`, no EuiccManager, no policy change."
+                ),
+                "security": user_or_farm,
+                "parameters": [
+                    _RENTAL_PARAM,
+                    {
+                        "name": "action",
+                        "in": "path",
+                        "required": True,
+                        "schema": {
+                            "type": "string",
+                            "enum": ["revoke", "release", "device-status", "reboot", "prepare-esim", "activation-status"],
+                        },
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "ok"},
+                    "202": {"description": "accepted (async reboot / prepare-esim)"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                    "404": {"description": "remote_access_not_found"},
+                    "503": {"description": "farm_unreachable | esim_ref_unavailable | remote_access_not_configured"},
                 },
             }
         },

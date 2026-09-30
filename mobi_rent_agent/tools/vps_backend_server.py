@@ -39,9 +39,11 @@ from application.auth_service import AuthContext, AuthService
 from application.vps_lovable_routes import (
     FARM_SERVICE_ONLY,
     PUBLIC_AUTH_POST,
+    REMOTE_ACCESS_KINDS,
     USER_OWNED_KINDS,
     parse_route,
 )
+from application.remote_access_service import RemoteAccessService
 from infrastructure.auth_rate_limiter import AuthRateLimiter
 from infrastructure.supabase_gateway import gotrue_from_env
 from infrastructure.lovable_tenant_store import tenant_store_from_env
@@ -168,6 +170,7 @@ class Handler(BaseHTTPRequestHandler):
     lovable_inbound_secret: str | None = None
     request_timeout: float = 10.0
     tenant_store: Any = None
+    remote_access_service: RemoteAccessService | None = None
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
@@ -296,6 +299,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "unauthorized"})
                 return None
             return ctx
+        if kind in REMOTE_ACCESS_KINDS:
+            # Customer routes need an authenticated user; only `release`
+            # (end of rental) may also come from the Lovable farm-service credential.
+            allowed_kinds = {"user"}
+            if kind == "remote_access_action" and route.action == "release":
+                allowed_kinds.add("farm_service")
+            if ctx is None or ctx.kind not in allowed_kinds:
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
         if ctx is None or ctx.kind not in {"user", "farm_service"}:
             self._send_json(401, {"error": "unauthorized"})
             return None
@@ -321,6 +334,85 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, redoc_html())
             return True
         return False
+
+    def _handle_remote_access(self, route, ctx: AuthContext, payload: dict[str, Any] | None) -> bool:
+        """Remote-access POC. All authorization happens inside the service.
+
+        The browser only supplies the rental id in the path; slot and device
+        are derived server-side. ``payload`` is ignored on purpose so a
+        client can never smuggle a device_id/slot_id.
+        """
+        del payload
+        service = self.remote_access_service
+        if service is None or not service.enabled:
+            self._send_json(403, error_body("forbidden"))
+            return True
+        rental_id = route.rental_id or ""
+        method = self.command
+        customer_id = ctx.user.user_id if (ctx.kind == "user" and ctx.user is not None) else None
+        if route.kind == "remote_access":
+            if method == "GET":
+                result = service.get_remote_access(customer_id or "", None, rental_id)
+            elif method == "POST":
+                result = service.create_remote_access(customer_id or "", None, rental_id)
+            else:
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            self._send_json(result.http_status, result.body)
+            return True
+        if method != "POST":
+            self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+            return True
+        action = route.action
+        if action == "revoke":
+            result = service.revoke_remote_access(customer_id or "", None, rental_id)
+        elif action == "release":
+            if ctx.kind == "farm_service":
+                slot_id = self._release_slot_for_rental(service, rental_id)
+                if slot_id is None:
+                    self._send_json(403, error_body("forbidden"))
+                    return True
+                result = service.release_device(slot_id, rental_id)
+            else:
+                # A customer ending their own rental: revoke + release own slot.
+                result = service.revoke_remote_access(customer_id or "", None, rental_id)
+                if result.http_status == 200:
+                    slot = result.body.get("slot_id")
+                    if isinstance(slot, int):
+                        result = service.release_device(slot, rental_id)
+        elif action == "device-status":
+            result = service.device_status_for_customer(customer_id or "", rental_id)
+        elif action == "reboot":
+            result = service.reboot_for_customer(customer_id or "", rental_id)
+        elif action == "prepare-esim":
+            result = service.prepare_esim(customer_id or "", rental_id)
+        elif action == "activation-status":
+            result = service.activation_status_for_customer(customer_id or "", rental_id)
+        else:
+            self._send_json(404, {"error": "not_found"})
+            return True
+        self._send_json(result.http_status, result.body)
+        return True
+
+    def _release_slot_for_rental(self, service: RemoteAccessService, rental_id: str) -> int | None:
+        """Farm-service release: slot comes from the tenant rental row, never the request."""
+        getter = getattr(self.tenant_store, "get_slot_by_id", None)
+        if not callable(getter):
+            return None
+        try:
+            row = getter(rental_id)
+        except (TypeError, ValueError, OSError, requests.RequestException):
+            return None
+        if not isinstance(row, dict):
+            return None
+        for key in ("motherboard_slot_num", "bay"):
+            try:
+                if row.get(key) is not None:
+                    slot = int(row.get(key))
+                    return slot if slot in service.allowed_slot_ids else None
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def _handle_service_get(self, route) -> bool:
         query = parse_qs(urlparse(self.path).query)
@@ -539,7 +631,11 @@ class Handler(BaseHTTPRequestHandler):
             if route.kind in PUBLIC_AUTH_POST or route.kind in {"auth_logout", "auth_resend"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
-            if self._authorize_route(route) is None:
+            ctx = self._authorize_route(route)
+            if ctx is None:
+                return
+            if route.kind in REMOTE_ACCESS_KINDS:
+                self._handle_remote_access(route, ctx, None)
                 return
             if self._handle_service_get(route):
                 return
@@ -590,12 +686,17 @@ class Handler(BaseHTTPRequestHandler):
             if route.kind in {"auth_me", "auth_session"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
+            ctx: AuthContext | None = None
             if route.kind not in PUBLIC_AUTH_POST:
-                if self._authorize_route(route) is None:
+                ctx = self._authorize_route(route)
+                if ctx is None:
                     return
             payload = self._read_json_body()
             if payload is None:
                 self._send_json(400, {"error": "invalid_json"})
+                return
+            if route.kind in REMOTE_ACCESS_KINDS and ctx is not None:
+                self._handle_remote_access(route, ctx, payload)
                 return
             if self._handle_auth_post(route, payload):
                 return
@@ -877,6 +978,18 @@ def main() -> int:
         tenant_store=tenant_store,
     )
 
+    remote_access_service, remote_access_store = _build_remote_access_service(
+        config,
+        tenant_store=tenant_store,
+        farm_task_client=farm_task_client,
+        farm_status_fetcher=_farm_status,
+        event_store=event_store,
+        esim_url_prefixes=auth_prefixes,
+        db_path=Path(vps_jobs_db).with_name("remote_access_sessions.sqlite"),
+    )
+    if remote_access_service is not None:
+        heartbeat_poller.set_after_poll(remote_access_service.sweep_stale_sessions)
+
     Handler.app_name = config.app_name
     Handler.webhook_path = _env_webhook_path()
     Handler.webhook_secret = config.voidfix_webhook_secret
@@ -890,6 +1003,7 @@ def main() -> int:
     Handler.farm_management_service = farm_management_service
     Handler.auth_service = auth_service
     Handler.tenant_store = tenant_store
+    Handler.remote_access_service = remote_access_service
     Handler.auth_rate_limiter = AuthRateLimiter(
         limit=int(os.getenv("VPS_AUTH_RATE_LIMIT", "10")),
         window_seconds=float(os.getenv("VPS_AUTH_RATE_WINDOW_SECONDS", "60")),
@@ -932,9 +1046,71 @@ def main() -> int:
         assignment_store.close()
         event_store.close()
         status_store.close()
+        if remote_access_store is not None:
+            remote_access_store.close()
         if tenant_store is not None:
             tenant_store.close()
     return 0
+
+
+def _build_remote_access_service(
+    config: Any,
+    *,
+    tenant_store: Any,
+    farm_task_client: FarmTaskClient | None,
+    farm_status_fetcher: Any,
+    event_store: SlotEventStore,
+    esim_url_prefixes: tuple[str, ...],
+    db_path: Path,
+) -> tuple[RemoteAccessService | None, Any]:
+    """Slot-1 remote-access POC. Returns (None, None) unless REMOTE_ACCESS_POC_ENABLED=true.
+
+    The slot -> device serial map is the existing gitignored ``slot_map.json``
+    (``SLOT_MAP_PATH``); only allowlisted slots are ever loaded into the
+    remote-access layer. Missing map or platform config fails closed (403/503).
+    """
+    if not getattr(config, "remote_access_poc_enabled", False):
+        return None, None
+    from infrastructure.adb_slot_status import SlotMapError, load_slot_map
+    from infrastructure.gads_remote_access import gads_platform_from_config
+    from infrastructure.remote_access_store import RemoteAccessSessionStore
+
+    allowed = tuple(getattr(config, "remote_access_poc_slot_ids", ()) or ())
+    slot_map: dict[int, str] = {}
+    map_path = Path(config.slot_map_path) if config.slot_map_path else ROOT / "slot_map.json"
+    try:
+        full_map = load_slot_map(map_path)
+    except SlotMapError as exc:
+        logger.error("remote_access: slot map unavailable (%s); POC routes will return 403", exc)
+        full_map = {}
+    slot_map = {slot: serial for slot, serial in full_map.items() if slot in allowed}
+    platform = gads_platform_from_config(config)
+    if platform is None:
+        logger.error(
+            "remote_access: REMOTE_ACCESS_PLATFORM_URL / ADMIN_USERNAME / ADMIN_PASSWORD / WORKSPACE_ID "
+            "incomplete; POC routes will return 503"
+        )
+    store = RemoteAccessSessionStore(db_path)
+    service = RemoteAccessService(
+        enabled=True,
+        allowed_slot_ids=allowed,
+        slot_device_map=slot_map,
+        platform=platform,
+        store=store,
+        tenant_store=tenant_store,
+        farm_task_client=farm_task_client,
+        farm_status_fetcher=farm_status_fetcher,
+        event_recorder=event_store.append,
+        esim_url_prefixes=esim_url_prefixes,
+        session_ttl_minutes=int(getattr(config, "remote_access_session_ttl_minutes", 60)),
+        reboot_timeout_seconds=float(getattr(config, "remote_access_reboot_timeout_seconds", 180.0)),
+    )
+    logger.warning(
+        "remote_access POC ENABLED for slots %s (mapped: %s); all other slots are refused",
+        sorted(allowed),
+        sorted(slot_map),
+    )
+    return service, store
 
 
 if __name__ == "__main__":

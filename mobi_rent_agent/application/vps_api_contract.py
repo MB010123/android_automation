@@ -35,6 +35,11 @@ ERROR_MESSAGES: dict[str, str] = {
     "auth_not_configured": "User authentication is not configured on this VPS",
     "auth_unavailable": "Authentication service is temporarily unavailable",
     "esim_ref_unavailable": "Authoritative eSIM reference is missing from Lovable slot data",
+    "forbidden": "Not authorized for this rental, slot, or device",
+    "remote_access_not_configured": "Remote-access POC is disabled or the platform is not configured",
+    "remote_access_platform_error": "Remote-access platform rejected the request",
+    "remote_access_busy": "Slot is currently leased to another rental",
+    "remote_access_not_found": "No remote-access session exists for this rental",
 }
 
 

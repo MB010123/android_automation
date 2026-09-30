@@ -50,6 +50,8 @@ REQUIRED_PATHS = [
     "/auth/reset-password",
     "/auth/verify-email",
     "/auth/resend-verification",
+    "/rentals/{rental_id}/remote-access",
+    "/rentals/{rental_id}/remote-access/{action}",
     "/voidfix/inbound",
 ]
 
@@ -76,6 +78,8 @@ def test_required_paths_and_security():
     assert assign.get("security") == [{"FarmServiceBearer": []}]
     health = paths["/health"]["get"]
     assert "security" not in health
+    remote_access = paths["/rentals/{rental_id}/remote-access"]["post"]
+    assert remote_access.get("security") == [{"UserAccessBearer": []}]
 
 
 def test_schemas_present():

@@ -175,6 +175,8 @@ class Handler(BaseHTTPRequestHandler):
                 body["message"] = result.message
             if result.install_state:
                 body["install_state"] = result.install_state
+            if result.details:
+                body["details"] = result.details
             body["activation_code_sent"] = bool(result.activation_code_sent)
             if task.task_type == "assign" and self.job_cache is not None:
                 body = self.job_cache.remember_assign(task.job_id, result)
