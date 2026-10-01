@@ -898,6 +898,50 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/rentals/{rental_id}/esim/upload": {
+            "post": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "Upload eSIM QR image onto the rental Pixel Camera",
+                "description": (
+                    "Customer JWT only. Multipart field `qr_image` (PNG/JPG/WEBP). "
+                    "The VPS authenticates the rental owner, sends the bytes to Farm Agent, "
+                    "and Farm `adb push`es `/sdcard/DCIM/Camera/mobirent_esim_qr_*.{png|jpg|webp}`. "
+                    "Does not require a remote-access session or `prepare-esim`. "
+                    "Does not call `assign`, GADS, EuiccManager, or silent provisioning. "
+                    "Request body QR URLs are not used. ADB serial is not returned to the browser."
+                ),
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["qr_image"],
+                                "properties": {
+                                    "qr_image": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": "PNG, JPEG, or WEBP QR image (max 5 MiB).",
+                                    }
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "placed; `ok`, `placed`, `job_id`, `destination`, sizes"},
+                    "400": {"description": "qr_upload_missing | qr_not_an_image"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                    "409": {"description": "device_offline"},
+                    "413": {"description": "qr_image_too_large"},
+                    "422": {"description": "qr_zero_byte | qr_not_on_device | qr_push_failed"},
+                    "503": {"description": "farm_unreachable"},
+                },
+            }
+        },
         "/health": {
             "get": {
                 "tags": ["Health"],

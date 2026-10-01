@@ -140,8 +140,27 @@ class FakeFarm:
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
         if task_type in self.fail_types:
-            return FarmTaskResponse(ok=False, http_status=422, body={}, error="reboot_failed")
+            return FarmTaskResponse(ok=False, http_status=422, body={"details": {"placed": False, "error_code": "reboot_failed"}}, error="reboot_failed")
         body: dict[str, Any] = {"ok": True}
+        if task_type == "remote_access_place_qr":
+            size = 1024
+            raw = payload.get("image_base64")
+            if isinstance(raw, str) and raw:
+                import base64
+
+                size = len(base64.b64decode(raw))
+            dest = "/sdcard/DCIM/Camera/mobirent_esim_qr_placed.png"
+            body["message"] = f"qr_placed:{dest};media_scanned=true"
+            body["details"] = {
+                "ok": True,
+                "placed": True,
+                "job_id": job_id,
+                "serial": "MUST-NOT-LEAK-TO-BROWSER",
+                "destination": dest,
+                "downloaded_size": size,
+                "remote_size": size,
+                "error_code": None,
+            }
         if task_type == "remote_access_activation_status" and self.activation_details:
             body["details"] = self.activation_details
         return FarmTaskResponse(ok=True, http_status=200, body=body)
@@ -896,6 +915,8 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route("/farm/slots/1/assign").kind == "farm_assign"
     assert parse_route(f"/rentals/{slot}/remote-access").kind == "remote_access"
     assert parse_route(f"/rentals/{slot}/remote-access/prepare-esim").action == "prepare-esim"
+    assert parse_route(f"/rentals/{slot}/esim/upload").kind == "esim_qr_upload"
+    assert parse_route(f"/rentals/{slot}/esim/upload").rental_id == slot
     assert parse_route(f"/rentals/{slot}/remote-access/activation-status").action == "activation-status"
     assert parse_route(f"/rentals/{slot}/remote-access/adb-shell") is None
     assert parse_route(f"/rentals/not-a-uuid/remote-access") is None

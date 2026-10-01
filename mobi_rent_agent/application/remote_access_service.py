@@ -17,6 +17,7 @@ Android eSIM UI flow through the remote screen.
 """
 from __future__ import annotations
 
+import base64
 import logging
 import threading
 import time
@@ -26,6 +27,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from application.vps_api_contract import error_body
+from application.esim_qr_upload import public_placement_success, qr_upload_error_body
+from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
 from domain.remote_access import (
     RemoteAccessPlatform,
     RemoteAccessPlatformError,
@@ -522,6 +525,67 @@ class RemoteAccessService:
             202,
             {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "job_id": job_id, "prepare_state": PREPARE_PLACING_QR},
         )
+
+    def upload_esim_qr(self, customer_id: str, rental_id: str, image_bytes: bytes) -> ApiResult:
+        """Place a customer-uploaded QR image on the rental's Pixel Camera.
+
+        Does not require a GADS session. Does not call assign or prepare-esim.
+        Does not provision an eSIM. Serial stays on the Farm Agent.
+        """
+        auth = self._authorize(customer_id, rental_id)
+        if isinstance(auth, ApiResult):
+            return self._upload_error_from(auth)
+        if self._farm is None:
+            return ApiResult(503, qr_upload_error_body("farm_unreachable"))
+        if not image_bytes:
+            return ApiResult(400, qr_upload_error_body("qr_upload_missing"))
+        if len(image_bytes) > MAX_QR_IMAGE_BYTES:
+            return ApiResult(413, qr_upload_error_body("qr_image_too_large"))
+        if _image_extension(image_bytes) is None:
+            return ApiResult(400, qr_upload_error_body("qr_not_an_image"))
+
+        job_id = str(uuid.uuid4())
+        try:
+            response = self._farm.run_task(
+                task_type=REMOTE_ACCESS_PLACE_QR_TASK,
+                farm_slot_id=auth.slot_id,
+                payload={
+                    "image_base64": base64.b64encode(image_bytes).decode("ascii"),
+                    "rental_id": auth.rental_id,
+                },
+                job_id=job_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("esim_qr_upload_farm_exception reason=%s", exc.__class__.__name__)
+            return ApiResult(503, qr_upload_error_body("farm_unreachable"))
+        if not _qr_placement_succeeded(response):
+            error_code = str(response.error or "qr_push_failed")
+            details = {}
+            if isinstance(getattr(response, "body", None), dict):
+                raw_details = response.body.get("details")
+                if isinstance(raw_details, dict):
+                    details = raw_details
+                    error_code = str(details.get("error_code") or error_code)
+            http_status = int(getattr(response, "http_status", 0) or 422)
+            if http_status < 400:
+                http_status = 422
+            return ApiResult(http_status, qr_upload_error_body(error_code))
+        details = {}
+        if isinstance(getattr(response, "body", None), dict):
+            raw_details = response.body.get("details")
+            if isinstance(raw_details, dict):
+                details = raw_details
+        logger.info("esim_qr_uploaded slot=%s job_id=%s", auth.slot_id, job_id)
+        return ApiResult(200, public_placement_success(details, job_id=job_id))
+
+    def _upload_error_from(self, result: ApiResult) -> ApiResult:
+        code = "forbidden"
+        if isinstance(result.body, dict):
+            code = str(result.body.get("error") or code)
+        message = None
+        if isinstance(result.body, dict):
+            message = result.body.get("message")
+        return ApiResult(result.http_status, qr_upload_error_body(code, message=message if isinstance(message, str) else None))
 
     def activation_status_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         """Read-only four-layer observation. Never marks ACTIVE without CONFIRMED evidence."""

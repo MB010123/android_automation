@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import requests
+import base64
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -261,3 +262,33 @@ def test_vps_success_gate_requires_placed_and_nonzero_remote_size():
     assert _qr_placement_succeeded(missing) is False
     legacy = SimpleNamespace(ok=True, error=None, body={"message": "qr_placed:/sdcard/DCIM/Camera/x.png"})
     assert _qr_placement_succeeded(legacy) is True
+
+
+def test_inline_base64_image_skips_https_download():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    fetched: list[str] = []
+
+    def boom(url: str, timeout: float) -> bytes:
+        fetched.append(url)
+        raise AssertionError("must not download when image_base64 is present")
+
+    encoded = base64.b64encode(PNG_BYTES).decode("ascii")
+    result = _place(
+        runner,
+        request=_req(image_base64=encoded),
+        downloader=boom,
+    )
+    assert result.ok is True
+    assert fetched == []
+    assert result.details["serial"] == BAY1_SERIAL
+    assert result.details["placed"] is True
+    assert result.details["remote_size"] == len(PNG_BYTES)
+    _assert_safe(result)
+
+
+def test_invalid_inline_base64_is_rejected():
+    runner = _QrRunner()
+    result = _place(runner, request=_req(image_base64="%%%not-base64%%%"))
+    assert result.ok is False
+    assert result.error == "qr_not_an_image"
+    assert runner.calls == []

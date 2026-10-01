@@ -43,6 +43,11 @@ from application.vps_lovable_routes import (
     USER_OWNED_KINDS,
     parse_route,
 )
+from application.esim_qr_upload import (
+    MAX_UPLOAD_BODY_BYTES,
+    parse_qr_image_multipart,
+    qr_upload_error_body,
+)
 from application.remote_access_service import RemoteAccessService
 from infrastructure.auth_rate_limiter import AuthRateLimiter
 from infrastructure.supabase_gateway import gotrue_from_env
@@ -309,6 +314,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "unauthorized"})
                 return None
             return ctx
+        if kind == "esim_qr_upload":
+            if ctx is None or ctx.kind != "user":
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
         if ctx is None or ctx.kind not in {"user", "farm_service"}:
             self._send_json(401, {"error": "unauthorized"})
             return None
@@ -393,6 +403,31 @@ class Handler(BaseHTTPRequestHandler):
             return True
         self._send_json(result.http_status, result.body)
         return True
+
+    def _handle_esim_qr_upload(self, route, ctx: AuthContext) -> None:
+        """Customer QR bytes → Farm Agent Camera push. No GADS, no assign."""
+        service = self.remote_access_service
+        if service is None or not service.enabled:
+            self._send_json(403, qr_upload_error_body("forbidden"))
+            return
+        customer_id = ctx.user.user_id if (ctx.kind == "user" and ctx.user is not None) else ""
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_UPLOAD_BODY_BYTES:
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            self._send_json(413, qr_upload_error_body("qr_image_too_large"))
+            return
+        raw = self.rfile.read(length) if length else b""
+        image = parse_qr_image_multipart(self.headers.get("Content-Type"), raw)
+        if image is None:
+            self._send_json(400, qr_upload_error_body("qr_upload_missing"))
+            return
+        result = service.upload_esim_qr(customer_id, route.rental_id or "", image)
+        self._send_json(result.http_status, result.body)
 
     def _release_slot_for_rental(self, service: RemoteAccessService, rental_id: str) -> int | None:
         """Farm-service release: slot comes from the tenant rental row, never the request."""
@@ -634,6 +669,9 @@ class Handler(BaseHTTPRequestHandler):
             ctx = self._authorize_route(route)
             if ctx is None:
                 return
+            if route.kind == "esim_qr_upload":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return
             if route.kind in REMOTE_ACCESS_KINDS:
                 self._handle_remote_access(route, ctx, None)
                 return
@@ -691,6 +729,9 @@ class Handler(BaseHTTPRequestHandler):
                 ctx = self._authorize_route(route)
                 if ctx is None:
                     return
+            if route.kind == "esim_qr_upload" and ctx is not None:
+                self._handle_esim_qr_upload(route, ctx)
+                return
             payload = self._read_json_body()
             if payload is None:
                 self._send_json(400, {"error": "invalid_json"})

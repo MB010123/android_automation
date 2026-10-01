@@ -52,6 +52,7 @@ REQUIRED_PATHS = [
     "/auth/resend-verification",
     "/rentals/{rental_id}/remote-access",
     "/rentals/{rental_id}/remote-access/{action}",
+    "/rentals/{rental_id}/esim/upload",
     "/voidfix/inbound",
 ]
 

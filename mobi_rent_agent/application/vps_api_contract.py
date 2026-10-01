@@ -40,6 +40,13 @@ ERROR_MESSAGES: dict[str, str] = {
     "remote_access_platform_error": "Remote-access platform rejected the request",
     "remote_access_busy": "Slot is currently leased to another rental",
     "remote_access_not_found": "No remote-access session exists for this rental",
+    "qr_upload_missing": "Request must be multipart/form-data with a qr_image file",
+    "qr_not_an_image": "QR payload is not a PNG, JPG, or WEBP image",
+    "qr_image_too_large": "QR image exceeds the maximum allowed size",
+    "qr_zero_byte": "Remote QR file size is zero",
+    "qr_not_on_device": "Remote QR file is missing after ADB push",
+    "qr_push_failed": "ADB push of QR image failed",
+    "qr_download_failed": "QR image could not be transferred to the Farm Agent",
 }
 
 
@@ -128,7 +135,7 @@ def job_response_body(record: VpsJobRecord) -> dict[str, Any]:
         safe = {
             k: v
             for k, v in record.result_payload.items()
-            if k not in ("activation_code", "qr_url", "esim_qr_url")
+            if k not in ("activation_code", "qr_url", "esim_qr_url", "image_base64")
         }
         if safe:
             body["result"] = safe

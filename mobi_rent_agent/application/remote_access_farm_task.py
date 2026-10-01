@@ -10,6 +10,8 @@ owner changes. The device only receives a picture file.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import os
 import re
@@ -78,6 +80,25 @@ def _image_extension(payload: bytes) -> str | None:
     if fmt in {"png", "jpeg", "webp"}:
         return "jpg" if fmt == "jpeg" else fmt
     return None
+
+
+def _inline_image_from_payload(payload: dict[str, Any]) -> bytes | None:
+    """Decode Farm payload image_base64. Never logs the bytes."""
+    raw = payload.get("image_base64")
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("qr_not_an_image")
+    text = raw.strip()
+    if text.startswith("data:") and "," in text:
+        text = text.split(",", 1)[1]
+    try:
+        data = base64.b64decode(text, validate=False)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("qr_not_an_image") from exc
+    if not data:
+        raise ValueError("qr_not_an_image")
+    return data
 
 
 def remote_qr_filename(rental_id: str, job_id: str, extension: str) -> str:
@@ -204,41 +225,54 @@ def run_remote_access_place_qr(
             message="farm slot has no ADB serial in slot_map.json",
         )
 
-    qr_url = str(request.payload.get("esim_qr_url") or "").strip()
-    if not qr_url or not esim_fetch_url_is_public_https(qr_url):
-        return _place_result(
-            ok=False,
-            http_status=422,
-            job_id=request.job_id,
-            serial=serial,
-            error="invalid_assignment",
-            message="esim_qr_url must be a public HTTPS URL",
-        )
-    prefixes = tuple(getattr(agent_config, "remote_access_qr_url_prefixes", ()) or ())
-    if prefixes and not esim_fetch_url_is_safe(qr_url, allowed_url_prefixes=prefixes):
-        return _place_result(
-            ok=False,
-            http_status=422,
-            job_id=request.job_id,
-            serial=serial,
-            error="invalid_assignment",
-            message="esim_qr_url must be a public HTTPS URL",
-        )
     rental_id = str(request.payload.get("rental_id") or request.job_id)
-
-    fetch = downloader or _default_downloader
     try:
-        payload = fetch(qr_url, float(agent_config.request_timeout_seconds))
-    except (requests.RequestException, ValueError, OSError) as exc:
-        logger.warning("remote_access_qr_download_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
+        inline = _inline_image_from_payload(request.payload)
+    except ValueError:
         return _place_result(
             ok=False,
             http_status=422,
             job_id=request.job_id,
             serial=serial,
-            error="qr_download_failed",
-            message="QR image could not be downloaded",
+            error="qr_not_an_image",
+            message="QR payload is not a PNG, JPG, or WEBP image",
         )
+    if inline is not None:
+        payload = inline
+    else:
+        qr_url = str(request.payload.get("esim_qr_url") or "").strip()
+        if not qr_url or not esim_fetch_url_is_public_https(qr_url):
+            return _place_result(
+                ok=False,
+                http_status=422,
+                job_id=request.job_id,
+                serial=serial,
+                error="invalid_assignment",
+                message="esim_qr_url must be a public HTTPS URL",
+            )
+        prefixes = tuple(getattr(agent_config, "remote_access_qr_url_prefixes", ()) or ())
+        if prefixes and not esim_fetch_url_is_safe(qr_url, allowed_url_prefixes=prefixes):
+            return _place_result(
+                ok=False,
+                http_status=422,
+                job_id=request.job_id,
+                serial=serial,
+                error="invalid_assignment",
+                message="esim_qr_url must be a public HTTPS URL",
+            )
+        fetch = downloader or _default_downloader
+        try:
+            payload = fetch(qr_url, float(agent_config.request_timeout_seconds))
+        except (requests.RequestException, ValueError, OSError) as exc:
+            logger.warning("remote_access_qr_download_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
+            return _place_result(
+                ok=False,
+                http_status=422,
+                job_id=request.job_id,
+                serial=serial,
+                error="qr_download_failed",
+                message="QR image could not be downloaded",
+            )
     downloaded_size = len(payload)
     if downloaded_size <= 0:
         return _place_result(
@@ -249,6 +283,16 @@ def run_remote_access_place_qr(
             downloaded_size=0,
             error="qr_download_failed",
             message="QR download was empty",
+        )
+    if downloaded_size > MAX_QR_IMAGE_BYTES:
+        return _place_result(
+            ok=False,
+            http_status=422,
+            job_id=request.job_id,
+            serial=serial,
+            downloaded_size=downloaded_size,
+            error="qr_image_too_large",
+            message="QR image exceeds the maximum allowed size",
         )
     extension = _image_extension(payload)
     if extension is None:

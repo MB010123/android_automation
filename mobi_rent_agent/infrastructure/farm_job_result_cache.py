@@ -14,7 +14,7 @@ from typing import Any
 from application.farm_task_types import FarmTaskResult
 from application.install_state import INSTALL_FAILED, KEEP_ASSIGNMENT_STATES
 
-_SECRET_KEYS = frozenset({"activation_code", "qr_url", "esim_qr_url"})
+_SECRET_KEYS = frozenset({"activation_code", "qr_url", "esim_qr_url", "image_base64"})
 
 
 def _strip_secrets(payload: dict[str, Any]) -> dict[str, Any]:
