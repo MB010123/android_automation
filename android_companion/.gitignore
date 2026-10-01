@@ -7,3 +7,7 @@
 *.iml
 .idea/
 .cxx/
+/keystore/
+/keystore.properties
+*.jks
+*.keystore

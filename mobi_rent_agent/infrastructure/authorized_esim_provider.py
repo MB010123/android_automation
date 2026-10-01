@@ -118,6 +118,7 @@ class AuthorizedEsimProvider(EsimProvisioningProvider, SubscriptionProvisioner):
         if caps.authorization_source in UNKNOWN_SOURCES:
             return self._refuse(
                 JobState.WAITING_FOR_ACTIVATION,
+                "human Settings/LPA required; "
                 f"no legitimate Android eSIM authority ({caps.reason})",
             )
         if self._required_sources is not None and caps.authorization_source not in self._required_sources:

@@ -1,6 +1,23 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+val releaseKeystoreProperties = Properties()
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.inputStream().use { releaseKeystoreProperties.load(it) }
+}
+
+fun requireReleaseSigningProperty(name: String): String {
+    val value = releaseKeystoreProperties.getProperty(name)?.trim().orEmpty()
+    require(value.isNotEmpty()) {
+        "Release signing requires $name in keystore.properties (see keystore.properties.example). " +
+            "Do not sign the production APK with the Android debug keystore."
+    }
+    return value
 }
 
 android {
@@ -21,13 +38,34 @@ android {
         buildConfigField("String", "DEVICE_TOKEN", "\"\"")
     }
 
+    signingConfigs {
+        if (releaseKeystorePropertiesFile.exists()) {
+            create("release") {
+                storeFile = rootProject.file(requireReleaseSigningProperty("storeFile"))
+                storePassword = requireReleaseSigningProperty("storePassword")
+                keyAlias = requireReleaseSigningProperty("keyAlias")
+                keyPassword = requireReleaseSigningProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            isDebuggable = false
             isMinifyEnabled = false
+            // Arms the public download path after Android grants a real
+            // authority. This flag is not WRITE_EMBEDDED / carrier / DO.
+            buildConfigField("boolean", "REAL_ESIM_ENABLED", "true")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            val releaseSigning = signingConfigs.findByName("release")
+            require(releaseSigning != null) {
+                "assembleRelease requires keystore.properties and a dedicated release keystore. " +
+                    "Copy keystore.properties.example and do not use the debug key."
+            }
+            signingConfig = releaseSigning
         }
         debug {
             isDebuggable = true

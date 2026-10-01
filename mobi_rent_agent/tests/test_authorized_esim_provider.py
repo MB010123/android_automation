@@ -89,6 +89,7 @@ def test_no_android_authorization_provider_refuses():
     assert result.activation_code_sent is False
     assert result.state is JobState.WAITING_FOR_ACTIVATION
     assert "authority" in (result.error or "")
+    assert "human Settings/LPA required" in (result.error or "")
 
 
 def test_carrier_privilege_absent_provider_refuses():

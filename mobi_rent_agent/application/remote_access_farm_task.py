@@ -86,6 +86,95 @@ def remote_qr_filename(rental_id: str, job_id: str, extension: str) -> str:
     return f"mobirent_esim_qr_{rental_token}_{job_token}.{extension}"
 
 
+def _parse_remote_byte_size(stdout: str) -> int | None:
+    """Parse `wc -c` (`SIZE PATH`) or `stat -c %s` (`SIZE`) output."""
+    token = (stdout or "").strip().split()
+    if not token:
+        return None
+    try:
+        value = int(token[0])
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return None
+    return value
+
+
+def _read_remote_byte_size(runner: AdbCommandRunner, serial: str, remote_path: str) -> int | None:
+    try:
+        raw = runner.run(serial, ["shell", "wc", "-c", remote_path]).stdout
+    except AdbCommandError:
+        try:
+            raw = runner.run(serial, ["shell", "stat", "-c", "%s", remote_path]).stdout
+        except AdbCommandError:
+            return None
+    return _parse_remote_byte_size(raw)
+
+
+def _place_details(
+    *,
+    ok: bool,
+    job_id: str,
+    serial: str | None = None,
+    destination: str | None = None,
+    downloaded_size: int | None = None,
+    remote_size: int | None = None,
+    placed: bool = False,
+    error_code: str | None = None,
+    message: str | None = None,
+    media_scanned: bool | None = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "ok": ok,
+        "job_id": job_id,
+        "serial": serial,
+        "destination": destination,
+        "downloaded_size": downloaded_size,
+        "remote_size": remote_size,
+        "placed": placed,
+        "error_code": error_code,
+        "message": message,
+    }
+    if media_scanned is not None:
+        body["media_scanned"] = media_scanned
+    return body
+
+
+def _place_result(
+    *,
+    ok: bool,
+    http_status: int,
+    job_id: str,
+    error: str | None = None,
+    message: str | None = None,
+    serial: str | None = None,
+    destination: str | None = None,
+    downloaded_size: int | None = None,
+    remote_size: int | None = None,
+    placed: bool = False,
+    media_scanned: bool | None = None,
+) -> FarmTaskResult:
+    details = _place_details(
+        ok=ok,
+        job_id=job_id,
+        serial=serial,
+        destination=destination,
+        downloaded_size=downloaded_size,
+        remote_size=remote_size,
+        placed=placed,
+        error_code=error,
+        message=message,
+        media_scanned=media_scanned,
+    )
+    return FarmTaskResult(
+        ok=ok,
+        http_status=http_status,
+        error=error,
+        message=message,
+        details=details,
+    )
+
+
 def run_remote_access_place_qr(
     *,
     adb_path: str,
@@ -98,24 +187,40 @@ def run_remote_access_place_qr(
     slot_id = int(request.farm_slot_id)
     gated = _poc_slot_gate(agent_config, slot_id)
     if gated is not None:
-        return gated
+        return _place_result(
+            ok=False,
+            http_status=gated.http_status,
+            job_id=request.job_id,
+            error=gated.error,
+            message=gated.message,
+        )
     serial = str(slot_map.get(slot_id) or "").strip()
     if not serial:
-        return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
+        return _place_result(
+            ok=False,
+            http_status=404,
+            job_id=request.job_id,
+            error="slot_not_found",
+            message="farm slot has no ADB serial in slot_map.json",
+        )
 
     qr_url = str(request.payload.get("esim_qr_url") or "").strip()
     if not qr_url or not esim_fetch_url_is_public_https(qr_url):
-        return FarmTaskResult(
+        return _place_result(
             ok=False,
             http_status=422,
+            job_id=request.job_id,
+            serial=serial,
             error="invalid_assignment",
             message="esim_qr_url must be a public HTTPS URL",
         )
     prefixes = tuple(getattr(agent_config, "remote_access_qr_url_prefixes", ()) or ())
     if prefixes and not esim_fetch_url_is_safe(qr_url, allowed_url_prefixes=prefixes):
-        return FarmTaskResult(
+        return _place_result(
             ok=False,
             http_status=422,
+            job_id=request.job_id,
+            serial=serial,
             error="invalid_assignment",
             message="esim_qr_url must be a public HTTPS URL",
         )
@@ -126,34 +231,120 @@ def run_remote_access_place_qr(
         payload = fetch(qr_url, float(agent_config.request_timeout_seconds))
     except (requests.RequestException, ValueError, OSError) as exc:
         logger.warning("remote_access_qr_download_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
-        return FarmTaskResult(ok=False, http_status=422, error="qr_download_failed")
+        return _place_result(
+            ok=False,
+            http_status=422,
+            job_id=request.job_id,
+            serial=serial,
+            error="qr_download_failed",
+            message="QR image could not be downloaded",
+        )
+    downloaded_size = len(payload)
+    if downloaded_size <= 0:
+        return _place_result(
+            ok=False,
+            http_status=422,
+            job_id=request.job_id,
+            serial=serial,
+            downloaded_size=0,
+            error="qr_download_failed",
+            message="QR download was empty",
+        )
     extension = _image_extension(payload)
     if extension is None:
-        return FarmTaskResult(ok=False, http_status=422, error="qr_not_an_image")
+        return _place_result(
+            ok=False,
+            http_status=422,
+            job_id=request.job_id,
+            serial=serial,
+            downloaded_size=downloaded_size,
+            error="qr_not_an_image",
+            message="QR payload is not a PNG, JPG, or WEBP image",
+        )
 
     runner = command_runner or AdbCommandRunner(adb_path, agent_config.provisioning_timeout_seconds)
     try:
         state = runner.run(serial, ["get-state"]).stdout
     except AdbCommandError as exc:
-        return FarmTaskResult(ok=False, http_status=409, error="device_offline", message=str(exc))
+        return _place_result(
+            ok=False,
+            http_status=409,
+            job_id=request.job_id,
+            serial=serial,
+            downloaded_size=downloaded_size,
+            error="device_offline",
+            message="ADB device is offline",
+        )
     if state != "device":
-        return FarmTaskResult(ok=False, http_status=409, error="device_offline", message=f"ADB state is {state or 'unknown'}")
+        return _place_result(
+            ok=False,
+            http_status=409,
+            job_id=request.job_id,
+            serial=serial,
+            downloaded_size=downloaded_size,
+            error="device_offline",
+            message="ADB device is offline",
+        )
 
     remote_name = remote_qr_filename(rental_id, request.job_id, extension)
     remote_path = f"{DCIM_CAMERA_DIR}/{remote_name}"
     tmp_path: str | None = None
+    remote_size: int | None = None
     try:
         with tempfile.NamedTemporaryFile(prefix="mobirent_qr_", suffix=f".{extension}", delete=False) as handle:
             handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
             tmp_path = handle.name
+        local_size = os.path.getsize(tmp_path)
+        if local_size <= 0:
+            return _place_result(
+                ok=False,
+                http_status=422,
+                job_id=request.job_id,
+                serial=serial,
+                destination=remote_path,
+                downloaded_size=downloaded_size,
+                remote_size=0,
+                error="qr_push_failed",
+                message="temporary QR file was empty before ADB push",
+            )
         runner.run(serial, ["shell", "mkdir", "-p", DCIM_CAMERA_DIR])
         runner.run(serial, ["push", tmp_path, remote_path])
-        listed = runner.run(serial, ["shell", "ls", remote_path]).stdout
+        try:
+            listed = runner.run(serial, ["shell", "ls", remote_path]).stdout
+        except AdbCommandError as exc:
+            raise AdbCommandError("qr_not_on_device") from exc
         if remote_name not in (listed or "") and remote_path not in (listed or ""):
             raise AdbCommandError("qr_not_on_device")
+        remote_size = _read_remote_byte_size(runner, serial, remote_path)
+        if remote_size is None:
+            raise AdbCommandError("qr_not_on_device")
+        if remote_size <= 0:
+            raise AdbCommandError("qr_zero_byte")
     except AdbCommandError as exc:
-        logger.warning("remote_access_qr_push_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
-        return FarmTaskResult(ok=False, http_status=422, error="qr_push_failed")
+        reason = str(exc)
+        if reason == "qr_zero_byte":
+            error = "qr_zero_byte"
+            message = "remote QR file size is zero"
+        elif reason == "qr_not_on_device" or "qr_not_on_device" in reason:
+            error = "qr_not_on_device"
+            message = "remote QR file is missing after ADB push"
+        else:
+            error = "qr_push_failed"
+            message = "ADB push of QR image failed"
+        logger.warning("remote_access_qr_push_failed slot=%s error=%s", slot_id, error)
+        return _place_result(
+            ok=False,
+            http_status=422,
+            job_id=request.job_id,
+            serial=serial,
+            destination=remote_path,
+            downloaded_size=downloaded_size,
+            remote_size=remote_size if error == "qr_zero_byte" else None,
+            error=error,
+            message=message,
+        )
     finally:
         if tmp_path:
             try:
@@ -178,12 +369,25 @@ def run_remote_access_place_qr(
     except AdbCommandError:
         media_scanned = False
 
-    logger.info("esim_qr_placed slot=%s job_id=%s media_scanned=%s", slot_id, request.job_id, media_scanned)
-    return FarmTaskResult(
+    logger.info(
+        "esim_qr_placed slot=%s job_id=%s downloaded_size=%s remote_size=%s media_scanned=%s",
+        slot_id,
+        request.job_id,
+        downloaded_size,
+        remote_size,
+        media_scanned,
+    )
+    return _place_result(
         ok=True,
         http_status=200,
+        job_id=request.job_id,
+        serial=serial,
+        destination=remote_path,
+        downloaded_size=downloaded_size,
+        remote_size=remote_size,
+        placed=True,
+        media_scanned=media_scanned,
         message=f"qr_placed:{remote_path};media_scanned={str(media_scanned).lower()}",
-        details={"placed": True, "media_scanned": media_scanned},
     )
 
 

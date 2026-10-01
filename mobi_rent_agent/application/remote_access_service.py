@@ -782,7 +782,14 @@ def _qr_placement_succeeded(response: Any) -> bool:
     body = response.body if isinstance(getattr(response, "body", None), dict) else {}
     details = body.get("details") if isinstance(body, dict) else None
     if isinstance(details, dict) and "placed" in details:
-        return details.get("placed") is True
+        if details.get("placed") is not True:
+            return False
+        if "remote_size" in details:
+            try:
+                return int(details.get("remote_size") or 0) > 0
+            except (TypeError, ValueError):
+                return False
+        return True
     message = str((body or {}).get("message") or "")
     return (not message) or message.startswith("qr_placed:")
 

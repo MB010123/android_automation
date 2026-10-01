@@ -27,7 +27,9 @@ from application.farm_task_executor import FarmTaskExecutorDeps
 from application.remote_access_farm_task import run_remote_access_place_qr
 from application.remote_access_service import (
     PREPARE_FAILED,
+    PREPARE_PLACING_QR,
     PREPARE_READY,
+    PREPARE_REBOOTING,
     REMOTE_ACCESS_PLACE_QR_TASK,
     RemoteAccessService,
 )
@@ -742,15 +744,28 @@ def test_j_farm_qr_task_gated_by_flag_and_allowlist():
 
 
 class _QrRunner(AdbCommandRunner):
-    def __init__(self, state: str = "device") -> None:
+    def __init__(self, state: str = "device", *, ls_stdout: str | None = None, remote_size: int | None = 1024) -> None:
         super().__init__()
         self.state = state
         self.calls: list[tuple[str, list[str]]] = []
+        self.ls_stdout = ls_stdout
+        self.remote_size = remote_size
 
     def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
         self.calls.append((serial, list(arguments)))
         if arguments == ["get-state"]:
             return AdbCommandResult(stdout=self.state, stderr="")
+        if arguments[:2] == ["shell", "ls"] and arguments[2:]:
+            if self.ls_stdout is not None:
+                return AdbCommandResult(stdout=self.ls_stdout, stderr="")
+            return AdbCommandResult(stdout=arguments[-1], stderr="")
+        if arguments[:3] == ["shell", "wc", "-c"]:
+            path = arguments[-1]
+            size = 0 if self.remote_size is None else int(self.remote_size)
+            return AdbCommandResult(stdout=f"{size} {path}", stderr="")
+        if arguments[:4] == ["shell", "stat", "-c", "%s"]:
+            size = 0 if self.remote_size is None else int(self.remote_size)
+            return AdbCommandResult(stdout=str(size), stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
 
@@ -792,6 +807,15 @@ def test_qr_task_pushes_image_to_dcim_camera_only():
     for forbidden in ("provision", "euicc", "dpm", "pm grant", "WRITE_EMBEDDED", "forward", "localabstract"):
         assert forbidden not in joined
     assert "media_scanned=true" in (result.message or "")
+    details = result.details or {}
+    assert details["ok"] is True
+    assert details["placed"] is True
+    assert details["serial"] == SLOT1_SERIAL
+    assert details["destination"] == push[2]
+    assert details["downloaded_size"] == len(PNG_BYTES)
+    assert details["remote_size"] == 1024
+    assert details["error_code"] is None
+    assert any(args[:3] == ["shell", "wc", "-c"] for _, args in runner.calls)
 
 
 def test_qr_task_rejects_non_image_and_private_urls():
@@ -1173,6 +1197,145 @@ def test_activation_observation_does_not_fake_success(tmp_path: Path):
     }
     confirmed = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert confirmed.body["activation_state"] == "ACTIVE"
+
+
+def test_get_refresh_observes_and_can_return_active(tmp_path: Path):
+    """Published Refresh is GET /remote-access; it must persist CONFIRMED like Check activation."""
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.activation_details = {
+        "verdict": "ACTIVATION_CONFIRMED",
+        "esim_profile_present": True,
+        "esim_enabled": True,
+        "network_registered": True,
+        "cellular": True,
+        "observation_complete": True,
+    }
+    service, store, _ = _service(
+        tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=FarmStatusSequence([[1], [], []])
+    )
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    service.prepare_esim(CUSTOMER_A, rental)
+    assert store.get(rental).prepare_state == PREPARE_READY
+    assert store.get(rental).activation_observed is None
+    refreshed = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert refreshed.http_status == 200
+    assert refreshed.body["activation_state"] == "ACTIVE"
+    assert refreshed.body["qr_ready"] is True
+    assert refreshed.body["activation_observed"] == "confirmed"
+    assert refreshed.body["activation_observed_at"]
+    assert refreshed.body["activation_evidence"]["verdict"] == "ACTIVATION_CONFIRMED"
+    assert store.get(rental).activation_observed == "confirmed"
+    observe_tasks = [t for t in farm.tasks if t["type"] == "remote_access_activation_status"]
+    assert observe_tasks
+
+
+def test_get_refresh_skips_observe_while_rebooting(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.activation_details = {
+        "verdict": "ACTIVATION_CONFIRMED",
+        "esim_profile_present": True,
+        "esim_enabled": True,
+        "network_registered": True,
+        "cellular": True,
+        "observation_complete": True,
+    }
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    store.set_prepare_state(rental, PREPARE_REBOOTING, detail="in_progress")
+    got = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert got.body["activation_state"] == "DEVICE_REBOOTING"
+    assert store.get(rental).activation_observed is None
+    assert not any(t["type"] == "remote_access_activation_status" for t in farm.tasks)
+    checked = service.activation_status_for_customer(CUSTOMER_A, rental)
+    assert checked.http_status == 200
+    assert checked.body["activation_state"] == "DEVICE_REBOOTING"
+    assert not any(t["type"] == "remote_access_activation_status" for t in farm.tasks)
+
+
+def test_activation_status_without_gads_session_is_forbidden(tmp_path: Path):
+    """assign-then-activation-status: rental exists, no remote session → 403 (do not weaken)."""
+    tenant = MemoryTenant()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=FakeFarm())
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    denied = service.activation_status_for_customer(CUSTOMER_A, rental)
+    assert denied.http_status == 403
+    assert denied.body["error"] == "forbidden"
+
+
+def test_http_200_without_confirmation_is_not_active(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=FarmStatusSequence([[1], [], []])
+    )
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    service.prepare_esim(CUSTOMER_A, rental)
+    farm.activation_details = {
+        "verdict": "ACTIVATION_FAILED",
+        "esim_profile_present": False,
+        "esim_enabled": True,
+        "network_registered": False,
+        "cellular": False,
+        "observation_complete": True,
+    }
+    body = service.activation_status_for_customer(CUSTOMER_A, rental).body
+    assert body["ok"] is True
+    assert body["activation_state"] != "ACTIVE"
+    assert body["activation_observed"] == "missing"
+
+
+def test_repeated_refresh_does_not_duplicate_farm_observe(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.activation_details = {
+        "verdict": "ACTIVATION_CONFIRMED",
+        "esim_profile_present": True,
+        "esim_enabled": True,
+        "network_registered": True,
+        "cellular": True,
+        "observation_complete": True,
+    }
+    service, _, _ = _service(
+        tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=FarmStatusSequence([[1], [], []])
+    )
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    service.prepare_esim(CUSTOMER_A, rental)
+    first = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert first.body["activation_state"] == "ACTIVE"
+    n = len([t for t in farm.tasks if t["type"] == "remote_access_activation_status"])
+    second = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert second.body["activation_state"] == "ACTIVE"
+    assert len([t for t in farm.tasks if t["type"] == "remote_access_activation_status"]) == n
+
+
+def test_restart_reconciles_in_progress_prepare(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform())
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    store.set_prepare_state(rental, PREPARE_PLACING_QR, detail="running")
+    assert store.reconcile_interrupted_prepares() == 1
+    session = store.get(rental)
+    assert session.prepare_state == PREPARE_FAILED
+    assert session.prepare_detail == "interrupted_by_restart"
+    assert session.activation_observed != "confirmed"
+
+
+def test_release_is_idempotent(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform())
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    first = service.release_device(1, rental)
+    second = service.release_device(1, rental)
+    assert first.http_status == 200 and second.http_status == 200
+    assert second.body["status"] == "released"
 
 
 def test_http_prepare_esim_ignores_body_qr_url(tmp_path: Path):

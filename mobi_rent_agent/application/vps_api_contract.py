@@ -53,7 +53,15 @@ TEMPORARY_FAILURE_ERRORS = frozenset(
     {"farm_unreachable", "farm_down", "device_offline", "device_busy", "timeout", "farm_timeout"}
 )
 UNSUPPORTED_ERRORS = frozenset({"action_not_supported", "agent_not_configured"})
-MANUAL_ACTION_MARKERS = ("human", "lpa", "settings", "manual")
+# Include the Farm Agent's honest unattended-download refusal. That outcome is
+# "customer must use Android Settings/LPA", not a broken bay.
+MANUAL_ACTION_MARKERS = (
+    "human",
+    "lpa",
+    "settings",
+    "manual",
+    "esim authority",
+)
 
 
 def failure_class(record: VpsJobRecord) -> str | None:

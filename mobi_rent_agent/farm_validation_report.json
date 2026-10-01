@@ -1,7 +1,7 @@
 [
   {
     "slot": 1,
-    "serial": "1C101FDF6009EZ",
+    "serial": "18171FDF6005WG",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -31,7 +31,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "57100a7122d4d337",
+        "device_id": "7dc15558ec1da30d",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -43,13 +43,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "57100a7122d4d337",
+        "device_id": "7dc15558ec1da30d",
         "slot_id": 1,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 98,
+        "network_connected": true,
+        "transport": "cellular",
+        "battery_percent": 69,
         "charging": false,
-        "sim_ready": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -89,7 +89,7 @@
   },
   {
     "slot": 2,
-    "serial": "1C141FDF600GXF",
+    "serial": "19141FDF6OO8T9",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -119,7 +119,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "bdd99df2adbc8410",
+        "device_id": "77c1624576cf6f5c",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -131,13 +131,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "bdd99df2adbc8410",
+        "device_id": "77c1624576cf6f5c",
         "slot_id": 2,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 99,
-        "charging": false,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 72,
+        "charging": true,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -177,7 +177,7 @@
   },
   {
     "slot": 3,
-    "serial": "1A271FDF600BX2",
+    "serial": "19161FDF6004AD",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -207,7 +207,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "80887168de5e1f3d",
+        "device_id": "ca332dc78c4d7bdd",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -219,13 +219,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "80887168de5e1f3d",
+        "device_id": "ca332dc78c4d7bdd",
         "slot_id": 3,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 74,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -265,7 +265,7 @@
   },
   {
     "slot": 4,
-    "serial": "1C071FDF6004MS",
+    "serial": "19161FDF6005B9",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -295,7 +295,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "d316360a22ff234e",
+        "device_id": "bebfd05794379be7",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -307,13 +307,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "d316360a22ff234e",
+        "device_id": "bebfd05794379be7",
         "slot_id": 4,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 70,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -353,7 +353,7 @@
   },
   {
     "slot": 5,
-    "serial": "1B301FDF6004HF",
+    "serial": "19161FDF6OO411",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -383,7 +383,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "e7779535f720b86a",
+        "device_id": "7be11f954fee2ebc",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -395,13 +395,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "e7779535f720b86a",
+        "device_id": "7be11f954fee2ebc",
         "slot_id": 5,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 99,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 83,
         "charging": false,
-        "sim_ready": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -441,7 +441,7 @@
   },
   {
     "slot": 6,
-    "serial": "1C021FDF600GKL",
+    "serial": "19281FDF6OO1T4",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -471,7 +471,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "f7e9b6d15e0abcd1",
+        "device_id": "7a83536d8b2324fb",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -483,13 +483,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "f7e9b6d15e0abcd1",
+        "device_id": "7a83536d8b2324fb",
         "slot_id": 6,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 75,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -529,7 +529,7 @@
   },
   {
     "slot": 7,
-    "serial": "25261FDF60017D",
+    "serial": "1A181FDF6006KN",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -559,7 +559,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "0ffa31427315682e",
+        "device_id": "c904fc70bd1e46df",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -571,13 +571,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "0ffa31427315682e",
+        "device_id": "c904fc70bd1e46df",
         "slot_id": 7,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 70,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -617,7 +617,7 @@
   },
   {
     "slot": 8,
-    "serial": "19161FDF6OO411",
+    "serial": "1B131FDF60090W",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -647,7 +647,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "7be11f954fee2ebc",
+        "device_id": "f4f906fad1970c38",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -659,13 +659,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "7be11f954fee2ebc",
+        "device_id": "f4f906fad1970c38",
         "slot_id": 8,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 67,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -705,7 +705,7 @@
   },
   {
     "slot": 9,
-    "serial": "19281FDF6OO1T4",
+    "serial": "1B301FDF6004HF",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -735,7 +735,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "7a83536d8b2324fb",
+        "device_id": "e7779535f720b86a",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -747,13 +747,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "7a83536d8b2324fb",
+        "device_id": "e7779535f720b86a",
         "slot_id": 9,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 74,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -793,7 +793,7 @@
   },
   {
     "slot": 10,
-    "serial": "19161FDF6004AD",
+    "serial": "1C021FDF600GKL",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -823,7 +823,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "ca332dc78c4d7bdd",
+        "device_id": "f7e9b6d15e0abcd1",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -835,13 +835,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "ca332dc78c4d7bdd",
+        "device_id": "f7e9b6d15e0abcd1",
         "slot_id": 10,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 71,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -881,7 +881,7 @@
   },
   {
     "slot": 11,
-    "serial": "25061FDF6006KF",
+    "serial": "1C071FDF6004MS",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -911,7 +911,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "23dde9660a9a5a4c",
+        "device_id": "d316360a22ff234e",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -923,13 +923,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "23dde9660a9a5a4c",
+        "device_id": "d316360a22ff234e",
         "slot_id": 11,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 71,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -969,7 +969,7 @@
   },
   {
     "slot": 12,
-    "serial": "21051FDF600EM9",
+    "serial": "1C071FDF6006YS",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -999,7 +999,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "add1b0d5195fcf27",
+        "device_id": "86443b99f7ac5eb3",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1011,13 +1011,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "add1b0d5195fcf27",
+        "device_id": "86443b99f7ac5eb3",
         "slot_id": 12,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 83,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1057,7 +1057,7 @@
   },
   {
     "slot": 13,
-    "serial": "1B131FDF60090W",
+    "serial": "1C111FDF600CNB",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1087,7 +1087,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "f4f906fad1970c38",
+        "device_id": "5b9b0322e39d9bbe",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1099,13 +1099,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "f4f906fad1970c38",
+        "device_id": "5b9b0322e39d9bbe",
         "slot_id": 13,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 90,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1145,7 +1145,7 @@
   },
   {
     "slot": 14,
-    "serial": "1A181FDF6006KN",
+    "serial": "1C141FDF600GXF",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1175,7 +1175,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "c904fc70bd1e46df",
+        "device_id": "bdd99df2adbc8410",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1187,13 +1187,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "c904fc70bd1e46df",
+        "device_id": "bdd99df2adbc8410",
         "slot_id": 14,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 70,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1233,7 +1233,7 @@
   },
   {
     "slot": 15,
-    "serial": "1C111FDF600CNB",
+    "serial": "21051FDF600EM9",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1263,7 +1263,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "5b9b0322e39d9bbe",
+        "device_id": "add1b0d5195fcf27",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1275,13 +1275,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "5b9b0322e39d9bbe",
+        "device_id": "add1b0d5195fcf27",
         "slot_id": 15,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 76,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1365,11 +1365,11 @@
         "success": true,
         "device_id": "82d008e376b903c6",
         "slot_id": 16,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 70,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1409,7 +1409,7 @@
   },
   {
     "slot": 17,
-    "serial": "19161FDF6005B9",
+    "serial": "25061FDF6006KF",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1439,7 +1439,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "bebfd05794379be7",
+        "device_id": "23dde9660a9a5a4c",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1451,13 +1451,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "bebfd05794379be7",
+        "device_id": "23dde9660a9a5a4c",
         "slot_id": 17,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 73,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1497,7 +1497,7 @@
   },
   {
     "slot": 18,
-    "serial": "19141FDF6OO8T9",
+    "serial": "25261FDF60017D",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1527,7 +1527,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "77c1624576cf6f5c",
+        "device_id": "0ffa31427315682e",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1539,13 +1539,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "77c1624576cf6f5c",
+        "device_id": "0ffa31427315682e",
         "slot_id": 18,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 73,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },
@@ -1585,7 +1585,7 @@
   },
   {
     "slot": 19,
-    "serial": "18171FDF6005WG",
+    "serial": "1C101FDF6009EZ",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1599,8 +1599,8 @@
       "device_id_stable": true,
       "health": true,
       "euicc_detected": true,
-      "no_real_esim": true,
-      "esim_dry_run": true,
+      "no_real_esim": false,
+      "esim_dry_run": false,
       "socks_dry_run": true,
       "vpn_dry_run": true
     },
@@ -1615,43 +1615,50 @@
       },
       "identity": {
         "success": true,
-        "device_id": "7dc15558ec1da30d",
+        "device_id": "57100a7122d4d337",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
         "sdk_int": 36,
-        "adb_serial": null,
+        "adb_serial": "1C101FDF6009EZ",
         "slot_id": 19,
         "app_version": "0.1.0",
         "euicc_supported": true
       },
       "health": {
         "success": true,
-        "device_id": "7dc15558ec1da30d",
+        "device_id": "57100a7122d4d337",
         "slot_id": 19,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
-        "esim_state": "dry_run",
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 75,
+        "charging": false,
+        "sim_ready": true,
+        "esim_state": "ready",
         "app_healthy": true
       },
       "esim": {
         "success": true,
-        "esim_state": "dry_run",
+        "esim_state": "ready",
         "euicc_supported": true,
         "euicc_enabled": true,
-        "real_esim_enabled": false,
-        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS or carrier privileges; user confirmation UI is treated as failure for zero-touch"
+        "real_esim_enabled": true,
+        "sim_state": "ready",
+        "network_operator": "Dark Star",
+        "has_write_embedded_subscriptions": false,
+        "has_carrier_privileges": false,
+        "device_owner": true,
+        "can_silent_install": true,
+        "requires_user_consent": false,
+        "privilege_required": "WRITE_EMBEDDED_SUBSCRIPTIONS, carrier privileges, or Device Owner; user-consent UI is not used"
       },
       "provision": {
         "success": false,
         "job_id": "farm-validate-slot-19",
         "slot_id": 19,
         "device_code": -1,
-        "esim_state": "dry_run",
-        "error": "dry_run: real eSIM install disabled"
+        "esim_state": "failed",
+        "error": "live download is restricted to slot 1"
       },
       "socks": {
         "success": true,
@@ -1673,7 +1680,7 @@
   },
   {
     "slot": 20,
-    "serial": "1C071FDF6006YS",
+    "serial": "1A271FDF600BX2",
     "checks": {
       "adb_online": true,
       "companion_installed": true,
@@ -1703,7 +1710,7 @@
       },
       "identity": {
         "success": true,
-        "device_id": "86443b99f7ac5eb3",
+        "device_id": "80887168de5e1f3d",
         "model": "Pixel 6",
         "manufacturer": "Google",
         "android_version": "16",
@@ -1715,13 +1722,13 @@
       },
       "health": {
         "success": true,
-        "device_id": "86443b99f7ac5eb3",
+        "device_id": "80887168de5e1f3d",
         "slot_id": 20,
-        "network_connected": false,
-        "transport": "none",
-        "battery_percent": 100,
-        "charging": true,
-        "sim_ready": false,
+        "network_connected": true,
+        "transport": "wifi",
+        "battery_percent": 70,
+        "charging": false,
+        "sim_ready": true,
         "esim_state": "dry_run",
         "app_healthy": true
       },

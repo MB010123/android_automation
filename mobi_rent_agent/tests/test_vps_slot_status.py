@@ -514,6 +514,13 @@ def _job(status: str, error: str | None, message: str | None = None) -> VpsJobRe
         ("done", None, None, "completed", None),
         ("failed", "action_not_supported", None, "unsupported", "unsupported"),
         ("failed", "provisioning_failed", "human Settings/LPA required", "requires_manual_action", "requires_manual_action"),
+        (
+            "failed",
+            "provisioning_failed",
+            "no legitimate Android eSIM authority (WRITE_EMBEDDED_SUBSCRIPTIONS)",
+            "requires_manual_action",
+            "requires_manual_action",
+        ),
         ("failed", "farm_unreachable", None, "failed", "temporary"),
         ("failed", "provisioning_failed", "device does not expose eUICC", "failed", "permanent"),
     ],

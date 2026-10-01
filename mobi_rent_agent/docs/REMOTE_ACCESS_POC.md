@@ -17,7 +17,46 @@ Customer-facing `activation_state` on GET/POST remote-access:
 | `FAILED` | QR prepare/reboot pipeline failed |
 
 `ACTIVE` is never set merely because the QR file was uploaded. Incomplete or failed
-telephony snapshots stay `CUSTOMER_ACTIVATION_REQUIRED`.
+telephony snapshots stay `CUSTOMER_ACTIVATION_REQUIRED` (`activation_observed=missing`).
+`ACTIVE` requires Farm Agent `verdict=ACTIVATION_CONFIRMED` persisted as
+`activation_observed=confirmed`.
+
+### Who does what
+
+| Actor | Responsibility |
+| --- | --- |
+| Customer browser | Supabase user JWT; never Farm/GADS admin tokens or ADB serials |
+| Lovable / Supabase | Auth, rental/slot row, QR **upload and storage**; `POST /esim-uploads` is Lovable (not this repo) |
+| VPS | Ownership chain, QR allowlist, GADS lease, prepare/reboot orchestration, observation persist |
+| Farm Agent | HTTPS QR download, `adb push` + media scan, reboot, read-only dumpsys observation |
+| GADS | Remote screen/input and temporary user only |
+| Android | Customer Settings → SIMs → Add eSIM (manual) |
+
+### GET Refresh vs Check activation
+
+Both may persist observation. GET skips Farm while `prepare_state` is in progress and
+reuses the last observation for `observe_cooldown` (20s) so Refresh polling does not
+hammer ADB. `POST …/activation-status` always observes unless reboot is in progress.
+
+### assign is not QR placement
+
+Lovable onboarding currently calls Farm **assign** after the QR upload. Assign
+downloads the image, tries to decode an LPA code, then runs the subscription
+provisioner. On Bay 1 that provisioner correctly **refuses** unattended
+`provision_esim` because the Pixel has no `WRITE_EMBEDDED_SUBSCRIPTIONS`, carrier
+privileges, or Device Owner. That refusal is **not** a dead device. The VPS must
+surface it as `provisioning_phase=requires_manual_action`.
+
+QR files reach `/sdcard/DCIM/Camera/` only via
+`POST /rentals/{rental_id}/remote-access/prepare-esim` → Farm
+`remote_access_place_qr`. Assign never `adb push`es the gallery image.
+
+### assign then 403 on activation-status
+
+`POST /farm/slots/{bay}/assign` only starts provisioning. It does **not** create a GADS
+session. `POST …/activation-status` requires an **active remote-access session**.
+Calling it after assign but before `POST …/remote-access` is **403 forbidden**.
+That is correct. Do not weaken auth. Create remote access first, then Check/Refresh.
 
 The rental row must expose an **allowlisted public HTTPS** QR URL (`qr_code_url` /
 `esim_qr_url` / …). A storage key without a fetchable HTTPS URL fails closed (`503
@@ -148,7 +187,7 @@ Modified:
 | Method | Path | Result |
 | --- | --- | --- |
 | POST | `/rentals/{rental_id}/remote-access` | 201 session + `platform_login {url, username, password, expires_at}` (shown once) |
-| GET | `/rentals/{rental_id}/remote-access` | 200 session status (`status`: none/active/revoked/released/expired) |
+| GET | `/rentals/{rental_id}/remote-access` | 200 session + `activation_state` / `activation_observed` / `activation_observed_at`. Active GET (not mid-reboot) observes with cooldown. |
 | POST | `/rentals/{rental_id}/remote-access/revoke` | 200; deletes platform user, releases device lease |
 | POST | `/rentals/{rental_id}/remote-access/device-status` | 200 `{state, online, available, busy, adb_online}` |
 | POST | `/rentals/{rental_id}/remote-access/reboot` | 202; async reboot + wait, progress in `prepare_state` |
