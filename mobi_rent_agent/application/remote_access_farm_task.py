@@ -148,6 +148,9 @@ def run_remote_access_place_qr(
             tmp_path = handle.name
         runner.run(serial, ["shell", "mkdir", "-p", DCIM_CAMERA_DIR])
         runner.run(serial, ["push", tmp_path, remote_path])
+        listed = runner.run(serial, ["shell", "ls", remote_path]).stdout
+        if remote_name not in (listed or "") and remote_path not in (listed or ""):
+            raise AdbCommandError("qr_not_on_device")
     except AdbCommandError as exc:
         logger.warning("remote_access_qr_push_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
         return FarmTaskResult(ok=False, http_status=422, error="qr_push_failed")
@@ -175,11 +178,12 @@ def run_remote_access_place_qr(
     except AdbCommandError:
         media_scanned = False
 
-    logger.info("remote_access_qr_placed slot=%s job_id=%s path=%s", slot_id, request.job_id, remote_path)
+    logger.info("esim_qr_placed slot=%s job_id=%s media_scanned=%s", slot_id, request.job_id, media_scanned)
     return FarmTaskResult(
         ok=True,
         http_status=200,
         message=f"qr_placed:{remote_path};media_scanned={str(media_scanned).lower()}",
+        details={"placed": True, "media_scanned": media_scanned},
     )
 
 

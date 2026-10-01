@@ -826,7 +826,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "`REMOTE_ACCESS_POC_SLOT_IDS`. The backend verifies customer -> rental -> slot -> device "
                     "server-side; any failure is `403 forbidden`. Never returns platform credentials."
                     " Includes `activation_state` (REMOTE_ACCESS_READY | DEVICE_REBOOTING | "
-                    "CUSTOMER_ACTIVATION_REQUIRED | ACTIVATING | ACTIVE | FAILED), `qr_ready`, and `guidance`."
+                    "CUSTOMER_ACTIVATION_REQUIRED | ACTIVATING | ACTIVE | FAILED), `qr_ready`, and `guidance`. "
+                    "When the session is active and not mid-reboot, GET runs the same read-only Farm observation "
+                    "as `activation-status` and persists `confirmed`/`partial` so Refresh can return `ACTIVE`."
                 ),
                 "security": user_bearer,
                 "parameters": [_RENTAL_PARAM],

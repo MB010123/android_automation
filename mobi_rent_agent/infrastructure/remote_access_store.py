@@ -6,20 +6,46 @@ to the customer exactly once in the create response.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from domain.remote_access import public_activation_view
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 STATUS_ACTIVE = "active"
 STATUS_REVOKED = "revoked"
 STATUS_RELEASED = "released"
 STATUS_EXPIRED = "expired"
+
+PREPARE_IN_PROGRESS = frozenset({"placing_qr", "rebooting", "waiting_adb", "waiting_platform"})
+
+
+def _iso_utc(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _safe_evidence(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict) or not raw:
+        return None
+    allowed = (
+        "verdict",
+        "esim_profile_present",
+        "esim_enabled",
+        "network_registered",
+        "cellular",
+        "observation_complete",
+    )
+    body = {key: raw[key] for key in allowed if key in raw and raw[key] is not None}
+    return body or None
 
 
 @dataclass(frozen=True)
@@ -37,6 +63,8 @@ class RemoteAccessSession:
     prepare_detail: str | None = None
     prepare_job_id: str | None = None
     activation_observed: str | None = None
+    activation_observed_at: float | None = None
+    activation_evidence: dict[str, Any] | None = None
 
     def is_active(self, now: float) -> bool:
         return self.status == STATUS_ACTIVE and now < self.expires_at
@@ -55,6 +83,8 @@ class RemoteAccessSession:
             "expires_at": self.expires_at,
             "prepare_state": self.prepare_state,
             "prepare_detail": self.prepare_detail,
+            "activation_observed": self.activation_observed,
+            "activation_observed_at": _iso_utc(self.activation_observed_at),
         }
         body.update(
             public_activation_view(
@@ -62,6 +92,8 @@ class RemoteAccessSession:
                 activation_observed=self.activation_observed,
             )
         )
+        if self.activation_evidence:
+            body["activation_evidence"] = dict(self.activation_evidence)
         return body
 
 
@@ -99,7 +131,9 @@ class RemoteAccessSessionStore:
                     prepare_state TEXT,
                     prepare_detail TEXT,
                     prepare_job_id TEXT,
-                    activation_observed TEXT
+                    activation_observed TEXT,
+                    activation_observed_at REAL,
+                    activation_evidence TEXT
                 )
                 """
             )
@@ -112,24 +146,36 @@ class RemoteAccessSessionStore:
     def _migrate_schema(self) -> None:
         row = self._conn.execute("SELECT version FROM remote_access_schema_version").fetchone()
         version = int(row[0]) if row else 1
-        if version < 2:
-            columns = {
-                info[1]
-                for info in self._conn.execute("PRAGMA table_info(remote_access_sessions)").fetchall()
-            }
+        columns = {
+            info[1]
+            for info in self._conn.execute("PRAGMA table_info(remote_access_sessions)").fetchall()
+        }
+        if version < 2 or "activation_observed" not in columns:
             if "activation_observed" not in columns:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN activation_observed TEXT")
-            self._conn.execute("UPDATE remote_access_schema_version SET version = ?", (SCHEMA_VERSION,))
-            self._conn.commit()
+        if version < 3 or "activation_observed_at" not in columns:
+            if "activation_observed_at" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN activation_observed_at REAL")
+            if "activation_evidence" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN activation_evidence TEXT")
+        self._conn.execute("UPDATE remote_access_schema_version SET version = ?", (SCHEMA_VERSION,))
+        self._conn.commit()
 
     _COLUMNS = (
         "rental_id, customer_id, slot_id, device_id, platform_username, status, "
         "created_at, expires_at, ended_at, prepare_state, prepare_detail, prepare_job_id, "
-        "activation_observed"
+        "activation_observed, activation_observed_at, activation_evidence"
     )
 
     @staticmethod
     def _row_to_session(row) -> RemoteAccessSession:
+        evidence = None
+        if len(row) > 14 and row[14]:
+            try:
+                parsed = json.loads(str(row[14]))
+            except (TypeError, ValueError):
+                parsed = None
+            evidence = _safe_evidence(parsed)
         return RemoteAccessSession(
             rental_id=str(row[0]),
             customer_id=str(row[1]),
@@ -144,6 +190,8 @@ class RemoteAccessSessionStore:
             prepare_detail=row[10],
             prepare_job_id=row[11],
             activation_observed=row[12] if len(row) > 12 else None,
+            activation_observed_at=float(row[13]) if len(row) > 13 and row[13] is not None else None,
+            activation_evidence=evidence,
         )
 
     def get(self, rental_id: str) -> RemoteAccessSession | None:
@@ -180,11 +228,12 @@ class RemoteAccessSessionStore:
         return [self._row_to_session(row) for row in rows]
 
     def upsert(self, session: RemoteAccessSession) -> None:
+        evidence = _safe_evidence(session.activation_evidence)
         with self._lock:
             self._conn.execute(
                 f"""
                 INSERT OR REPLACE INTO remote_access_sessions ({self._COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.rental_id,
@@ -200,6 +249,8 @@ class RemoteAccessSessionStore:
                     session.prepare_detail,
                     session.prepare_job_id,
                     session.activation_observed,
+                    session.activation_observed_at,
+                    json.dumps(evidence) if evidence else None,
                 ),
             )
             self._conn.commit()
@@ -232,11 +283,47 @@ class RemoteAccessSessionStore:
             )
         )
 
-    def set_activation_observed(self, rental_id: str, observed: str, *, detail: str | None = None) -> None:
+    def set_activation_observed(
+        self,
+        rental_id: str,
+        observed: str,
+        *,
+        observed_at: float | None = None,
+        evidence: dict[str, Any] | None = None,
+        detail: str | None = None,
+    ) -> None:
         current = self.get(rental_id)
         if current is None:
             return
-        self.upsert(replace(current, activation_observed=observed, prepare_detail=detail if detail is not None else current.prepare_detail))
+        self.upsert(
+            replace(
+                current,
+                activation_observed=observed,
+                activation_observed_at=observed_at if observed_at is not None else time.time(),
+                activation_evidence=_safe_evidence(evidence),
+                prepare_detail=detail if detail is not None else current.prepare_detail,
+            )
+        )
+
+    def reconcile_interrupted_prepares(self) -> int:
+        """After VPS restart, in-flight prepare/reboot cannot be trusted. Mark failed."""
+        count = 0
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {self._COLUMNS} FROM remote_access_sessions WHERE prepare_state IN (?, ?, ?, ?)",
+                tuple(sorted(PREPARE_IN_PROGRESS)),
+            ).fetchall()
+        for row in rows:
+            session = self._row_to_session(row)
+            self.upsert(
+                replace(
+                    session,
+                    prepare_state="failed",
+                    prepare_detail="interrupted_by_restart",
+                )
+            )
+            count += 1
+        return count
 
     def close(self) -> None:
         self._conn.close()

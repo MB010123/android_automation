@@ -131,6 +131,7 @@ class RemoteAccessService:
         session_ttl_minutes: int = 60,
         reboot_timeout_seconds: float = 180.0,
         poll_interval_seconds: float = 3.0,
+        observe_cooldown_seconds: float = 20.0,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         background_runner: Callable[[Callable[[], None]], None] | None = None,
@@ -153,11 +154,17 @@ class RemoteAccessService:
         self._ttl_minutes = max(1, int(session_ttl_minutes))
         self._reboot_timeout = float(reboot_timeout_seconds)
         self._poll_interval = max(0.0, float(poll_interval_seconds))
+        self._observe_cooldown = max(0.0, float(observe_cooldown_seconds))
         self._clock = clock
         self._sleep = sleep
         self._runner = background_runner or self._thread_runner
         self._flow_locks: dict[str, threading.Lock] = {}
         self._flow_locks_guard = threading.Lock()
+        reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
+        if callable(reconcile):
+            interrupted = reconcile()
+            if interrupted:
+                logger.info("remote_access_prepare_reconciled count=%s", interrupted)
 
     # ------------------------------------------------------------------
     # authorization chain
@@ -320,8 +327,11 @@ class RemoteAccessService:
             prepare_detail=existing.prepare_detail if existing is not None else None,
             prepare_job_id=existing.prepare_job_id if existing is not None else None,
             activation_observed=existing.activation_observed if existing is not None else None,
+            activation_observed_at=existing.activation_observed_at if existing is not None else None,
+            activation_evidence=existing.activation_evidence if existing is not None else None,
         )
         self._store.upsert(session)
+        logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
         body = {"ok": True, **session.to_public_dict(now)}
         # Shown exactly once. Temporary, per-rental, non-admin platform login.
@@ -344,7 +354,14 @@ class RemoteAccessService:
                 200,
                 {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "status": "none", "active": False},
             )
-        return ApiResult(200, {"ok": True, **session.to_public_dict(now)})
+        evidence: dict[str, Any] = {}
+        if session.is_active(now) and session.prepare_state not in PREPARE_IN_PROGRESS:
+            evidence = self._observe_activation(auth, force=False)
+            session = self._store.get(auth.rental_id) or session
+        body = {"ok": True, **session.to_public_dict(self._clock())}
+        if evidence:
+            body["activation_evidence"] = evidence
+        return ApiResult(200, body)
 
     def revoke_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
         auth = self._authorize(customer_id, rental_id, slot_id)
@@ -373,6 +390,7 @@ class RemoteAccessService:
                 released = bool(platform.release_device(device_id=device_id))
             except RemoteAccessPlatformError as exc:
                 logger.warning("remote_access_release_failed slot=%s reason=%s", slot, exc.__class__.__name__)
+        logger.info("remote_access_released slot=%s", slot)
         self._record(slot, "remote_access_released", f"rental_id={rental_id}")
         return ApiResult(200, {"ok": True, "slot_id": slot, "released": released, "status": STATUS_RELEASED})
 
@@ -469,6 +487,7 @@ class RemoteAccessService:
             return ApiResult(400, error_body("invalid_request", message="authoritative eSIM reference is not allowlisted"))
         if "://" not in qr_url or not esim_fetch_url_is_public_https(qr_url):
             return ApiResult(503, error_body("esim_ref_unavailable"))
+        logger.info("esim_qr_validated slot=%s", auth.slot_id)
         with self._lock_for(auth.rental_id):
             current = self._store.get(auth.rental_id)
             if current is not None and current.prepare_state in PREPARE_IN_PROGRESS:
@@ -497,6 +516,7 @@ class RemoteAccessService:
                 )
             job_id = str(uuid.uuid4())
             self._store.set_prepare_state(auth.rental_id, PREPARE_PLACING_QR, detail=None, job_id=job_id)
+        logger.info("esim_prepare_started slot=%s", auth.slot_id)
         self._runner(lambda: self._run_prepare_flow(auth, qr_url, job_id))
         return ApiResult(
             202,
@@ -511,32 +531,71 @@ class RemoteAccessService:
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
-        evidence: dict[str, Any] = {}
-        if self._farm is not None:
-            job_id = str(uuid.uuid4())
-            try:
-                response = self._farm.run_task(
-                    task_type=REMOTE_ACCESS_ACTIVATION_TASK,
-                    farm_slot_id=auth.slot_id,
-                    payload={"rental_id": auth.rental_id},
-                    job_id=job_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("remote_access_activation_observe_failed reason=%s", exc.__class__.__name__)
-                response = None
-            else:
-                if response.ok and isinstance(response.body, dict):
-                    evidence = _public_activation_evidence(response.body.get("details"))
-                    verdict = str(evidence.get("verdict") or "")
-                    if verdict == "ACTIVATION_CONFIRMED":
-                        self._store.set_activation_observed(auth.rental_id, "confirmed")
-                    elif verdict == "ACTIVATION_PARTIAL":
-                        self._store.set_activation_observed(auth.rental_id, "partial")
+        if session.prepare_state in PREPARE_IN_PROGRESS:
+            return ApiResult(200, {"ok": True, **session.to_public_dict(self._clock())})
+        evidence = self._observe_activation(auth, force=True)
         refreshed = self._store.get(auth.rental_id) or session
         body = {"ok": True, **refreshed.to_public_dict(self._clock())}
         if evidence:
             body["activation_evidence"] = evidence
         return ApiResult(200, body)
+
+    def _observe_activation(self, auth: AuthorizedRental, *, force: bool = False) -> dict[str, Any]:
+        """Read-only Farm observation. ACTIVE only after ACTIVATION_CONFIRMED."""
+        with self._lock_for(auth.rental_id):
+            return self._observe_activation_locked(auth, force=force)
+
+    def _observe_activation_locked(self, auth: AuthorizedRental, *, force: bool) -> dict[str, Any]:
+        session = self._store.get(auth.rental_id)
+        now = self._clock()
+        if (
+            not force
+            and session is not None
+            and session.activation_observed_at is not None
+            and (now - float(session.activation_observed_at)) < self._observe_cooldown
+            and session.activation_evidence
+        ):
+            return dict(session.activation_evidence)
+        if self._farm is None:
+            return dict(session.activation_evidence) if session and session.activation_evidence else {}
+        logger.info("activation_observation_started slot=%s", auth.slot_id)
+        job_id = str(uuid.uuid4())
+        try:
+            response = self._farm.run_task(
+                task_type=REMOTE_ACCESS_ACTIVATION_TASK,
+                farm_slot_id=auth.slot_id,
+                payload={"rental_id": auth.rental_id},
+                job_id=job_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("remote_access_activation_observe_failed reason=%s", exc.__class__.__name__)
+            return {}
+        if not response.ok or not isinstance(response.body, dict):
+            logger.warning("activation_observation_failed slot=%s", auth.slot_id)
+            return {}
+        evidence = _public_activation_evidence(response.body.get("details"))
+        verdict = str(evidence.get("verdict") or "")
+        observed: str | None = None
+        if verdict == "ACTIVATION_CONFIRMED":
+            observed = "confirmed"
+            logger.info("activation_observation_confirmed slot=%s", auth.slot_id)
+        elif verdict == "ACTIVATION_PARTIAL":
+            observed = "partial"
+            logger.info("activation_observation_partial slot=%s", auth.slot_id)
+        elif verdict:
+            observed = "missing"
+            logger.info("activation_observation_missing slot=%s verdict=%s", auth.slot_id, verdict)
+        if observed:
+            previous = session.activation_observed if session is not None else None
+            self._store.set_activation_observed(
+                auth.rental_id,
+                observed,
+                observed_at=now,
+                evidence=evidence,
+            )
+            if observed == "confirmed" and previous != "confirmed":
+                logger.info("activation_state_changed slot=%s state=ACTIVE", auth.slot_id)
+        return evidence
 
     def sweep_stale_sessions(self) -> None:
         """Revoke GADS leases whose rental has ended or changed owner. Tenant errors skip."""
@@ -584,6 +643,8 @@ class RemoteAccessService:
                 logger.warning("remote_access_revoke_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
                 revoked = False
         ended = self._store.end(rental_id, status=status, now=self._clock())
+        if status == STATUS_REVOKED:
+            logger.info("remote_access_revoked slot=%s", slot_id)
         self._record(slot_id, f"remote_access_{status}", f"rental_id={rental_id}")
         body = {"ok": True, "platform_revoked": revoked}
         if ended is not None:
@@ -618,14 +679,20 @@ class RemoteAccessService:
         except Exception as exc:  # noqa: BLE001 - background thread must record, not raise
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail=f"place_qr_exception:{exc.__class__.__name__}")
             return
-        if not response.ok:
-            self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail=f"place_qr:{response.error or response.http_status}")
+        if not _qr_placement_succeeded(response):
+            self._store.set_prepare_state(
+                auth.rental_id,
+                PREPARE_FAILED,
+                detail=f"place_qr:{response.error or response.http_status}",
+            )
             return
+        logger.info("esim_qr_placed slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_qr_placed", f"rental_id={auth.rental_id} job_id={job_id}")
         self._run_reboot_flow(auth)
 
     def _run_reboot_flow(self, auth: AuthorizedRental) -> None:
         self._store.set_prepare_state(auth.rental_id, PREPARE_REBOOTING)
+        logger.info("device_reboot_started slot=%s", auth.slot_id)
         try:
             result = self.reboot_device(auth.slot_id, wait=False)
         except Exception as exc:  # noqa: BLE001
@@ -638,11 +705,14 @@ class RemoteAccessService:
         if not self._wait_adb_online(auth.slot_id):
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="adb_reconnect_timeout")
             return
+        logger.info("device_adb_ready slot=%s", auth.slot_id)
         self._store.set_prepare_state(auth.rental_id, PREPARE_WAITING_PLATFORM)
         if not self._wait_platform_online(auth.slot_id):
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="platform_reconnect_timeout")
             return
+        logger.info("gads_ready slot=%s", auth.slot_id)
         self._store.set_prepare_state(auth.rental_id, PREPARE_READY, detail="customer_can_install_esim_manually")
+        logger.info("customer_activation_required slot=%s", auth.slot_id)
 
     def _adb_online(self, slot_id: int) -> bool | None:
         if self._farm_status is None:
@@ -704,6 +774,17 @@ class RemoteAccessService:
     @staticmethod
     def _thread_runner(fn: Callable[[], None]) -> None:
         threading.Thread(target=fn, name="remote-access-flow", daemon=True).start()
+
+
+def _qr_placement_succeeded(response: Any) -> bool:
+    if response is None or not getattr(response, "ok", False):
+        return False
+    body = response.body if isinstance(getattr(response, "body", None), dict) else {}
+    details = body.get("details") if isinstance(body, dict) else None
+    if isinstance(details, dict) and "placed" in details:
+        return details.get("placed") is True
+    message = str((body or {}).get("message") or "")
+    return (not message) or message.startswith("qr_placed:")
 
 
 def _public_activation_evidence(raw: Any) -> dict[str, Any]:

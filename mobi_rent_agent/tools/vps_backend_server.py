@@ -1091,6 +1091,9 @@ def _build_remote_access_service(
             "incomplete; POC routes will return 503"
         )
     store = RemoteAccessSessionStore(db_path)
+    interrupted = store.reconcile_interrupted_prepares()
+    if interrupted:
+        logger.info("remote_access_prepare_reconciled count=%s", interrupted)
     service = RemoteAccessService(
         enabled=True,
         allowed_slot_ids=allowed,
