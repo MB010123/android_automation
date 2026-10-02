@@ -40,6 +40,7 @@ from infrastructure.esim_qr_security import (
     extract_authoritative_esim_ref,
     validate_authoritative_esim_ref,
 )
+from infrastructure.gads_workspaces import unique_workspace_map
 from infrastructure.remote_access_store import (
     STATUS_ACTIVE,
     STATUS_RELEASED,
@@ -139,15 +140,30 @@ class RemoteAccessService:
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         background_runner: Callable[[Callable[[], None]], None] | None = None,
+        workspace_map: dict[int, str] | None = None,
+        gads_slot_ids: tuple[int, ...] | None = None,
+        prepare_slot_ids: tuple[int, ...] = (1,),
+        observe_slot_ids: tuple[int, ...] = (1,),
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
-        # Never hold device ids for slots outside the allowlist.
+        # Full Farm/VPS serial inventory. GADS membership is workspace-per-bay,
+        # not this map's key set. prepare/observe stay on their own lists.
         self._devices = {
             int(slot): str(serial).strip()
             for slot, serial in slot_device_map.items()
-            if int(slot) in self._allowed and str(serial).strip()
+            if str(serial).strip()
         }
+        self._workspaces = unique_workspace_map(
+            {
+                int(slot): str(workspace).strip()
+                for slot, workspace in (workspace_map or {}).items()
+                if 1 <= int(slot) <= 20 and str(workspace).strip()
+            }
+        )
+        self._gads_slots = None if gads_slot_ids is None else tuple(int(s) for s in gads_slot_ids)
+        self._prepare_slots = tuple(int(s) for s in prepare_slot_ids)
+        self._observe_slots = tuple(int(s) for s in observe_slot_ids)
         self._platform = platform
         self._store = store
         self._tenant = tenant_store
@@ -180,14 +196,31 @@ class RemoteAccessService:
 
     @property
     def allowed_slot_ids(self) -> tuple[int, ...]:
-        return self._allowed
+        if self._gads_slots is not None:
+            return self._gads_slots
+        return tuple(sorted(self._workspaces))
 
     def device_for_slot(self, slot_id: int) -> str | None:
-        """Slot -> platform device id, only for allowlisted slots."""
+        """Slot -> platform device id when the bay has a unique GADS workspace."""
+        if not self._gads_slot_allowed(slot_id):
+            return None
         return self._devices.get(int(slot_id))
 
+    def _workspace_for(self, slot_id: int) -> str | None:
+        return self._workspaces.get(int(slot_id)) or None
+
+    def _gads_slot_allowed(self, slot_id: int) -> bool:
+        if not self._enabled:
+            return False
+        bay = int(slot_id)
+        if self._gads_slots is not None and bay not in self._gads_slots:
+            return False
+        if not self._workspace_for(bay):
+            return False
+        return bool(self._devices.get(bay))
+
     def _slot_allowed(self, slot_id: int) -> bool:
-        return self._enabled and int(slot_id) in self._allowed
+        return self._gads_slot_allowed(slot_id)
 
     def _rental_row(self, rental_id: str) -> dict[str, Any] | None | ApiResult:
         getter = getattr(self._tenant, "get_slot_by_id", None)
@@ -221,6 +254,7 @@ class RemoteAccessService:
         slot_id: int | None = None,
         *,
         require_poc_slot: bool = True,
+        feature_slots: tuple[int, ...] | None = None,
     ) -> AuthorizedRental | ApiResult:
         if not self._enabled:
             return _forbidden("poc_disabled")
@@ -258,11 +292,18 @@ class RemoteAccessService:
             if str(bay_owner or "").strip() != customer:
                 return _forbidden("rental_not_owned")
         if require_poc_slot:
-            if not self._slot_allowed(row_slot):
-                return _forbidden("slot_not_allowlisted")
-            device_id = self._devices.get(row_slot)
-            if not device_id:
-                return _forbidden("slot_not_mapped")
+            if feature_slots is not None:
+                if int(row_slot) not in {int(s) for s in feature_slots}:
+                    return _forbidden("slot_not_allowlisted")
+                device_id = self._devices.get(row_slot)
+                if not device_id:
+                    return _forbidden("slot_not_mapped")
+            else:
+                if not self._gads_slot_allowed(row_slot):
+                    return _forbidden("slot_not_allowlisted")
+                device_id = self._devices.get(row_slot)
+                if not device_id:
+                    return _forbidden("slot_not_mapped")
         else:
             mapped = self._farm_bay_is_mapped(row_slot)
             if isinstance(mapped, ApiResult):
@@ -329,10 +370,14 @@ class RemoteAccessService:
             remaining_minutes = int((auth.rental_end - now) // 60)
             ttl_minutes = max(1, min(ttl_minutes, remaining_minutes))
         try:
+            workspace_id = self._workspace_for(auth.slot_id)
+            if not workspace_id:
+                return _forbidden("slot_not_allowlisted")
             grant = platform.grant_access(
                 device_id=auth.device_id,
                 rental_id=auth.rental_id,
                 ttl_minutes=ttl_minutes,
+                workspace_id=workspace_id,
             )
         except RemoteAccessPlatformError as exc:
             reason = str(exc)
@@ -400,15 +445,19 @@ class RemoteAccessService:
 
     def release_device(self, slot_id: int, rental_id: str) -> ApiResult:
         """System/farm-service operation when the rental ends. No customer context."""
+        if not self._enabled:
+            return _forbidden("poc_disabled")
         slot = int(slot_id)
-        if not self._slot_allowed(slot):
-            return _forbidden("slot_not_allowlisted")
-        device_id = self._devices.get(slot)
-        if not device_id:
-            return _forbidden("slot_not_mapped")
         session = self._store.get(str(rental_id))
         if session is not None and session.slot_id != slot:
             return _forbidden("rental_slot_mismatch")
+        if session is None and not self._gads_slot_allowed(slot):
+            return _forbidden("slot_not_allowlisted")
+        device_id = self._devices.get(slot)
+        if not device_id and session is not None:
+            device_id = session.device_id
+        if not device_id:
+            return _forbidden("slot_not_mapped")
         result = self._end_session(str(rental_id), slot, status=STATUS_RELEASED)
         if result.http_status not in (200, 404):
             return result
@@ -425,7 +474,7 @@ class RemoteAccessService:
 
     def get_device_status(self, slot_id: int) -> ApiResult:
         slot = int(slot_id)
-        if not self._slot_allowed(slot):
+        if not self._gads_slot_allowed(slot):
             return _forbidden("slot_not_allowlisted")
         device_id = self._devices.get(slot)
         if not device_id:
@@ -434,7 +483,11 @@ class RemoteAccessService:
         if isinstance(platform, ApiResult):
             return platform
         try:
-            status = platform.device_status(slot_id=slot, device_id=device_id)
+            status = platform.device_status(
+                slot_id=slot,
+                device_id=device_id,
+                workspace_id=self._workspace_for(slot),
+            )
         except RemoteAccessPlatformError as exc:
             logger.warning("remote_access_status_failed slot=%s reason=%s", slot, exc.__class__.__name__)
             return ApiResult(502, error_body("remote_access_platform_error"))
@@ -445,7 +498,7 @@ class RemoteAccessService:
     def reboot_device(self, slot_id: int, *, wait: bool = True) -> ApiResult:
         """Reboot through the existing Farm Agent ADB task; never through the platform."""
         slot = int(slot_id)
-        if not self._slot_allowed(slot):
+        if not self._gads_slot_allowed(slot):
             return _forbidden("slot_not_allowlisted")
         if not self._devices.get(slot):
             return _forbidden("slot_not_mapped")
@@ -497,7 +550,7 @@ class RemoteAccessService:
         The customer then installs the eSIM through the normal Android UI over
         the remote screen. No provision_esim, no EuiccManager, no policy change.
         """
-        auth = self._authorize(customer_id, rental_id)
+        auth = self._authorize(customer_id, rental_id, feature_slots=self._prepare_slots)
         if isinstance(auth, ApiResult):
             return auth
         session = self._active_session(auth)
@@ -615,7 +668,7 @@ class RemoteAccessService:
 
     def activation_status_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         """Read-only four-layer observation. Never marks ACTIVE without CONFIRMED evidence."""
-        auth = self._authorize(customer_id, rental_id)
+        auth = self._authorize(customer_id, rental_id, feature_slots=self._observe_slots)
         if isinstance(auth, ApiResult):
             return auth
         session = self._active_session(auth)

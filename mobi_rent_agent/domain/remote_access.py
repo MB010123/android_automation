@@ -77,13 +77,20 @@ class RemoteAccessPlatform(Protocol):
         device_id: str,
         rental_id: str,
         ttl_minutes: int,
+        workspace_id: str,
     ) -> PlatformAccessGrant: ...
 
     def revoke_access(self, *, device_id: str, platform_username: str) -> bool: ...
 
     def release_device(self, *, device_id: str) -> bool: ...
 
-    def device_status(self, *, slot_id: int, device_id: str) -> RemoteDeviceStatus: ...
+    def device_status(
+        self,
+        *,
+        slot_id: int,
+        device_id: str,
+        workspace_id: str | None = None,
+    ) -> RemoteDeviceStatus: ...
 
 
 FORBIDDEN_REASONS = frozenset(

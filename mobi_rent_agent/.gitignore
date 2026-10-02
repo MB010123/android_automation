@@ -9,6 +9,7 @@ slot_msisdn_map.json
 device_registry.json
 proxy_routes.json
 voidfix_devices.json
+gads_workspaces.json
 config/prototype/prototype.env
 config/prototype/prototype_devices.json
 logs/

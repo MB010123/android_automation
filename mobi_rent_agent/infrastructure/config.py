@@ -79,11 +79,15 @@ class AgentConfig:
     # flow. It is not eSIM authorization and never touches EuiccManager.
     remote_access_poc_enabled: bool = False
     remote_access_poc_slot_ids: tuple[int, ...] = (1,)
+    remote_access_slot_ids: tuple[int, ...] | None = None
+    remote_access_prepare_slot_ids: tuple[int, ...] = (1,)
+    remote_access_observe_slot_ids: tuple[int, ...] = (1,)
     remote_access_platform_url: str | None = None
     remote_access_public_url: str | None = None
     remote_access_admin_username: str | None = None
     remote_access_admin_password: str | None = None
     remote_access_workspace_id: str | None = None
+    remote_access_workspace_map_path: str | None = None
     remote_access_session_ttl_minutes: int = 60
     remote_access_reboot_timeout_seconds: float = 180.0
     remote_access_qr_url_prefixes: tuple[str, ...] = ()
@@ -209,11 +213,31 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
                 default=(1,),
                 name="REMOTE_ACCESS_POC_SLOT_IDS",
             ),
+            remote_access_slot_ids=(
+                None
+                if os.getenv("REMOTE_ACCESS_SLOT_IDS") is None
+                else parse_allowed_slot_ids(
+                    os.getenv("REMOTE_ACCESS_SLOT_IDS"),
+                    default=(),
+                    name="REMOTE_ACCESS_SLOT_IDS",
+                )
+            ),
+            remote_access_prepare_slot_ids=parse_allowed_slot_ids(
+                os.getenv("REMOTE_ACCESS_PREPARE_SLOT_IDS"),
+                default=(1,),
+                name="REMOTE_ACCESS_PREPARE_SLOT_IDS",
+            ),
+            remote_access_observe_slot_ids=parse_allowed_slot_ids(
+                os.getenv("REMOTE_ACCESS_OBSERVE_SLOT_IDS"),
+                default=(1,),
+                name="REMOTE_ACCESS_OBSERVE_SLOT_IDS",
+            ),
             remote_access_platform_url=os.getenv("REMOTE_ACCESS_PLATFORM_URL") or None,
             remote_access_public_url=os.getenv("REMOTE_ACCESS_PUBLIC_URL") or None,
             remote_access_admin_username=os.getenv("REMOTE_ACCESS_ADMIN_USERNAME") or None,
             remote_access_admin_password=os.getenv("REMOTE_ACCESS_ADMIN_PASSWORD") or None,
             remote_access_workspace_id=os.getenv("REMOTE_ACCESS_WORKSPACE_ID") or None,
+            remote_access_workspace_map_path=os.getenv("REMOTE_ACCESS_WORKSPACE_MAP_PATH") or None,
             # GADS caps API leases at 360 minutes.
             remote_access_session_ttl_minutes=_read_int_range(
                 "REMOTE_ACCESS_SESSION_TTL_MINUTES", 60, 5, 360

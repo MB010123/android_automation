@@ -270,24 +270,35 @@ class GadsRemoteAccessPlatform:
         self._public_url = public_url.rstrip("/") + "/"
         self._clock = clock
 
-    def _require_registered_in_workspace(self, device_id: str) -> dict[str, Any]:
+    def _require_registered_in_workspace(self, device_id: str, workspace_id: str) -> dict[str, Any]:
+        expected = str(workspace_id or "").strip()
+        if not expected:
+            raise RemoteAccessPlatformError("device_not_in_poc_workspace")
         for device in self._client.registered_devices():
             if str(device.get("udid") or "") == device_id:
-                if str(device.get("workspace_id") or "") != self._workspace_id:
+                if str(device.get("workspace_id") or "") != expected:
                     raise RemoteAccessPlatformError("device_not_in_poc_workspace")
                 return device
         raise RemoteAccessPlatformError("device_not_registered")
 
-    def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int) -> PlatformAccessGrant:
+    def grant_access(
+        self,
+        *,
+        device_id: str,
+        rental_id: str,
+        ttl_minutes: int,
+        workspace_id: str | None = None,
+    ) -> PlatformAccessGrant:
         if not str(self._public_url).lower().startswith("https://"):
             # Never return the private hub URL (Tailscale/HTTP) to a browser.
             raise RemoteAccessPlatformError("public_url_not_https")
-        self._require_registered_in_workspace(device_id)
+        workspace = str(workspace_id or self._workspace_id or "").strip()
+        self._require_registered_in_workspace(device_id, workspace)
         username = platform_username_for_rental(rental_id)
         password = secrets.token_urlsafe(24)
         # Rotate: drop any stale account from an earlier grant for this rental.
         self._client.delete_user(username)
-        self._client.add_user(username, password, [self._workspace_id])
+        self._client.add_user(username, password, [workspace])
         try:
             user_token = self._client.authenticate(username, password)
             expires_ms = self._client.lock_device(device_id, token=user_token, ttl_minutes=ttl_minutes)
@@ -310,11 +321,18 @@ class GadsRemoteAccessPlatform:
     def release_device(self, *, device_id: str) -> bool:
         return bool(self._client.release_device(device_id))
 
-    def device_status(self, *, slot_id: int, device_id: str) -> RemoteDeviceStatus:
+    def device_status(
+        self,
+        *,
+        slot_id: int,
+        device_id: str,
+        workspace_id: str | None = None,
+    ) -> RemoteDeviceStatus:
+        workspace = str(workspace_id or self._workspace_id or "").strip()
         registered = False
         for device in self._client.registered_devices():
             if str(device.get("udid") or "") == device_id:
-                registered = str(device.get("workspace_id") or "") == self._workspace_id
+                registered = str(device.get("workspace_id") or "") == workspace
                 break
         if not registered:
             return RemoteDeviceStatus(
@@ -328,7 +346,7 @@ class GadsRemoteAccessPlatform:
         available = False
         in_use_by: str | None = None
         raw: dict[str, Any] = {}
-        for live in self._client.live_devices(self._workspace_id):
+        for live in self._client.live_devices(workspace):
             info = live.get("info") if isinstance(live.get("info"), dict) else {}
             if str(info.get("udid") or live.get("udid") or "") != device_id:
                 continue

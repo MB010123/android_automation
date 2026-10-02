@@ -82,13 +82,17 @@ class FakePlatform:
         self.online: dict[str, bool] = {SLOT1_SERIAL: True}
         self.fail_grant: str | None = None
         self.fail_revoke = False
+        self.device_workspace: dict[str, str] = {}
 
-    def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int) -> PlatformAccessGrant:
-        self.calls.append(("grant", {"device_id": device_id, "rental_id": rental_id, "ttl": ttl_minutes}))
+    def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int, workspace_id: str = "") -> PlatformAccessGrant:
+        self.calls.append(("grant", {"device_id": device_id, "rental_id": rental_id, "ttl": ttl_minutes, "workspace_id": workspace_id}))
         if self.fail_grant:
             raise RemoteAccessPlatformError(self.fail_grant)
         if device_id not in self.registered:
             raise RemoteAccessPlatformError("device_not_registered")
+        if workspace_id and self.device_workspace:
+            if self.device_workspace.get(device_id) != workspace_id:
+                raise RemoteAccessPlatformError("device_not_in_poc_workspace")
         holder = self.leases.get(device_id)
         username = platform_username_for_rental(rental_id)
         if holder and holder != username:
@@ -117,8 +121,8 @@ class FakePlatform:
         self.leases.pop(device_id, None)
         return True
 
-    def device_status(self, *, slot_id: int, device_id: str) -> RemoteDeviceStatus:
-        self.calls.append(("status", {"device_id": device_id}))
+    def device_status(self, *, slot_id: int, device_id: str, workspace_id: str | None = None) -> RemoteDeviceStatus:
+        self.calls.append(("status", {"device_id": device_id, "workspace_id": workspace_id}))
         registered = device_id in self.registered
         online = registered and self.online.get(device_id, False)
         return RemoteDeviceStatus(
@@ -200,6 +204,8 @@ def _service(
     clock: FakeClock | None = None,
     farm_status=None,
     ttl_minutes: int = 60,
+    workspace_map: dict[int, str] | None = None,
+    gads_slot_ids: tuple[int, ...] | None = None,
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
     store = RemoteAccessSessionStore(tmp_path / f"ra-{uuid.uuid4().hex}.sqlite")
@@ -227,6 +233,10 @@ def _service(
         clock=clock,
         sleep=clock.sleep,
         background_runner=lambda fn: fn(),  # synchronous in tests
+        workspace_map=workspace_map if workspace_map is not None else {1: "ws-poc"},
+        gads_slot_ids=gads_slot_ids if gads_slot_ids is not None else allowed,
+        prepare_slot_ids=(1,),
+        observe_slot_ids=(1,),
     )
     return service, store, clock
 
@@ -403,7 +413,7 @@ def test_d_browser_supplied_device_or_slot_is_ignored(tmp_path: Path):
     assert service.create_remote_access(CUSTOMER_A, None, rental_a).http_status == 201
     status = service.device_status_for_customer(CUSTOMER_A, rental_a)
     assert status.http_status == 200 and status.body["slot_id"] == 1
-    assert platform.calls[-1] == ("status", {"device_id": SLOT1_SERIAL})
+    assert platform.calls[-1] == ("status", {"device_id": SLOT1_SERIAL, "workspace_id": "ws-poc"})
 
 
 def test_d_http_body_device_id_is_ignored(tmp_path: Path):
@@ -649,7 +659,7 @@ def test_i_gads_grant_refuses_http_public_url():
 
 def test_create_fails_closed_when_public_url_not_https(tmp_path: Path):
     class HttpPublicPlatform(FakePlatform):
-        def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int) -> PlatformAccessGrant:
+        def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int, workspace_id: str = "") -> PlatformAccessGrant:
             raise RemoteAccessPlatformError("public_url_not_https")
 
     tenant = MemoryTenant()
@@ -711,6 +721,9 @@ def test_j_default_config_is_disabled_and_slot1_only(monkeypatch, tmp_path: Path
     config = load_config(env_file=None)
     assert config.remote_access_poc_enabled is False
     assert config.remote_access_poc_slot_ids == (1,)
+    assert config.remote_access_slot_ids is None
+    assert config.remote_access_prepare_slot_ids == (1,)
+    assert config.remote_access_observe_slot_ids == (1,)
     assert config.remote_access_platform_url is None
     monkeypatch.setenv("REMOTE_ACCESS_POC_SLOT_IDS", "1,3")
     monkeypatch.setenv("REMOTE_ACCESS_SESSION_TTL_MINUTES", "500")
@@ -1415,3 +1428,194 @@ def test_activation_farm_task_refuses_other_slots():
     )
     assert other.http_status == 403 and other.error == "slot_not_allowlisted"
     assert runner.calls == []
+
+
+SLOT7_SERIAL = "SERIAL-SLOT7-TEST"
+SLOT8_SERIAL = "SERIAL-SLOT8-TEST"
+SLOT9_SERIAL = "SERIAL-SLOT9-TEST"
+_GADS_WS = {1: "ws-1", 7: "ws-7", 8: "ws-8", 9: "ws-9"}
+_GADS_MAP = {1: SLOT1_SERIAL, 7: SLOT7_SERIAL, 8: SLOT8_SERIAL, 9: SLOT9_SERIAL}
+
+
+def _gads_multi(tmp_path: Path, tenant: MemoryTenant, **kwargs):
+    platform = kwargs.pop("platform", None) or FakePlatform(
+        registered={SLOT1_SERIAL, SLOT7_SERIAL, SLOT8_SERIAL, SLOT9_SERIAL}
+    )
+    platform.online.update({SLOT7_SERIAL: True, SLOT8_SERIAL: True, SLOT9_SERIAL: True})
+    if not platform.device_workspace:
+        platform.device_workspace = {
+            SLOT1_SERIAL: "ws-1",
+            SLOT7_SERIAL: "ws-7",
+            SLOT8_SERIAL: "ws-8",
+            SLOT9_SERIAL: "ws-9",
+        }
+    return _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        allowed=tuple(range(1, 21)),
+        gads_slot_ids=tuple(range(1, 21)),
+        slot_map=_GADS_MAP,
+        workspace_map=_GADS_WS,
+        **kwargs,
+    )
+
+
+def test_phone8_owner_gets_own_gads_workspace(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _gads_multi(tmp_path, tenant)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    result = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert result.http_status == 201, result.body
+    assert result.body["slot_id"] == 8
+    blob = json.dumps(result.body)
+    assert SLOT8_SERIAL not in blob
+    grants = [c for c in service._platform.calls if c[0] == "grant"]  # type: ignore[union-attr]
+    assert grants[-1][1]["device_id"] == SLOT8_SERIAL
+    assert grants[-1][1]["workspace_id"] == "ws-8"
+
+
+def test_phone8_cannot_access_phone7_or_phone9(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _gads_multi(tmp_path, tenant)
+    rental8 = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    rental7 = _rental(tenant, bay=7, user_id=CUSTOMER_B)
+    rental9 = _rental(tenant, bay=9, user_id=CUSTOMER_B)
+    assert service.create_remote_access(CUSTOMER_A, None, rental7).http_status == 403
+    assert service.create_remote_access(CUSTOMER_A, None, rental9).http_status == 403
+    granted = service.create_remote_access(CUSTOMER_A, None, rental8)
+    assert granted.http_status == 201
+    assert service.get_remote_access(CUSTOMER_A, None, rental7).http_status == 403
+    assert service.get_remote_access(CUSTOMER_A, None, rental9).http_status == 403
+    grants = [c for c in service._platform.calls if c[0] == "grant"]  # type: ignore[union-attr]
+    assert all(c[1]["device_id"] != SLOT7_SERIAL for c in grants)
+    assert all(c[1]["device_id"] != SLOT9_SERIAL for c in grants)
+
+
+def test_two_rentals_cannot_share_phone8(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _gads_multi(tmp_path, tenant)
+    first = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, first).http_status == 201
+    second = str(uuid.uuid4())
+    tenant.slots[8]["id"] = second
+    tenant.slots[8]["rental_id"] = second
+    tenant.slots[8]["user_id"] = CUSTOMER_B
+    busy = service.create_remote_access(CUSTOMER_B, None, second)
+    assert busy.http_status == 409
+    assert busy.body["error"] == "remote_access_busy"
+
+
+def test_phone8_and_phone9_concurrent_gads(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _gads_multi(tmp_path, tenant)
+    r8 = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    r9 = _rental(tenant, bay=9, user_id=CUSTOMER_B)
+    a = service.create_remote_access(CUSTOMER_A, None, r8)
+    b = service.create_remote_access(CUSTOMER_B, None, r9)
+    assert a.http_status == 201 and b.http_status == 201
+    grants = [c[1] for c in service._platform.calls if c[0] == "grant"]  # type: ignore[union-attr]
+    assert {g["workspace_id"] for g in grants} == {"ws-8", "ws-9"}
+    assert {g["device_id"] for g in grants} == {SLOT8_SERIAL, SLOT9_SERIAL}
+
+
+def test_revoked_phone8_session_is_inactive(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, store, clock = _gads_multi(tmp_path, tenant)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    assert service.revoke_remote_access(CUSTOMER_A, None, rental).http_status == 200
+    session = store.get(rental)
+    assert session is None or not session.is_active(clock.now)
+    listed = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert listed.http_status == 200
+    assert listed.body.get("active") is False or listed.body.get("status") in {"none", "revoked", "expired"}
+
+
+def test_expired_phone8_rental_cannot_open_gads(tmp_path: Path):
+    tenant = MemoryTenant()
+    clock = FakeClock()
+    service, _, _ = _gads_multi(tmp_path, tenant, clock=clock)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A, ends_at=clock.now - 60)
+    result = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert result.http_status == 403
+    assert [c for c in service._platform.calls if c[0] == "grant"] == []  # type: ignore[union-attr]
+
+
+def test_unregistered_phone8_gads_device_fails_closed(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform(registered={SLOT1_SERIAL})
+    service, _, _ = _gads_multi(tmp_path, tenant, platform=platform)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    result = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert result.http_status == 502
+    assert result.body["error"] == "remote_access_platform_error"
+    assert SLOT1_SERIAL not in json.dumps(result.body)
+
+
+def test_phone8_wrong_gads_workspace_fails_closed(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform(registered={SLOT8_SERIAL})
+    platform.device_workspace = {SLOT8_SERIAL: "ws-1"}
+    service, _, _ = _gads_multi(tmp_path, tenant, platform=platform)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    result = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert result.http_status == 502
+
+
+def test_shared_gads_workspace_is_rejected(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform(registered={SLOT7_SERIAL, SLOT8_SERIAL})
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        allowed=tuple(range(1, 21)),
+        gads_slot_ids=tuple(range(1, 21)),
+        slot_map={7: SLOT7_SERIAL, 8: SLOT8_SERIAL},
+        workspace_map={7: "shared-ws", 8: "shared-ws"},
+    )
+    r8 = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    r7 = _rental(tenant, bay=7, user_id=CUSTOMER_B)
+    assert service.create_remote_access(CUSTOMER_A, None, r8).http_status == 403
+    assert service.create_remote_access(CUSTOMER_B, None, r7).http_status == 403
+    assert platform.calls == []
+
+
+def test_phone8_gads_does_not_enable_prepare_esim(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _gads_multi(tmp_path, tenant, farm=farm)
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 403
+    assert service.activation_status_for_customer(CUSTOMER_A, rental).http_status == 403
+    assert not any(t["type"] == "remote_access_activation_status" for t in farm.tasks)
+
+
+def test_qr_upload_independent_of_gads_workspace_map(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=FakePlatform(),
+        farm=farm,
+        allowed=(1,),
+        gads_slot_ids=(1,),
+        slot_map=_GADS_MAP,
+        workspace_map={1: "ws-1"},
+        farm_status=lambda: {
+            "ok": True,
+            "offline_slots": [],
+            "mapped_slots": [1, 8],
+            "slot_count": 2,
+            "adb_online": 2,
+        },
+    )
+    rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
+    uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert uploaded.http_status == 200, uploaded.body
+    assert farm.tasks[0]["slot"] == 8
+    assert "serial" not in farm.tasks[0]["payload"]

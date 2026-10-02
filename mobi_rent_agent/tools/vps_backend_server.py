@@ -445,7 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if row.get(key) is not None:
                     slot = int(row.get(key))
-                    return slot if slot in service.allowed_slot_ids else None
+                    return slot if 1 <= slot <= 20 else None
             except (TypeError, ValueError):
                 continue
         return None
@@ -1121,27 +1121,33 @@ def _build_remote_access_service(
     esim_url_prefixes: tuple[str, ...],
     db_path: Path,
 ) -> tuple[RemoteAccessService | None, Any]:
-    """Slot-1 remote-access POC. Returns (None, None) unless REMOTE_ACCESS_POC_ENABLED=true.
-
-    The slot -> device serial map is the existing gitignored ``slot_map.json``
-    (``SLOT_MAP_PATH``); only allowlisted slots are ever loaded into the
-    remote-access layer. Missing map or platform config fails closed (403/503).
-    """
+    """GADS remote access. Serials come from SLOT_MAP_PATH; isolation is one workspace per bay."""
     if not getattr(config, "remote_access_poc_enabled", False):
         return None, None
     from infrastructure.adb_slot_status import SlotMapError, load_slot_map
     from infrastructure.gads_remote_access import gads_platform_from_config
+    from infrastructure.gads_workspaces import GadsWorkspaceMapError, load_gads_workspace_map, merge_workspace_map
     from infrastructure.remote_access_store import RemoteAccessSessionStore
 
     allowed = tuple(getattr(config, "remote_access_poc_slot_ids", ()) or ())
-    slot_map: dict[int, str] = {}
     map_path = Path(config.slot_map_path) if config.slot_map_path else ROOT / "slot_map.json"
     try:
         full_map = load_slot_map(map_path)
     except SlotMapError as exc:
         logger.error("remote_access: slot map unavailable (%s); POC routes will return 403", exc)
         full_map = {}
-    slot_map = {slot: serial for slot, serial in full_map.items() if slot in allowed}
+    file_map: dict[int, str] = {}
+    workspace_map_path = getattr(config, "remote_access_workspace_map_path", None)
+    if workspace_map_path:
+        try:
+            file_map = load_gads_workspace_map(workspace_map_path)
+        except GadsWorkspaceMapError as exc:
+            logger.error("remote_access: workspace map unavailable (%s)", exc)
+            file_map = {}
+    workspaces = merge_workspace_map(
+        file_map,
+        fallback_slot1=getattr(config, "remote_access_workspace_id", None),
+    )
     platform = gads_platform_from_config(config)
     if platform is None:
         logger.error(
@@ -1155,21 +1161,27 @@ def _build_remote_access_service(
     service = RemoteAccessService(
         enabled=True,
         allowed_slot_ids=allowed,
-        slot_device_map=slot_map,
+        slot_device_map=full_map,
         platform=platform,
         store=store,
         tenant_store=tenant_store,
         farm_task_client=farm_task_client,
         farm_status_fetcher=farm_status_fetcher,
+        workspace_map=workspaces,
+        gads_slot_ids=getattr(config, "remote_access_slot_ids", None),
+        prepare_slot_ids=tuple(getattr(config, "remote_access_prepare_slot_ids", (1,)) or (1,)),
+        observe_slot_ids=tuple(getattr(config, "remote_access_observe_slot_ids", (1,)) or (1,)),
         event_recorder=event_store.append,
         esim_url_prefixes=esim_url_prefixes,
         session_ttl_minutes=int(getattr(config, "remote_access_session_ttl_minutes", 60)),
         reboot_timeout_seconds=float(getattr(config, "remote_access_reboot_timeout_seconds", 180.0)),
     )
     logger.warning(
-        "remote_access POC ENABLED for slots %s (mapped: %s); all other slots are refused",
-        sorted(allowed),
-        sorted(slot_map),
+        "remote_access ENABLED workspaces=%s prepare=%s observe=%s mapped=%s",
+        sorted(workspaces),
+        sorted(getattr(config, "remote_access_prepare_slot_ids", (1,)) or (1,)),
+        sorted(getattr(config, "remote_access_observe_slot_ids", (1,)) or (1,)),
+        sorted(full_map),
     )
     return service, store
 
