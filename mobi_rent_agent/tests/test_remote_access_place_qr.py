@@ -18,14 +18,19 @@ import base64
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from application.farm_agent_tasks import execute_farm_task
+from application.farm_task_executor import FarmTaskExecutorDeps
 from application.farm_task_types import FarmTaskRequest
 from application.remote_access_farm_task import (
     _parse_remote_byte_size,
+    _place_qr_config_gate,
+    run_remote_access_activation_status,
     run_remote_access_place_qr,
 )
 from application.remote_access_service import _qr_placement_succeeded
 from infrastructure.adb_companion import AdbCommandError, AdbCommandResult, AdbCommandRunner
-from tests.test_remote_access_poc import PNG_BYTES, _QrRunner, _agent_config
+from infrastructure.config import load_config
+from tests.test_remote_access_poc import PNG_BYTES, SLOT1_SERIAL, SLOT2_SERIAL, _QrRunner, _agent_config
 
 BAY1_SERIAL = "18171FDF6005WG"
 PLACE_QR = "remote_access_place_qr"
@@ -292,3 +297,167 @@ def test_invalid_inline_base64_is_rejected():
     assert result.ok is False
     assert result.error == "qr_not_an_image"
     assert runner.calls == []
+
+
+def _slot_map_1_to_20() -> dict[int, str]:
+    mapped = {1: SLOT1_SERIAL, 2: SLOT2_SERIAL}
+    mapped.update({bay: f"SERIAL-SLOT{bay}-TEST" for bay in range(3, 21)})
+    return mapped
+
+
+def _inline_req(slot: int, rental_id: str = "rental-mapped") -> FarmTaskRequest:
+    return FarmTaskRequest(
+        job_id=f"job-slot-{slot}",
+        task_type=PLACE_QR,
+        farm_slot_id=slot,
+        payload={
+            "image_base64": base64.b64encode(PNG_BYTES).decode("ascii"),
+            "rental_id": rental_id,
+        },
+    )
+
+
+def test_place_qr_gate_ignores_poc_slot_allowlist():
+    import ast
+    import inspect
+
+    from application import remote_access_farm_task as farm_qr
+
+    def _called_names(fn) -> set[str]:
+        tree = ast.parse(inspect.getsource(fn))
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                names.add(node.func.id)
+            if isinstance(node, ast.Attribute):
+                names.add(node.attr)
+        return names
+
+    place_names = _called_names(farm_qr.run_remote_access_place_qr)
+    assert "_place_qr_config_gate" in place_names
+    assert "_poc_slot_gate" not in place_names
+    assert "remote_access_poc_slot_ids" not in place_names
+    gate_names = _called_names(farm_qr._place_qr_config_gate)
+    assert "remote_access_poc_slot_ids" not in gate_names
+    activation_names = _called_names(farm_qr.run_remote_access_activation_status)
+    assert "_poc_slot_gate" in activation_names
+    config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
+    assert _place_qr_config_gate(config) is None
+
+
+def test_mapped_slot1_qr_placement_still_succeeds():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    result = _place(
+        runner,
+        slot_map=_slot_map_1_to_20(),
+        request=_inline_req(1),
+        agent_config=_agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,)),
+    )
+    assert result.ok is True
+    assert result.error != "slot_not_allowlisted"
+    assert result.details["serial"] == SLOT1_SERIAL
+    assert {serial for serial, _ in runner.calls} == {SLOT1_SERIAL}
+
+
+def test_mapped_slot2_qr_placement_succeeds():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    config = _agent_config(
+        remote_access_poc_enabled=True,
+        remote_access_poc_slot_ids=(1,),
+        provisioning_allowed_slot_ids=(1,),
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=_slot_map_1_to_20(),
+        request=_inline_req(2),
+        agent_config=config,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True, result
+    assert result.http_status == 200
+    assert result.error != "slot_not_allowlisted"
+    assert result.details["serial"] == SLOT2_SERIAL
+    assert result.details["placed"] is True
+    assert {serial for serial, _ in runner.calls} == {SLOT2_SERIAL}
+    assert not any("serial" == key for key in _inline_req(2).payload)
+
+
+def test_mapped_slots_3_to_20_qr_placement_succeeds():
+    slot_map = _slot_map_1_to_20()
+    config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
+    for bay in range(3, 21):
+        runner = _QrRunner(remote_size=len(PNG_BYTES))
+        result = _place(runner, slot_map=slot_map, request=_inline_req(bay), agent_config=config)
+        assert result.ok is True, (bay, result.error)
+        assert result.error != "slot_not_allowlisted"
+        assert result.details["serial"] == slot_map[bay]
+        assert {serial for serial, _ in runner.calls} == {slot_map[bay]}
+
+
+def test_unmapped_slot_qr_placement_is_rejected():
+    runner = _QrRunner()
+    result = _place(
+        runner,
+        slot_map={1: SLOT1_SERIAL},
+        request=_inline_req(2),
+        agent_config=_agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,)),
+    )
+    assert result.ok is False
+    assert result.error == "slot_not_found"
+    assert result.error != "slot_not_allowlisted"
+    assert runner.calls == []
+
+
+def test_activation_observation_remains_slot1_restricted():
+    runner = _QrRunner()
+    config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
+    blocked = run_remote_access_activation_status(
+        adb_path="adb",
+        slot_map=_slot_map_1_to_20(),
+        request=FarmTaskRequest(
+            job_id="act-2",
+            task_type="remote_access_activation_status",
+            farm_slot_id=2,
+            payload={},
+        ),
+        agent_config=config,
+        command_runner=runner,
+    )
+    assert blocked.http_status == 403
+    assert blocked.error == "slot_not_allowlisted"
+    assert runner.calls == []
+    allowed = run_remote_access_activation_status(
+        adb_path="adb",
+        slot_map=_slot_map_1_to_20(),
+        request=FarmTaskRequest(
+            job_id="act-1",
+            task_type="remote_access_activation_status",
+            farm_slot_id=1,
+            payload={},
+        ),
+        agent_config=config,
+        command_runner=runner,
+    )
+    assert allowed.error != "slot_not_allowlisted"
+    assert runner.calls  # Slot 1 observation may proceed past the allowlist
+
+
+def test_provisioning_allowed_slot_ids_unchanged(monkeypatch):
+    for key in list(__import__("os").environ):
+        if key.startswith("PROVISIONING_") or key.startswith("REMOTE_ACCESS_"):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    monkeypatch.setenv("HARDWARE_AGENT_TOKEN", "tok")
+    config = load_config(env_file=None)
+    assert config.provisioning_allowed_slot_ids == (1,)
+    assert config.remote_access_poc_slot_ids == (1,)
+    qr_config = _agent_config(
+        remote_access_poc_enabled=True,
+        remote_access_poc_slot_ids=(1,),
+        provisioning_allowed_slot_ids=(1,),
+    )
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    result = _place(runner, slot_map=_slot_map_1_to_20(), request=_inline_req(2), agent_config=qr_config)
+    assert result.ok is True
+    assert qr_config.provisioning_allowed_slot_ids == (1,)

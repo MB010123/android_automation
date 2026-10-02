@@ -47,10 +47,15 @@ def _poc_slot_gate(agent_config: AgentConfig | None, slot_id: int) -> FarmTaskRe
 
 
 def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | None:
-    """QR Camera push is not GADS-allowlisted. POC flag still arms the Farm task."""
+    """QR Camera push enable-flag only.
+
+    Does not read ``remote_access_poc_slot_ids`` / ``REMOTE_ACCESS_POC_SLOT_IDS``.
+    Any bay present in ``slot_map.json`` may receive a Camera image. GADS and
+    activation observation keep ``_poc_slot_gate``.
+    """
     if agent_config is None:
         return FarmTaskResult(ok=False, http_status=503, error="agent_not_configured")
-    if not getattr(agent_config, "remote_access_poc_enabled", False):
+    if not bool(getattr(agent_config, "remote_access_poc_enabled", False)):
         return FarmTaskResult(ok=False, http_status=403, error="remote_access_poc_disabled")
     return None
 
@@ -216,6 +221,7 @@ def run_remote_access_place_qr(
     downloader: Downloader | None = None,
 ) -> FarmTaskResult:
     slot_id = int(request.farm_slot_id)
+    # Enable-flag only. Slot mapping is slot_map.json, not the GADS POC allowlist.
     gated = _place_qr_config_gate(agent_config)
     if gated is not None:
         return _place_result(

@@ -757,8 +757,10 @@ def test_j_farm_qr_task_gated_by_flag_and_allowlist():
     off = run_remote_access_place_qr(adb_path="adb", slot_map=slot_map, request=req(1), agent_config=config_off, command_runner=runner, downloader=downloader)
     assert off.http_status == 403 and off.error == "remote_access_poc_disabled"
     mapped_two = run_remote_access_place_qr(adb_path="adb", slot_map=slot_map, request=req(2), agent_config=config_on, command_runner=runner, downloader=downloader)
+    assert mapped_two.ok is True
     assert mapped_two.error != "slot_not_allowlisted"
-    assert runner.calls  # Slot 2 Camera push is not GADS-allowlisted
+    assert mapped_two.details["serial"] == SLOT2_SERIAL
+    assert {serial for serial, _ in runner.calls} == {SLOT2_SERIAL}
     runner.calls.clear()
     # Executor dispatch is also wired (without config -> not configured)
     via_executor = execute_farm_task(adb_path="adb", slot_map=slot_map, request=req(1), agent_config=None, deps=FarmTaskExecutorDeps(command_runner=runner))
