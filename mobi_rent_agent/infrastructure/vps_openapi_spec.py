@@ -904,8 +904,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "summary": "Upload eSIM QR image onto the rental Pixel Camera",
                 "description": (
                     "Customer JWT only. Multipart field `qr_image` (PNG/JPG/WEBP). "
-                    "The VPS authenticates the rental owner, sends the bytes to Farm Agent, "
-                    "and Farm `adb push`es `/sdcard/DCIM/Camera/mobirent_esim_qr_*.{png|jpg|webp}`. "
+                    "The VPS authenticates the rental owner and requires a Farm-mapped bay "
+                    "(not `REMOTE_ACCESS_POC_SLOT_IDS`). Farm `adb push`es "
+                    "`/sdcard/DCIM/Camera/mobirent_esim_qr_*.{png|jpg|webp}`. "
                     "Does not require a remote-access session or `prepare-esim`. "
                     "Does not call `assign`, GADS, EuiccManager, or silent provisioning. "
                     "Request body QR URLs are not used. ADB serial is not returned to the browser."

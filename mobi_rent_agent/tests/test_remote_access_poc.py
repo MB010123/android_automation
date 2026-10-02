@@ -203,6 +203,14 @@ def _service(
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
     store = RemoteAccessSessionStore(tmp_path / f"ra-{uuid.uuid4().hex}.sqlite")
+    if farm_status is None:
+        farm_status = lambda: {  # noqa: E731
+            "ok": True,
+            "offline_slots": [],
+            "mapped_slots": list(range(1, 21)),
+            "slot_count": 20,
+            "adb_online": 20,
+        }
     service = RemoteAccessService(
         enabled=enabled,
         allowed_slot_ids=allowed,
@@ -748,9 +756,10 @@ def test_j_farm_qr_task_gated_by_flag_and_allowlist():
     )
     off = run_remote_access_place_qr(adb_path="adb", slot_map=slot_map, request=req(1), agent_config=config_off, command_runner=runner, downloader=downloader)
     assert off.http_status == 403 and off.error == "remote_access_poc_disabled"
-    other = run_remote_access_place_qr(adb_path="adb", slot_map=slot_map, request=req(2), agent_config=config_on, command_runner=runner, downloader=downloader)
-    assert other.http_status == 403 and other.error == "slot_not_allowlisted"
-    assert runner.calls == []
+    mapped_two = run_remote_access_place_qr(adb_path="adb", slot_map=slot_map, request=req(2), agent_config=config_on, command_runner=runner, downloader=downloader)
+    assert mapped_two.error != "slot_not_allowlisted"
+    assert runner.calls  # Slot 2 Camera push is not GADS-allowlisted
+    runner.calls.clear()
     # Executor dispatch is also wired (without config -> not configured)
     via_executor = execute_farm_task(adb_path="adb", slot_map=slot_map, request=req(1), agent_config=None, deps=FarmTaskExecutorDeps(command_runner=runner))
     assert via_executor.http_status == 503

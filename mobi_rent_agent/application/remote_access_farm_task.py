@@ -1,8 +1,9 @@
 """Farm Agent task: place a validated eSIM QR image in /sdcard/DCIM/Camera/.
 
-Slot-1 remote-access POC only. The image is pushed with plain ``adb push``
-so the customer can open it in the Android eSIM UI ("scan QR" -> pick from
-gallery, or read the code from the picture) over the remote screen.
+Any Farm-mapped bay. Customer authorization (ownership + mapped bay) is
+enforced on the VPS. This task resolves ``farm_slot_id`` through
+``slot_map.json`` and ``adb push``es the picture so the customer can open
+it in the Android eSIM UI. GADS POC allowlists are not applied here.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
@@ -42,6 +43,15 @@ def _poc_slot_gate(agent_config: AgentConfig | None, slot_id: int) -> FarmTaskRe
             error="slot_not_allowlisted",
             message=f"slot {slot_id} is outside REMOTE_ACCESS_POC_SLOT_IDS {sorted(allowed)}",
         )
+    return None
+
+
+def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | None:
+    """QR Camera push is not GADS-allowlisted. POC flag still arms the Farm task."""
+    if agent_config is None:
+        return FarmTaskResult(ok=False, http_status=503, error="agent_not_configured")
+    if not getattr(agent_config, "remote_access_poc_enabled", False):
+        return FarmTaskResult(ok=False, http_status=403, error="remote_access_poc_disabled")
     return None
 
 DCIM_CAMERA_DIR = "/sdcard/DCIM/Camera"
@@ -206,7 +216,7 @@ def run_remote_access_place_qr(
     downloader: Downloader | None = None,
 ) -> FarmTaskResult:
     slot_id = int(request.farm_slot_id)
-    gated = _poc_slot_gate(agent_config, slot_id)
+    gated = _place_qr_config_gate(agent_config)
     if gated is not None:
         return _place_result(
             ok=False,
@@ -215,6 +225,7 @@ def run_remote_access_place_qr(
             error=gated.error,
             message=gated.message,
         )
+    assert agent_config is not None
     serial = str(slot_map.get(slot_id) or "").strip()
     if not serial:
         return _place_result(

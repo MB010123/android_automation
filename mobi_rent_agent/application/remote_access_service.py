@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from application.vps_api_contract import error_body
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
+from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
 from domain.remote_access import (
     RemoteAccessPlatform,
@@ -199,11 +200,27 @@ class RemoteAccessService:
             return ApiResult(503, error_body("auth_unavailable"))
         return row if isinstance(row, dict) and row else None
 
+    def _farm_bay_is_mapped(self, bay: int) -> bool | ApiResult:
+        """True when Farm health lists this bay in mapped_slots. Fail closed."""
+        fetcher = self._farm_status
+        if not callable(fetcher):
+            return False
+        try:
+            farm = fetcher()
+        except Exception:  # noqa: BLE001
+            logger.warning("esim_qr_upload_farm_status_failed")
+            return ApiResult(503, error_body("farm_unreachable"))
+        if not isinstance(farm, dict) or farm_agent_unavailable(farm):
+            return ApiResult(503, error_body("farm_unreachable"))
+        return int(bay) in mapped_farm_slots(farm)
+
     def _authorize(
         self,
         customer_id: str | None,
         rental_id: str,
         slot_id: int | None = None,
+        *,
+        require_poc_slot: bool = True,
     ) -> AuthorizedRental | ApiResult:
         if not self._enabled:
             return _forbidden("poc_disabled")
@@ -240,14 +257,23 @@ class RemoteAccessService:
                 return ApiResult(503, error_body("auth_unavailable"))
             if str(bay_owner or "").strip() != customer:
                 return _forbidden("rental_not_owned")
-        if not self._slot_allowed(row_slot):
-            return _forbidden("slot_not_allowlisted")
-        device_id = self._devices.get(row_slot)
-        if not device_id:
-            return _forbidden("slot_not_mapped")
+        if require_poc_slot:
+            if not self._slot_allowed(row_slot):
+                return _forbidden("slot_not_allowlisted")
+            device_id = self._devices.get(row_slot)
+            if not device_id:
+                return _forbidden("slot_not_mapped")
+        else:
+            mapped = self._farm_bay_is_mapped(row_slot)
+            if isinstance(mapped, ApiResult):
+                return mapped
+            if not mapped:
+                return _forbidden("slot_not_mapped")
+            device_id = ""
         rental_end = rental_end_from_row(row)
         if rental_end is not None and rental_end <= self._clock():
-            self._revoke_if_active_session(rental, row_slot)
+            if require_poc_slot:
+                self._revoke_if_active_session(rental, row_slot)
             return _forbidden("rental_expired")
         return AuthorizedRental(
             customer_id=customer,
@@ -532,7 +558,7 @@ class RemoteAccessService:
         Does not require a GADS session. Does not call assign or prepare-esim.
         Does not provision an eSIM. Serial stays on the Farm Agent.
         """
-        auth = self._authorize(customer_id, rental_id)
+        auth = self._authorize(customer_id, rental_id, require_poc_slot=False)
         if isinstance(auth, ApiResult):
             return self._upload_error_from(auth)
         if self._farm is None:

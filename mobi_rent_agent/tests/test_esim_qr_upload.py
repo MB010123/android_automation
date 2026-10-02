@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sys
+import uuid
 import urllib.error
 import urllib.request
 from io import BytesIO
@@ -25,6 +26,7 @@ from tests.test_remote_access_poc import (
     FARM_TOKEN,
     PNG_BYTES,
     SLOT1_SERIAL,
+    SLOT2_SERIAL,
     FakeFarm,
     FakePlatform,
     _rental,
@@ -206,6 +208,130 @@ def test_upload_does_not_need_gads_session(tmp_path: Path):
     assert result.http_status == 200
     assert store.get(rental) is None
     assert farm.tasks[0]["type"] == REMOTE_ACCESS_PLACE_QR_TASK
+
+
+def _mapped(*bays: int):
+    listed = list(bays)
+    return lambda: {
+        "ok": True,
+        "offline_slots": [],
+        "mapped_slots": listed,
+        "slot_count": len(listed),
+        "adb_online": len(listed),
+    }
+
+
+def test_owned_slot1_qr_upload_still_succeeds(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1))
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert result.http_status == 200
+    assert farm.tasks[0]["slot"] == 1
+    assert "serial" not in farm.tasks[0]["payload"]
+    assert "image_base64" in farm.tasks[0]["payload"]
+    assert farm.tasks[0]["payload"]["rental_id"] == rental
+    _assert_safe_body(result.body)
+
+
+def test_owned_slot2_qr_upload_succeeds(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=FakePlatform(),
+        farm=farm,
+        allowed=(1,),
+        farm_status=_mapped(1, 2),
+    )
+    rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
+    gads = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert gads.http_status == 403
+    result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert result.http_status == 200, result.body
+    assert result.body["placed"] is True
+    assert "serial" not in result.body
+    assert SLOT2_SERIAL not in json.dumps(result.body)
+    assert farm.tasks[-1]["type"] == REMOTE_ACCESS_PLACE_QR_TASK
+    assert farm.tasks[-1]["slot"] == 2
+    assert "serial" not in farm.tasks[-1]["payload"]
+    assert "udid" not in farm.tasks[-1]["payload"]
+    assert "image_base64" in farm.tasks[-1]["payload"]
+    assert farm.tasks[-1]["payload"]["rental_id"] == rental
+    _assert_safe_body(result.body)
+
+
+def test_owned_slots_3_to_20_follow_mapped_bay_authorization(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=FakePlatform(),
+        farm=farm,
+        allowed=(1,),
+        farm_status=_mapped(*range(1, 21)),
+    )
+    for bay in range(3, 21):
+        farm.tasks.clear()
+        rental = _rental(tenant, bay=bay, user_id=CUSTOMER_A)
+        assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
+        result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+        assert result.http_status == 200, (bay, result.body)
+        assert farm.tasks[0]["slot"] == bay
+        assert "serial" not in farm.tasks[0]["payload"]
+
+
+def test_non_owner_slot2_qr_upload_is_forbidden(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1, 2))
+    rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
+    stolen = service.upload_esim_qr(CUSTOMER_B, rental, PNG_BYTES)
+    assert stolen.http_status == 403
+    assert stolen.body["error_code"] == "forbidden"
+    assert stolen.body["step"] == "qr_upload"
+    assert farm.tasks == []
+
+
+def test_unmapped_bay_cannot_upload_qr(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1))
+    rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
+    result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert result.http_status == 403
+    assert result.body["error_code"] == "forbidden"
+    assert farm.tasks == []
+
+
+def test_unknown_rental_qr_upload_is_rejected(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1, 2))
+    missing = service.upload_esim_qr(CUSTOMER_A, str(uuid.uuid4()), PNG_BYTES)
+    assert missing.http_status == 403
+    assert missing.body["error_code"] == "forbidden"
+    assert farm.tasks == []
+
+
+def test_slot2_gads_stays_blocked_slot1_gads_unchanged(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm, allowed=(1,), farm_status=_mapped(1, 2))
+    rental1 = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    rental2 = _rental(tenant, bay=2, user_id=CUSTOMER_A)
+    granted = service.create_remote_access(CUSTOMER_A, None, rental1)
+    assert granted.http_status == 201
+    blocked = service.create_remote_access(CUSTOMER_A, None, rental2)
+    assert blocked.http_status == 403
+    assert blocked.body.get("error") == "forbidden"
+    assert service.get_device_status(2).http_status == 403
+    assert [c[0] for c in platform.calls if c[0] == "grant"]
+    assert not any(c[0] == "grant" and c[1].get("device_id") == SLOT2_SERIAL for c in platform.calls)
 
 
 def test_http_authenticated_upload_and_isolation(tmp_path: Path):
