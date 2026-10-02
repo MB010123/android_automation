@@ -42,6 +42,10 @@ class UnconfiguredTenantStore:
         del farm_slot_id, user_id, rental_id, now
         return False
 
+    def unclaim_slot(self, farm_slot_id: int, rental_id: str | None, *, now: float | None = None) -> bool:
+        del farm_slot_id, rental_id, now
+        return False
+
     def get_slot_row(self, farm_slot_id: int) -> dict[str, Any] | None:
         del farm_slot_id
         return None
@@ -139,6 +143,22 @@ class LovableTenantStore:
                 idempotency_key=f"claim-{farm_slot_id}-{user_id}-{rental_id or 'none'}",
             )
         )
+        if result.error in {"conflict", "invalid", "unauthorized", "unavailable"}:
+            return False
+        return result.error is None
+
+    def unclaim_slot(self, farm_slot_id: int, rental_id: str | None, *, now: float | None = None) -> bool:
+        del now
+        result = self._require(
+            self._client.request(
+                "POST",
+                f"/slots/by-bay/{int(farm_slot_id)}/unclaim",
+                json_body={"rental_id": rental_id},
+                idempotency_key=f"unclaim-{farm_slot_id}-{rental_id or 'none'}",
+            )
+        )
+        if result.error == "not_found":
+            return True
         if result.error in {"conflict", "invalid", "unauthorized", "unavailable"}:
             return False
         return result.error is None

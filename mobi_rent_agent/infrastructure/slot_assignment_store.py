@@ -20,11 +20,15 @@ class SlotAssignment:
 
 class SlotAssignmentStore:
     def __init__(self, db_path: Path) -> None:
-        self._path = db_path
+        self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._lock = threading.Lock()
         self._init_schema()
+
+    @property
+    def db_path(self) -> Path:
+        return self._path
 
     def _init_schema(self) -> None:
         tables = {

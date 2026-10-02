@@ -1,4 +1,4 @@
-"""Local Bay-1 assignment lifecycle: reservation, 409, and failed-job retry.
+"""Local Bay-1 assignment lifecycle: job lock, durable reservation, 409, retry.
 
 Uses in-memory tenant + mocked Farm. No production credentials, QR, or device I/O.
 """
@@ -64,7 +64,7 @@ def _harness(tmp_path: Path, *, farm: MockFarm | None = None):
         assignment_store=assign,
         event_store=events,
         job_worker=worker,
-        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "slot_count": 20, "adb_online": 20},
+        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "mapped_slots": [1, 2], "slot_count": 2, "adb_online": 2},
         known_farm_slots={1, 2},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         auth_store=tenant,
@@ -128,7 +128,7 @@ def test_b_pending_job_reserves_bay_and_blocks_other_rental(tmp_path: Path):
     assert jobs.get(accepted.body["job_id"]).status == "pending"
 
 
-def test_c_terminal_success_releases_reservation(tmp_path: Path):
+def test_c_terminal_success_releases_job_lock_keeps_rental_reservation(tmp_path: Path):
     farm = MockFarm()
     farm.response = FarmTaskResponse(
         ok=True,
@@ -143,12 +143,12 @@ def test_c_terminal_success_releases_reservation(tmp_path: Path):
     assert record.status == "done"
     assert record.result_payload["install_state"] == INSTALL_VERIFIED
     assert assign.is_assigned(1) is False
-    assert 1 in _available_bays(svc)
+    assert 1 not in _available_bays(svc)
     other = str(uuid.uuid4())
     _seed(tenant, other)
     second = svc.assign_slot(1, _payload(other))
-    assert second.http_status == 202
-    assert second.body["job_id"] != first.body["job_id"]
+    assert second.http_status == 409
+    assert second.body["error"] == "slot_unavailable"
 
 
 def test_d_terminal_failed_job_releases_reservation_and_keeps_history(tmp_path: Path):
@@ -169,7 +169,7 @@ def test_d_terminal_failed_job_releases_reservation_and_keeps_history(tmp_path: 
     assert record.result_payload["install_state"] == INSTALL_FAILED
     assert assign.is_assigned(1) is False
     assert jobs.get(job_id) is not None
-    assert 1 in _available_bays(svc)
+    assert 1 not in _available_bays(svc)
 
 
 def test_e_failed_job_does_not_block_fresh_same_rental_assign(tmp_path: Path):

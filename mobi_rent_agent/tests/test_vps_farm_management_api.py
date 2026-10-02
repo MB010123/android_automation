@@ -74,8 +74,9 @@ def _mgmt(tmp_path: Path, *, farm: MockFarmTaskClient | None = None, offline: li
         return {
             "ok": True,
             "offline_slots": offline or [],
-            "slot_count": 20,
-            "adb_online": 20,
+            "mapped_slots": [1, 2, 4],
+            "slot_count": 3,
+            "adb_online": 3 - len(offline or []),
         }
 
     tenant = MemoryTenant()

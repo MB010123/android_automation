@@ -59,6 +59,7 @@ from infrastructure.farm_task_client import FarmTaskClient
 from infrastructure.lovable_inbound_webhook import deliver_inbound_to_lovable
 from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
+from infrastructure.slot_reservation_store import SlotReservationStore
 from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.vps_job_store import VpsJobStore
@@ -567,6 +568,11 @@ class Handler(BaseHTTPRequestHandler):
             result = self.farm_management_service.assign_slot(route.farm_bay, payload)
             self._send_json(result.http_status, result.body)
             return True
+        if route.kind == "rental_end" and route.rental_id:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.end_rental(route.rental_id, explicit=True)
+            self._send_json(result.http_status, result.body)
+            return True
         if route.kind == "slot_action" and route.slot_public_id and route.action:
             assert self.farm_management_service is not None
             result = self.farm_management_service.enqueue_action(
@@ -925,7 +931,8 @@ def main() -> int:
         str(ROOT / "logs" / "outbound_api_messages.sqlite"),
     )
     message_store = OutboundMessageStore(Path(api_messages_db))
-    known_slots = set(device_map.keys()) if device_map else set(range(1, 21))
+    # VoidFix/SMS catalog only. Physical Pixel inventory is Farm health `mapped_slots`.
+    known_slots = set(device_map.keys()) if device_map else set()
     overrides = load_slot_public_id_overrides(os.getenv("SLOT_PUBLIC_ID_MAP_PATH"))
 
     def _farm_status() -> dict[str, Any]:
@@ -939,6 +946,7 @@ def main() -> int:
     )
     vps_job_store = VpsJobStore(Path(vps_jobs_db))
     assignment_store = SlotAssignmentStore(Path(vps_jobs_db).with_name("slot_assignments.sqlite"))
+    reservation_store = SlotReservationStore(Path(vps_jobs_db).with_name("slot_reservations.sqlite"))
     event_store = SlotEventStore(Path(vps_jobs_db).with_name("slot_events.sqlite"))
     farm_task_client: FarmTaskClient | None = None
     if farm_url and farm_token:
@@ -990,6 +998,7 @@ def main() -> int:
     farm_management_service = VpsFarmManagementService(
         job_store=vps_job_store,
         assignment_store=assignment_store,
+        reservation_store=reservation_store,
         event_store=event_store,
         job_worker=job_worker,
         farm_status_fetcher=_farm_status,
@@ -1029,7 +1038,14 @@ def main() -> int:
         db_path=Path(vps_jobs_db).with_name("remote_access_sessions.sqlite"),
     )
     if remote_access_service is not None:
-        heartbeat_poller.set_after_poll(remote_access_service.sweep_stale_sessions)
+        farm_management_service.set_remote_access(remote_access_service)
+
+    def _after_heartbeat_poll() -> None:
+        if remote_access_service is not None:
+            remote_access_service.sweep_stale_sessions()
+        farm_management_service.sweep_ended_rentals()
+
+    heartbeat_poller.set_after_poll(_after_heartbeat_poll)
 
     Handler.app_name = config.app_name
     Handler.webhook_path = _env_webhook_path()
@@ -1085,6 +1101,7 @@ def main() -> int:
         message_store.close()
         vps_job_store.close()
         assignment_store.close()
+        reservation_store.close()
         event_store.close()
         status_store.close()
         if remote_access_store is not None:

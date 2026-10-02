@@ -9,7 +9,8 @@ from infrastructure.vps_job_store import VpsJobRecord
 
 ERROR_MESSAGES: dict[str, str] = {
     "slot_not_found": "Farm bay or public slot ID is not configured",
-    "slot_unavailable": "Bay is assigned or has a pending job",
+        "slot_unavailable": "Bay is reserved, assigned, or has a pending job",
+    "rental_active": "Rental is still active and has not ended",
     "device_offline": "Farm reports the bay ADB device is offline",
     "invalid_rental_id": "rental_id must be a UUID",
     "invalid_request": "Required assignment fields are missing or invalid",

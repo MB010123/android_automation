@@ -100,6 +100,8 @@ class MemoryTenant:
         self.slots: dict[int, dict] = {}
         self.esims: list[dict] = []
         self.messages: dict[str, dict] = {}
+        self.unclaim_fails = False
+        self.unclaim_raises = False
 
     def close(self) -> None:
         return None
@@ -147,6 +149,23 @@ class MemoryTenant:
             "rental_id": rental_id,
             "motherboard_slot_num": previous.get("motherboard_slot_num") or bay,
         }
+        return True
+
+    def unclaim_slot(self, farm_slot_id: int, rental_id: str | None, *, now: float | None = None) -> bool:
+        del now
+        if self.unclaim_raises:
+            raise OSError("lovable_unavailable")
+        if self.unclaim_fails:
+            return False
+        bay = int(farm_slot_id)
+        existing = self.slots.get(bay)
+        if not existing or not str(existing.get("user_id") or "").strip():
+            return True
+        stored = str(existing.get("rental_id") or existing.get("id") or "").strip()
+        want = str(rental_id or "").strip()
+        if stored and want and stored != want:
+            return False
+        self.slots[bay] = {**existing, "user_id": None, "rental_id": None}
         return True
 
     def get_slot_row(self, farm_slot_id: int) -> dict | None:

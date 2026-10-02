@@ -35,6 +35,7 @@ Base URL: `LOVABLE_API_URL` (example: `https://app.loanerphones.com/api/vps`)
 | GET | `/slots?user_id=` | Slots owned by that user |
 | GET | `/slots/{slot_id}` | Resolve Lovable `slots.id` → bay |
 | POST | `/slots/by-bay/{bay}/claim` | Claim/assign ownership after validating profile + current owner |
+| POST | `/slots/by-bay/{bay}/unclaim` | Release tenant ownership for a rental after rental-end |
 | GET | `/profiles/{user_id}` | 200 if profile exists, 404 otherwise |
 | PUT | `/profiles/{user_id}` | Ensure profile (`{ "email" }`) |
 | GET | `/messages/{message_id}` | Authoritative tenant message |
@@ -57,6 +58,19 @@ No generic SQL/RPC endpoint.
 - 409 if another user already owns the slot
 - 200 if unowned or already owned by the same user
 - Do not accept client `imei2` as an overwrite of another slot
+
+## Unclaim rules
+
+`POST /slots/by-bay/{bay}/unclaim` body:
+
+```json
+{ "rental_id": "<uuid>" }
+```
+
+- 200 if the bay is already unowned, or owned by this `rental_id` and now cleared
+- 409 if a different rental still owns the slot
+- Idempotent: repeating the same unclaim after success is 200
+- Do not factory-reset the device or delete an eSIM from this endpoint
 
 ## Slot body
 

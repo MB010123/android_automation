@@ -170,6 +170,52 @@ def test_client_cannot_override_imei2_or_user_id_on_claim():
     assert body["user_id"] == USER_A
 
 
+def test_unclaim_slot_posts_rental_only():
+    captured: list[dict[str, Any] | None] = []
+
+    class CaptureHTTP(FakeHTTP):
+        def request(self, method, url, json=None, headers=None, timeout=None):
+            captured.append(json)
+            return super().request(method, url, json=json, headers=headers, timeout=timeout)
+
+    http = CaptureHTTP(
+        {
+            ("POST", f"{BASE}/slots/by-bay/1/unclaim"): FakeResponse(200, {"slot": _slot(user_id=None)}),
+        }
+    )
+    store = LovableTenantStore(LovableServerClient(BASE, MACHINE_TOKEN, session=http))
+    assert store.unclaim_slot(1, str(uuid.uuid4())) is True
+    body = captured[0]
+    assert body is not None
+    assert "imei2" not in body
+    assert "serial" not in body
+    assert set(body) <= {"rental_id"}
+
+
+def test_unclaim_conflict_returns_false():
+    http = FakeHTTP(
+        {
+            ("POST", f"{BASE}/slots/by-bay/1/unclaim"): FakeResponse(409, {"error": "conflict"}),
+        }
+    )
+    store = LovableTenantStore(LovableServerClient(BASE, MACHINE_TOKEN, session=http))
+    assert store.unclaim_slot(1, str(uuid.uuid4())) is False
+
+
+def test_unclaim_not_found_is_idempotent():
+    http = FakeHTTP(
+        {
+            ("POST", f"{BASE}/slots/by-bay/1/unclaim"): FakeResponse(404, {"error": "not_found"}),
+        }
+    )
+    store = LovableTenantStore(LovableServerClient(BASE, MACHINE_TOKEN, session=http))
+    assert store.unclaim_slot(1, str(uuid.uuid4())) is True
+
+
+def test_unconfigured_tenant_unclaim_fails_closed():
+    assert UnconfiguredTenantStore().unclaim_slot(1, str(uuid.uuid4())) is False
+
+
 def test_messages_come_from_lovable_not_sqlite(tmp_path: Path):
     http = FakeHTTP(
         {
@@ -215,7 +261,7 @@ def test_messages_come_from_lovable_not_sqlite(tmp_path: Path):
     sms = VpsSlotSmsService(
         message_store=store,
         farm_client=_FarmOk(),
-        farm_status_fetcher=lambda: {"ok": True, "offline_slots": []},
+        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "mapped_slots": [1, 2]},
         known_farm_slots={1, 2},
         tenant_store=tenant,
     )

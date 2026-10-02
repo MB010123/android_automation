@@ -942,6 +942,28 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/rentals/{rental_id}/end": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "End a rental and release durable occupancy",
+                "description": (
+                    "Farm-service only. Sequence: revoke GADS (idempotent; already-gone is success), "
+                    "record operator device cleanup (`device_cleanup_required`; no factory reset, "
+                    "no silent eSIM delete), unclaim the tenant slot, then release the durable VPS "
+                    "reservation. Reservation is not released because an assign/provision job completed. "
+                    "A rental that has not ended keeps ownership and occupancy."
+                ),
+                "security": bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "200": {"description": "ended; occupancy released (idempotent)"},
+                    "400": {"description": "invalid_rental_id"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "409": {"description": "rental_active"},
+                    "503": {"description": "auth_unavailable | remote_access_platform_error"},
+                },
+            }
+        },
         "/health": {
             "get": {
                 "tags": ["Health"],

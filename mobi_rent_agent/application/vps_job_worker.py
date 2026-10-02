@@ -265,7 +265,12 @@ class VpsJobWorker:
         logger.info("farm_task_completed job_id=%s type=%s bay=%s", job_id, record.type, record.farm_slot_id)
 
     def _release_reservation(self, record: VpsJobRecord, install_state: str) -> None:
-        """Drop the bay lock for this job only. Never wipe a newer reservation."""
+        """Drop the job-scoped SlotAssignmentStore lock only.
+
+        Durable rental occupancy lives in SlotReservationStore and must not
+        be cleared here. Rental-end/release orchestration owns that release.
+        Never wipe a newer job-scoped assignment.
+        """
         if record.farm_slot_id is None:
             return
         if install_state == INSTALL_VERIFICATION_UNKNOWN:

@@ -2,22 +2,23 @@
 
 States
 ------
-available              no assignment, ADB reachable, no active job
-assigned               assignment claimed, provisioning job finished OK but
-                       ADB not (yet) confirmed reachable by a fresh heartbeat
+available              no assignment, no durable reservation, ADB reachable, no active job
+assigned               durable reservation or job-scoped assignment is held
 provisioning           assign job pending/running
 requires_manual_action assign job ended: human Settings/LPA step required
-online                 assigned + provisioning completed + fresh heartbeat ADB reachable
+online                 reserved/assigned + provisioning completed + fresh heartbeat ADB reachable
 busy                   non-assign job (reboot, ...) pending/running
 offline                fresh heartbeat says ADB not reachable
 network_error          reserved: Farm reports a network/radio failure (not emitted by
                        the current Farm health endpoint; never inferred from ADB alone)
 failed                 last assign job ended terminally (`provisioning_phase` is
-                       `failed` or `unsupported`) and the bay was released. The
-                       phase stays distinguishable on the job and on the status
-                       body; `status=failed` + `provisioning_phase=unsupported`
-                       coexist. Sticky until the next assign job on the bay.
+                       `failed` or `unsupported`) and the bay is not occupied.
+                       Sticky until the next assign job on the bay.
 unknown                no heartbeat yet or heartbeat stale (Farm unreachable)
+
+The job worker still releases the *job-scoped* SlotAssignmentStore row when an
+assign job finishes. Durable rental occupancy is SlotReservationStore and is
+not cleared by that worker.
 
 Rules are applied top-down in `derive_slot_state`; see ALLOWED_TRANSITIONS
 for the transitions that backend events/jobs may cause. Callers cannot set
@@ -40,10 +41,9 @@ SlotState = Literal[
     "unknown",
 ]
 
-# Assign-job phases that end the assignment attempt without success and
-# derive the `failed` slot state. `requires_manual_action` is deliberately
-# excluded: the bay is released and the human step is surfaced via
-# `provisioning_phase`, not via the slot state.
+# Assign-job phases that end the attempt without success and derive `failed`
+# only when the bay is *not* occupied. Durable reservation keeps occupancy
+# (`assigned` / `requires_manual_action`) even after the job-scoped lock drops.
 TERMINAL_FAILED_PHASES: frozenset[str] = frozenset({"failed", "unsupported"})
 
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {

@@ -445,6 +445,26 @@ class VpsAuthStore:
             self._conn.commit()
             return True
 
+    def unclaim_slot(self, farm_slot_id: int, rental_id: str | None, *, now: float | None = None) -> bool:
+        del now
+        rental = str(rental_id or "").strip()
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT user_id, rental_id FROM slot_ownership WHERE farm_slot_id = ?",
+                (farm_slot_id,),
+            ).fetchone()
+            if existing is None:
+                return True
+            stored = str(existing["rental_id"] or "").strip()
+            if stored and rental and stored != rental:
+                return False
+            self._conn.execute(
+                "DELETE FROM slot_ownership WHERE farm_slot_id = ?",
+                (farm_slot_id,),
+            )
+            self._conn.commit()
+            return True
+
     def owner_of_slot(self, farm_slot_id: int) -> str | None:
         with self._lock:
             row = self._conn.execute(

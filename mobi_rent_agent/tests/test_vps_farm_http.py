@@ -38,6 +38,7 @@ def test_farm_status_counts_online():
     )
     assert body["role"] == "farm"
     assert body["slot_count"] == 2
+    assert body["mapped_slots"] == [1, 2]
 
 
 def test_farm_status_server_requires_auth():

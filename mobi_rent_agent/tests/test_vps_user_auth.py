@@ -45,7 +45,7 @@ WEBHOOK_SECRET = "voidfix-webhook-secret"
 
 class FarmStub:
     def __call__(self) -> dict:
-        return {"ok": True, "offline_slots": [], "slot_count": 20, "adb_online": 20}
+        return {"ok": True, "offline_slots": [], "mapped_slots": [1, 2], "slot_count": 2, "adb_online": 2}
 
 
 class SyncWorker(VpsJobWorker):

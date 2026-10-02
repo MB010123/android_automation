@@ -110,6 +110,21 @@ class SupabaseTenantStore:
         )
         return inserted is not None
 
+    def unclaim_slot(self, farm_slot_id: int, rental_id: str | None, *, now: float | None = None) -> bool:
+        del rental_id, now
+        existing = self.get_slot_row(farm_slot_id)
+        if existing is None:
+            return True
+        current = str(existing.get("user_id") or "").strip()
+        if not current:
+            return True
+        patched = self._gw.rest_patch(
+            "slots",
+            query=f"motherboard_slot_num=eq.{int(farm_slot_id)}",
+            body={"user_id": None, "status": "available"},
+        )
+        return patched is not None
+
     def get_slot_row(self, farm_slot_id: int) -> dict[str, Any] | None:
         rows = self._gw.rest_select(
             "slots",

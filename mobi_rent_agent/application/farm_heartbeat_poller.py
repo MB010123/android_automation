@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import requests
 
+from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots, offline_farm_slots
 from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_status_store import SlotStatusStore
 
@@ -84,16 +85,20 @@ class FarmHeartbeatPoller:
             result = self._record_farm_error("farm_unreachable", ts)
             self._run_after_poll()
             return result
-        if not isinstance(farm, dict) or not farm.get("ok"):
-            error = str((farm or {}).get("error") or "farm_not_ok") if isinstance(farm, dict) else "farm_not_ok"
+        if farm_agent_unavailable(farm):
+            error = (
+                str(farm.get("error") or "farm_not_ok") if isinstance(farm, dict) else "farm_not_ok"
+            )
             logger.warning("heartbeat_farm_not_ok error=%s", error)
-            result = self._record_farm_error(error, ts)
+            mapped = mapped_farm_slots(farm) if isinstance(farm, dict) else frozenset()
+            result = self._record_farm_error(error, ts, slots=set(mapped) if mapped else None)
             self._run_after_poll()
             return result
 
-        offline = {int(s) for s in (farm.get("offline_slots") or [])}
+        mapped = mapped_farm_slots(farm)
+        offline = offline_farm_slots(farm)
         transitions: list[tuple[int, str]] = []
-        for bay in sorted(self._slots):
+        for bay in sorted(mapped):
             previous = self._status.get(bay)
             online = bay not in offline
             self._status.record(bay, adb_online=online, farm_ok=True, farm_error=None, now=ts)
@@ -108,7 +113,7 @@ class FarmHeartbeatPoller:
         if transitions:
             logger.info("heartbeat_transitions count=%s", len(transitions))
         self._run_after_poll()
-        return {"ok": True, "checked": len(self._slots), "offline": sorted(offline), "transitions": transitions}
+        return {"ok": True, "checked": len(mapped), "offline": sorted(offline), "transitions": transitions}
 
     def _run_after_poll(self) -> None:
         if self._after_poll is None:
@@ -118,9 +123,10 @@ class FarmHeartbeatPoller:
         except Exception:  # pragma: no cover - sweep must not kill heartbeat
             logger.warning("heartbeat_after_poll_failed")
 
-    def _record_farm_error(self, error: str, ts: float) -> dict[str, Any]:
-        for bay in sorted(self._slots):
+    def _record_farm_error(self, error: str, ts: float, *, slots: set[int] | None = None) -> dict[str, Any]:
+        bays = slots if slots is not None else self._slots
+        for bay in sorted(bays):
             previous = self._status.get(bay)
             adb_online = previous.adb_online if previous is not None else False
             self._status.record(bay, adb_online=adb_online, farm_ok=False, farm_error=error, now=ts)
-        return {"ok": False, "error": error, "checked": len(self._slots)}
+        return {"ok": False, "error": error, "checked": len(bays)}

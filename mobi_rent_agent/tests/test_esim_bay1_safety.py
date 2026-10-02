@@ -141,7 +141,7 @@ def _harness(tmp_path: Path, *, farm: FarmSpy | None = None, tenant: MemoryTenan
         assignment_store=assign,
         event_store=events,
         job_worker=worker,
-        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "slot_count": 20, "adb_online": 20},
+        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "mapped_slots": [1, 2], "slot_count": 2, "adb_online": 2},
         known_farm_slots={1, 2},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         auth_store=tenant,

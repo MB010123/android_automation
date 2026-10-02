@@ -53,6 +53,7 @@ REQUIRED_PATHS = [
     "/rentals/{rental_id}/remote-access",
     "/rentals/{rental_id}/remote-access/{action}",
     "/rentals/{rental_id}/esim/upload",
+    "/rentals/{rental_id}/end",
     "/voidfix/inbound",
 ]
 
@@ -77,6 +78,8 @@ def test_required_paths_and_security():
         assert p in paths, f"missing path {p}"
     assign = paths["/farm/slots/{bay}/assign"]["post"]
     assert assign.get("security") == [{"FarmServiceBearer": []}]
+    rental_end = paths["/rentals/{rental_id}/end"]["post"]
+    assert rental_end.get("security") == [{"FarmServiceBearer": []}]
     health = paths["/health"]["get"]
     assert "security" not in health
     remote_access = paths["/rentals/{rental_id}/remote-access"]["post"]

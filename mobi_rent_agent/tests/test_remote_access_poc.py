@@ -185,7 +185,7 @@ class FarmStatusSequence:
 
     def __call__(self) -> dict:
         offline = self._seq.pop(0) if len(self._seq) > 1 else self._seq[0]
-        return {"ok": not offline, "offline_slots": offline, "slot_count": 2}
+        return {"ok": not offline, "offline_slots": offline, "mapped_slots": [1, 2], "slot_count": 2}
 
 
 def _service(
@@ -917,6 +917,8 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route(f"/rentals/{slot}/remote-access/prepare-esim").action == "prepare-esim"
     assert parse_route(f"/rentals/{slot}/esim/upload").kind == "esim_qr_upload"
     assert parse_route(f"/rentals/{slot}/esim/upload").rental_id == slot
+    assert parse_route(f"/rentals/{slot}/end").kind == "rental_end"
+    assert parse_route(f"/rentals/{slot}/end").rental_id == slot
     assert parse_route(f"/rentals/{slot}/remote-access/activation-status").action == "activation-status"
     assert parse_route(f"/rentals/{slot}/remote-access/adb-shell") is None
     assert parse_route(f"/rentals/not-a-uuid/remote-access") is None
@@ -1038,7 +1040,7 @@ def _start_http(tmp_path: Path, *, with_service: bool = True):
     worker = SyncWorker(job_store=jobs, assignment_store=assign, event_store=events, farm_task_client=None, poll_interval_seconds=3600.0, auth_store=tenant)
     farm_svc = VpsFarmManagementService(
         job_store=jobs, assignment_store=assign, event_store=events, job_worker=worker,
-        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "slot_count": 20, "adb_online": 20},
+        farm_status_fetcher=lambda: {"ok": True, "offline_slots": [], "mapped_slots": [1, 2], "slot_count": 2, "adb_online": 2},
         known_farm_slots={1, 2}, rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         status_store=status, auth_store=tenant, esim_url_prefixes=("https://example.test/",),
     )

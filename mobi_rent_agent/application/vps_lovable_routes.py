@@ -34,6 +34,7 @@ RE_REMOTE_ACCESS_ACTION = re.compile(
     rf"^/rentals/({_UUID})/remote-access/(revoke|release|device-status|reboot|prepare-esim|activation-status)$"
 )
 RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
+RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
 
 PUBLIC_AUTH_POST = frozenset(
@@ -50,7 +51,7 @@ USER_OWNED_KINDS = frozenset(
         "slot_esim",
     }
 )
-FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign"})
+FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign", "rental_end"})
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,8 @@ class ParsedRoute:
 def parse_route(path: str) -> ParsedRoute | None:
     if m := RE_ESIM_UPLOAD.match(path):
         return ParsedRoute(kind="esim_qr_upload", rental_id=m.group(1))
+    if m := RE_RENTAL_END.match(path):
+        return ParsedRoute(kind="rental_end", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS.match(path):
         return ParsedRoute(kind="remote_access", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS_ACTION.match(path):

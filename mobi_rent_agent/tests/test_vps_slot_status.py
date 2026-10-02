@@ -42,11 +42,23 @@ class FarmStub:
         self.offline: list[int] = []
         self.ok = True
         self.raise_exc = False
+        self.mapped_slots: list[int] = [1, 2]
+        self.error: str | None = None
 
     def __call__(self) -> dict:
         if self.raise_exc:
             raise ConnectionError("farm down")
-        return {"ok": self.ok, "offline_slots": list(self.offline), "slot_count": 20, "adb_online": 20}
+        body = {
+            "ok": self.ok,
+            "offline_slots": list(self.offline),
+            "mapped_slots": list(self.mapped_slots),
+            "slot_count": len(self.mapped_slots),
+            "adb_online": max(0, len(self.mapped_slots) - len(self.offline)),
+        }
+        if self.error:
+            body["error"] = self.error
+            body["ok"] = False
+        return body
 
 
 class MockFarmTaskClient:
@@ -209,13 +221,12 @@ def test_status_farm_unreachable_marks_heartbeat(tmp_path: Path):
     assert body["last_seen_at"] is not None
 
 
-def test_status_provisioning_then_available_after_completed_assign(tmp_path: Path):
-    """Successful assign completes the job and drops the bay reservation.
+def test_status_provisioning_then_occupied_after_completed_assign(tmp_path: Path):
+    """Successful assign completes the job but keeps durable rental occupancy.
 
-    ``online`` means assigned + completed + fresh ADB (see derive_slot_state).
-    The job worker releases the reservation on INSTALL_ACCEPTED/VERIFIED
-    (test_c_terminal_success_releases_reservation), so an unassigned bay with
-    ADB up and last phase ``completed`` is ``available``, never ``online``.
+    The job worker still releases the job-scoped SlotAssignmentStore row.
+    SlotReservationStore keeps the bay occupied, so status is ``online``
+    (reserved + completed + fresh ADB), not ``available``.
     """
     fx = Fixture(tmp_path)
     fx.beat()
@@ -233,9 +244,9 @@ def test_status_provisioning_then_available_after_completed_assign(tmp_path: Pat
     assert body["provisioning_phase"] == "completed"
     assert body["last_assign_job_id"] == job_id
     assert body["active_job_id"] is None
-    assert body["assigned"] is False
-    assert body["rental_id"] is None
-    assert body["status"] == "available"
+    assert body["assigned"] is True
+    assert body["rental_id"]
+    assert body["status"] == "online"
     assert body["adb_online"] is True
 
 
@@ -249,11 +260,11 @@ def test_status_requires_manual_action(tmp_path: Path):
     assert job["state"] == "failed"
     assert job["provisioning_phase"] == "requires_manual_action"
     assert job["failure_class"] == "requires_manual_action"
-    # bay released on failure -> status reflects manual step but no assignment
+    # job-scoped lock released; durable reservation remains
     body = fx.status_of()
-    assert body["assigned"] is False
+    assert body["assigned"] is True
     assert body["provisioning_phase"] == "requires_manual_action"
-    assert body["status"] in ("failed", "available")
+    assert body["status"] == "requires_manual_action"
 
 
 def test_status_failed_after_permanent_failure(tmp_path: Path):
@@ -265,7 +276,8 @@ def test_status_failed_after_permanent_failure(tmp_path: Path):
     job = fx.svc.get_job(result.body["job_id"]).body
     assert job["failure_class"] == "temporary"
     assert job["provisioning_phase"] == "failed"
-    assert fx.status_of()["status"] == "failed"
+    assert fx.status_of()["status"] == "assigned"
+    assert fx.status_of()["assigned"] is True
 
 
 def test_status_unsupported_phase(tmp_path: Path):
@@ -280,13 +292,13 @@ def test_status_unsupported_phase(tmp_path: Path):
     assert job["provisioning_phase"] == "unsupported"
     assert job["failure_class"] == "unsupported"
     assert job["error"] == "action_not_supported"
-    # Slot status: terminal failed state, phase stays `unsupported` (not collapsed to `failed`).
+    # Occupied via durable reservation; phase stays `unsupported`.
     body = fx.status_of()
-    assert body["status"] == "failed"
+    assert body["status"] == "assigned"
     assert body["provisioning_phase"] == "unsupported"
-    assert body["assigned"] is False
+    assert body["assigned"] is True
     # Deterministic: repeated evaluation yields identical derivation.
-    assert fx.status_of()["status"] == "failed"
+    assert fx.status_of()["status"] == "assigned"
     kinds = [e.event_type for e in fx.events.list_events(1)]
     assert "provisioning_failed" in kinds and "provisioning_completed" not in kinds
 
@@ -381,7 +393,7 @@ def test_heartbeat_emits_transition_events_only(tmp_path: Path):
 
 def test_heartbeat_farm_not_ok_records_error(tmp_path: Path):
     fx = Fixture(tmp_path)
-    fx.farm.ok = False
+    fx.farm.error = "adb_unavailable"
     out = fx.poller.poll_once(now=fx.now)
     assert out["ok"] is False
     hb = fx.status.get(1)

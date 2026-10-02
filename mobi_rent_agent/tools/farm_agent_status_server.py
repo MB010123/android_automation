@@ -68,9 +68,12 @@ def build_farm_status(*, adb_path: str, slot_map: dict[int, str]) -> dict[str, A
             "error": "adb_unavailable",
             "detail": states["__error__"],
             "slot_count": len(slot_map),
+            "mapped_slots": sorted(int(slot_id) for slot_id in slot_map),
+            "offline_slots": sorted(int(slot_id) for slot_id in slot_map),
         }
     online = 0
     offline_slots: list[int] = []
+    mapped_slots = sorted(int(slot_id) for slot_id in slot_map)
     for slot_id, serial in sorted(slot_map.items()):
         state = states.get(serial, "missing")
         if state == "device":
@@ -82,6 +85,7 @@ def build_farm_status(*, adb_path: str, slot_map: dict[int, str]) -> dict[str, A
         "role": "farm",
         "slot_count": len(slot_map),
         "adb_online": online,
+        "mapped_slots": mapped_slots,
         "offline_slots": offline_slots,
     }
 
