@@ -842,22 +842,24 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             },
             "post": {
                 "tags": ["Remote access (in-app setup)"],
-                "summary": "Create (or rotate) temporary remote access for the caller's rental",
+                "summary": "Create or reuse temporary remote access for the caller's rental",
                 "description": (
-                    "Creates a per-rental GADS lease on the assigned Pixel and returns an in-app session. "
-                    "The browser never receives GADS admin credentials, a GADS JWT, hub-ui login, device "
-                    "list, serial/UDID, or unrestricted GADS URLs. `stream_path` is a VPS-proxied MJPEG URL "
-                    "on this API. Touch/control goes to POST `.../remote-access/control`. The request body "
-                    "is ignored: the browser cannot choose a slot or device. The customer still performs "
-                    "Android's real eSIM and default-SMS confirmations. This is not eSIM authorization."
+                    "Creates a per-rental GADS lease on the assigned Pixel, or reuses a still-valid "
+                    "session for the same rental/slot. The browser never receives GADS admin credentials, "
+                    "a GADS JWT, hub-ui login, device list, serial/UDID, or unrestricted GADS URLs. "
+                    "`stream_path` is a VPS-proxied MJPEG URL on this API. Touch/control goes to POST "
+                    "`.../remote-access/control`. The request body is ignored: the browser cannot choose "
+                    "a slot or device. The customer still performs Android's real eSIM and default-SMS "
+                    "confirmations. This is not eSIM authorization."
                 ),
                 "security": user_bearer,
                 "parameters": [_RENTAL_PARAM],
                 "responses": {
+                    "200": {"description": "Existing valid session reused"},
                     "201": {"description": "Created; in-app session (`session_mode=in_app`, `stream_path`)"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
-                    "409": {"description": "remote_access_busy"},
+                    "409": {"description": "remote_access_busy | phone_operation_busy"},
                     "502": {"description": "remote_access_platform_error"},
                     "503": {"description": "remote_access_not_configured"},
                 },

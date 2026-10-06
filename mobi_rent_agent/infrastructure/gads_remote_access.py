@@ -40,6 +40,8 @@ logger = logging.getLogger("vps_backend.remote_access.gads")
 _ADMIN_TOKEN_TTL_SECONDS = 3300.0
 _MAX_LOCK_TTL_MINUTES = 360
 _SSE_MAX_BYTES = 512 * 1024
+# Transient GADS 409 on lock only (never tap/swipe/type/back).
+_LOCK_BUSY_RETRY_DELAYS = (0.2, 0.5, 1.0)
 
 
 @dataclass
@@ -68,6 +70,7 @@ class GadsHubClient:
         timeout_seconds: float = 10.0,
         session: requests.Session | None = None,
         clock=time.time,
+        sleeper=time.sleep,
     ) -> None:
         self._base = base_url.rstrip("/")
         self._admin_username = admin_username
@@ -75,6 +78,7 @@ class GadsHubClient:
         self._timeout = timeout_seconds
         self._session = session or requests.Session()
         self._clock = clock
+        self._sleep = sleeper
         self._admin_token: str | None = None
         self._admin_token_at: float = 0.0
 
@@ -199,23 +203,30 @@ class GadsHubClient:
 
     def lock_device(self, udid: str, *, token: str, ttl_minutes: int) -> int:
         ttl = max(1, min(int(ttl_minutes), _MAX_LOCK_TTL_MINUTES))
-        result = self._request(
-            "POST",
-            f"/devices/control/{quote(udid, safe='')}/lock",
-            token=token,
-            params={"ttl_minutes": ttl},
-        )
-        if result.status == 409:
-            raise RemoteAccessPlatformError("device_busy")
-        if result.status == 404:
-            raise RemoteAccessPlatformError("device_not_registered")
-        if not 200 <= result.status < 300:
-            raise RemoteAccessPlatformError(f"gads_lock_failed status={result.status}")
-        expires = result.body.get("expires_at_ms")
-        try:
-            return int(expires)
-        except (TypeError, ValueError):
-            return int((self._clock() + ttl * 60) * 1000)
+        delays = _LOCK_BUSY_RETRY_DELAYS
+        attempt = 0
+        while True:
+            result = self._request(
+                "POST",
+                f"/devices/control/{quote(udid, safe='')}/lock",
+                token=token,
+                params={"ttl_minutes": ttl},
+            )
+            if result.status == 409:
+                if attempt >= len(delays):
+                    raise RemoteAccessPlatformError("device_busy")
+                self._sleep(delays[attempt])
+                attempt += 1
+                continue
+            if result.status == 404:
+                raise RemoteAccessPlatformError("device_not_registered")
+            if not 200 <= result.status < 300:
+                raise RemoteAccessPlatformError(f"gads_lock_failed status={result.status}")
+            expires = result.body.get("expires_at_ms")
+            try:
+                return int(expires)
+            except (TypeError, ValueError):
+                return int((self._clock() + ttl * 60) * 1000)
 
     def unlock_device(self, udid: str, *, token: str) -> bool:
         result = self._request(
@@ -257,6 +268,9 @@ class GadsHubClient:
             )
         except requests.RequestException as exc:
             raise RemoteAccessPlatformError(f"gads_unreachable: {exc.__class__.__name__}") from exc
+        if response.status_code == 409:
+            response.close()
+            raise RemoteAccessPlatformError("device_busy")
         if response.status_code == 404:
             response.close()
             try:
@@ -268,6 +282,9 @@ class GadsHubClient:
                 )
             except requests.RequestException as exc:
                 raise RemoteAccessPlatformError(f"gads_unreachable: {exc.__class__.__name__}") from exc
+        if response.status_code == 409:
+            response.close()
+            raise RemoteAccessPlatformError("device_busy")
         if response.status_code != 200:
             status = response.status_code
             response.close()
@@ -436,6 +453,8 @@ class GadsRemoteAccessPlatform:
             token=token,
             json_body={"x": int(x), "y": int(y)},
         )
+        if result.status == 409:
+            raise RemoteAccessPlatformError("device_busy")
         if not (200 <= result.status < 300):
             raise RemoteAccessPlatformError(f"gads_tap_failed status={result.status}")
 
@@ -460,6 +479,8 @@ class GadsRemoteAccessPlatform:
         )
         if result.status == 404:
             return False
+        if result.status == 409:
+            raise RemoteAccessPlatformError("device_busy")
         if not (200 <= result.status < 300):
             raise RemoteAccessPlatformError(f"gads_swipe_failed status={result.status}")
         return True
@@ -480,6 +501,8 @@ class GadsRemoteAccessPlatform:
             token=token,
             json_body={"text": text},
         )
+        if result.status == 409:
+            raise RemoteAccessPlatformError("device_busy")
         if not (200 <= result.status < 300):
             raise RemoteAccessPlatformError(f"gads_type_failed status={result.status}")
 
@@ -494,6 +517,8 @@ class GadsRemoteAccessPlatform:
         result = self._client.device_control("POST", device_id, "back", token=token, json_body={})
         if result.status == 404:
             return False
+        if result.status == 409:
+            raise RemoteAccessPlatformError("device_busy")
         if not (200 <= result.status < 300):
             raise RemoteAccessPlatformError(f"gads_back_failed status={result.status}")
         return True

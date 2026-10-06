@@ -102,6 +102,29 @@ def test_parse_multipart_extracts_qr_image():
     assert parse_qr_image_multipart(ctype2, wrong) is None
 
 
+def test_parse_multipart_quoted_boundary_and_extra_fields():
+    boundary = "----WebKitFormBoundaryQuoted"
+    extra = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="note"\r\n\r\n'
+        "not-the-image\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="qr_image"; filename="photo.jpg"\r\n'
+        "Content-Type: image/jpeg\r\n\r\n"
+    ).encode("utf-8") + PNG_BYTES + f"\r\n--{boundary}--\r\n".encode("utf-8")
+    parsed = parse_qr_image_multipart(f'multipart/form-data; charset=utf-8; boundary="{boundary}"', extra)
+    assert parsed == PNG_BYTES
+
+
+def test_parse_multipart_rejects_json_and_path_only():
+    body, ctype = _multipart("qr.png", "application/json", b'{"url":"https://example.supabase.co/qr.png"}')
+    parsed = parse_qr_image_multipart(ctype, body)
+    assert parsed == b'{"url":"https://example.supabase.co/qr.png"}'
+    assert parse_qr_image_multipart("multipart/form-data", b"") is None
+    json_only = parse_qr_image_multipart("application/json; charset=utf-8", b'{"qr_image":"x"}')
+    assert json_only is None
+
+
 def test_public_success_omits_serial():
     body = public_placement_success(
         {

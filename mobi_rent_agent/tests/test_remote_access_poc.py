@@ -1214,15 +1214,21 @@ def test_http_full_customer_flow_and_isolation(tmp_path: Path):
         server.shutdown()
 
 
-def test_rotate_fails_closed_when_prior_revoke_fails(tmp_path: Path):
+def test_existing_valid_session_is_reused_without_new_grant(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
-    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
-    platform.fail_revoke = True
-    rotated = service.create_remote_access(CUSTOMER_A, None, rental)
-    assert rotated.http_status == 502
+    first = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert first.http_status == 201
+    grants = [c for c in platform.calls if c[0] == "grant"]
+    assert len(grants) == 1
+    reused = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert reused.http_status == 200
+    assert reused.body["ok"] is True
+    assert reused.body.get("active") is True or reused.body.get("status") == STATUS_ACTIVE
+    assert [c for c in platform.calls if c[0] == "grant"] == grants
+    assert [c for c in platform.calls if c[0] == "revoke"] == []
     assert platform.leases[SLOT1_SERIAL] == platform_username_for_rental(rental)
 
 
