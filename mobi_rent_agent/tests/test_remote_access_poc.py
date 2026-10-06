@@ -108,10 +108,7 @@ class FakePlatform:
         if workspace_id and self.device_workspace:
             if self.device_workspace.get(device_id) != workspace_id:
                 raise RemoteAccessPlatformError("device_not_in_poc_workspace")
-        holder = self.leases.get(device_id)
         username = platform_username_for_rental(rental_id)
-        if holder and holder != username:
-            raise RemoteAccessPlatformError("device_busy")
         self.users.add(username)
         self.leases[device_id] = username
         return PlatformAccessGrant(
@@ -145,7 +142,7 @@ class FakePlatform:
             device_id=device_id,
             registered=registered,
             online=online,
-            available=online and device_id not in self.leases,
+            available=online,
             in_use_by=self.leases.get(device_id),
         )
 
@@ -598,7 +595,7 @@ def test_g_release_makes_slot1_available_for_next_rental(tmp_path: Path):
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
     rental_a = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental_a).http_status == 201
-    assert service.get_device_status(1).body["state"] == "busy"
+    assert service.get_device_status(1).body["state"] == "online"
 
     assert service.release_device(1, rental_a).http_status == 200
     assert service.get_device_status(1).body["state"] == "online"
@@ -708,8 +705,6 @@ def test_i_gads_client_uses_admin_token_server_side_only():
                 return _Resp(200, {"success": True})
             if "/admin/user/" in url and method == "DELETE":
                 return _Resp(404, {"success": False})
-            if url.endswith("/lock"):
-                return _Resp(200, {"udid": SLOT1_SERIAL, "expires_at_ms": 1_700_000_000_000})
             raise AssertionError(url)
 
     client = GadsHubClient("http://hub", admin_username="gads-admin-user", admin_password="gads-admin-password", session=Session())  # type: ignore[arg-type]
@@ -717,13 +712,13 @@ def test_i_gads_client_uses_admin_token_server_side_only():
     grant = platform.grant_access(device_id=SLOT1_SERIAL, rental_id="abcd1234-0000", ttl_minutes=30)
     assert grant.platform_username == "rental-abcd12340000"
     assert grant.platform_password and grant.platform_password != "gads-admin-password"
-    assert grant.expires_at == 1_700_000_000.0
-    lock = [s for s in seen if s["url"].endswith("/lock")][0]
-    # the lease is taken with the *rental user's* token, not the admin token
-    assert lock["headers"]["Authorization"] == f"Bearer jwt-{grant.platform_username}"
+    assert grant.expires_at > 0
+    assert [s for s in seen if s["url"].endswith("/lock") or "/unlock" in s["url"]] == []
     add_user = [s for s in seen if s["url"].endswith("/admin/user") and s["method"] == "POST"][0]
     assert add_user["headers"]["Authorization"] == "Bearer jwt-gads-admin-user"
     assert add_user["json"]["role"] == "user" and add_user["json"]["workspace_ids"] == ["ws"]
+    auths = [s for s in seen if s["url"].endswith("/authenticate")]
+    assert auths[-1]["json"]["username"] == grant.platform_username
 
 
 def test_i_gads_grant_refuses_http_public_url():
@@ -1193,7 +1188,7 @@ def test_http_full_customer_flow_and_isolation(tmp_path: Path):
         assert "platform_login" not in created
         # A device status ok; B 403
         status, ds, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access/device-status", token=token_a, body={})
-        assert status == 200 and ds["state"] == "busy" and ds["slot_id"] == 1
+        assert status == 200 and ds["state"] == "online" and ds["slot_id"] == 1
         status, _, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access/device-status", token=token_b, body={})
         assert status == 403
         # Lovable farm-service releases at end of rental

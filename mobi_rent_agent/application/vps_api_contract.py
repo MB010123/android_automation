@@ -40,9 +40,6 @@ ERROR_MESSAGES: dict[str, str] = {
     "remote_access_not_configured": "Remote-access POC is disabled or the platform is not configured",
     "remote_access_platform_error": "Remote-access platform rejected the request",
     "remote_access_busy": "Slot is currently leased to another rental",
-    "phone_operation_busy": (
-        "The phone is busy with another operation. Please wait a moment and try again."
-    ),
     "remote_access_not_found": "No remote-access session exists for this rental",
     "qr_upload_missing": "Request must be multipart/form-data with a qr_image file",
     "qr_not_an_image": "QR payload is not a PNG, JPG, or WEBP image",

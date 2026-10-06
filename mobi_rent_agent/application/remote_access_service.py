@@ -63,10 +63,6 @@ PREPARE_FAILED = "failed"
 PREPARE_IN_PROGRESS = frozenset(
     {PREPARE_PLACING_QR, PREPARE_REBOOTING, PREPARE_WAITING_ADB, PREPARE_WAITING_PLATFORM}
 )
-# Per-bay GADS lock. Control uses a short wait so duplicate taps fail closed
-# instead of stacking. Session grant/revoke may wait longer.
-_SLOT_LOCK_CONTROL_TIMEOUT = 0.35
-_SLOT_LOCK_SESSION_TIMEOUT = 8.0
 
 REMOTE_ACCESS_PLACE_QR_TASK = "remote_access_place_qr"
 REMOTE_ACCESS_ACTIVATION_TASK = "remote_access_activation_status"
@@ -362,9 +358,7 @@ class RemoteAccessService:
         platform = self._require_platform()
         if isinstance(platform, ApiResult):
             return platform
-        with self._gads_slot_lock(auth.slot_id, timeout=_SLOT_LOCK_SESSION_TIMEOUT) as acquired:
-            if not acquired:
-                return ApiResult(409, error_body("phone_operation_busy"))
+        with self._slot_op_lock(auth.slot_id):
             return self._create_remote_access_locked(auth, platform)
 
     def _create_remote_access_locked(self, auth: AuthorizedRental, platform: RemoteAccessPlatform) -> ApiResult:
@@ -403,8 +397,6 @@ class RemoteAccessService:
         except RemoteAccessPlatformError as exc:
             reason = str(exc)
             logger.warning("remote_access_grant_failed slot=%s reason=%s", auth.slot_id, reason)
-            if reason == "device_busy":
-                return ApiResult(409, error_body("phone_operation_busy"))
             if reason == "public_url_not_https":
                 return ApiResult(503, error_body("remote_access_not_configured"))
             return ApiResult(502, error_body("remote_access_platform_error"))
@@ -482,20 +474,14 @@ class RemoteAccessService:
         if isinstance(platform, ApiResult):
             return platform
         command = decision.command
-        with self._gads_slot_lock(auth.slot_id, timeout=_SLOT_LOCK_CONTROL_TIMEOUT) as acquired:
-            if not acquired:
-                return ApiResult(409, error_body("phone_operation_busy"))
-            try:
-                forwarded = self._forward_control(platform, session, secret, command)
-            except RemoteAccessPlatformError as exc:
-                reason = str(exc)
-                logger.warning("in_app_control_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
-                if reason == "device_busy":
-                    return ApiResult(409, error_body("phone_operation_busy"))
-                return ApiResult(502, error_body("remote_access_platform_error"))
-            if forwarded is False:
-                return ApiResult(502, error_body("remote_access_platform_error"))
-            return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
+        try:
+            forwarded = self._forward_control(platform, session, secret, command)
+        except RemoteAccessPlatformError as exc:
+            logger.warning("in_app_control_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            return ApiResult(502, error_body("remote_access_platform_error"))
+        if forwarded is False:
+            return ApiResult(502, error_body("remote_access_platform_error"))
+        return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
 
     def open_stream(self, customer_id: str, rental_id: str) -> ApiResult | Any:
         """Return a live MJPEG response object, or an ApiResult error."""
@@ -512,21 +498,15 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("remote_access_not_configured"))
-        with self._gads_slot_lock(auth.slot_id, timeout=_SLOT_LOCK_SESSION_TIMEOUT) as acquired:
-            if not acquired:
-                return ApiResult(409, error_body("phone_operation_busy"))
-            try:
-                return opener(
-                    device_id=session.device_id,
-                    platform_username=session.platform_username,
-                    platform_password=secret,
-                )
-            except RemoteAccessPlatformError as exc:
-                reason = str(exc)
-                logger.warning("in_app_stream_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
-                if reason == "device_busy":
-                    return ApiResult(409, error_body("phone_operation_busy"))
-                return ApiResult(502, error_body("remote_access_platform_error"))
+        try:
+            return opener(
+                device_id=session.device_id,
+                platform_username=session.platform_username,
+                platform_password=secret,
+            )
+        except RemoteAccessPlatformError as exc:
+            logger.warning("in_app_stream_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            return ApiResult(502, error_body("remote_access_platform_error"))
 
     def complete_setup(self, customer_id: str, rental_id: str) -> ApiResult:
         auth = self._authorize(customer_id, rental_id, None)
@@ -640,9 +620,7 @@ class RemoteAccessService:
             device_id = session.device_id
         if not device_id:
             return _forbidden("slot_not_mapped")
-        with self._gads_slot_lock(slot, timeout=_SLOT_LOCK_SESSION_TIMEOUT) as acquired:
-            if not acquired:
-                return ApiResult(409, error_body("phone_operation_busy"))
+        with self._slot_op_lock(slot):
             result = self._end_session(str(rental_id), slot, status=STATUS_RELEASED)
             if result.http_status not in (200, 404):
                 return result
@@ -1052,9 +1030,7 @@ class RemoteAccessService:
         return False
 
     def _end_session(self, rental_id: str, slot_id: int, *, status: str) -> ApiResult:
-        with self._gads_slot_lock(slot_id, timeout=_SLOT_LOCK_SESSION_TIMEOUT) as acquired:
-            if not acquired:
-                return ApiResult(409, error_body("phone_operation_busy"))
+        with self._slot_op_lock(slot_id):
             return self._end_session_locked(rental_id, slot_id, status=status)
 
     def _end_session_locked(self, rental_id: str, slot_id: int, *, status: str) -> ApiResult:
@@ -1111,14 +1087,13 @@ class RemoteAccessService:
             return lock
 
     @contextmanager
-    def _gads_slot_lock(self, slot_id: int, *, timeout: float) -> Iterator[bool]:
+    def _slot_op_lock(self, slot_id: int) -> Iterator[None]:
         lock = self._slot_lock(slot_id)
-        acquired = lock.acquire(timeout=max(0.0, float(timeout)))
+        lock.acquire()
         try:
-            yield acquired
+            yield
         finally:
-            if acquired:
-                lock.release()
+            lock.release()
 
     def _run_prepare_flow(self, auth: AuthorizedRental, qr_url: str, job_id: str) -> None:
         try:

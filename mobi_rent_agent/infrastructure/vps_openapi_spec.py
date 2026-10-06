@@ -859,7 +859,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "201": {"description": "Created; in-app session (`session_mode=in_app`, `stream_path`)"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
-                    "409": {"description": "remote_access_busy | phone_operation_busy"},
+                    "409": {"description": "remote_access_busy"},
                     "502": {"description": "remote_access_platform_error"},
                     "503": {"description": "remote_access_not_configured"},
                 },
