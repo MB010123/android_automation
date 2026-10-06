@@ -31,6 +31,12 @@ logger = logging.getLogger("farm_agent.remote_access_place_qr")
 
 
 def _poc_slot_gate(agent_config: AgentConfig | None, slot_id: int) -> FarmTaskResult | None:
+    """Legacy Slot-1 POC allowlist.
+
+    Unused by customer QR placement, in-app GADS, activation observation, or
+    complete. Silent eSIM / companion ``provision_esim`` still uses
+    ``PROVISIONING_ALLOWED_SLOT_IDS`` (default Slot 1), not this gate.
+    """
     if agent_config is None:
         return FarmTaskResult(ok=False, http_status=503, error="agent_not_configured")
     if not getattr(agent_config, "remote_access_poc_enabled", False):
@@ -47,11 +53,11 @@ def _poc_slot_gate(agent_config: AgentConfig | None, slot_id: int) -> FarmTaskRe
 
 
 def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | None:
-    """QR Camera push enable-flag only.
+    """Customer remote-access Farm enable-flag only.
 
     Does not read ``remote_access_poc_slot_ids`` / ``REMOTE_ACCESS_POC_SLOT_IDS``.
-    Any bay present in ``slot_map.json`` may receive a Camera image. GADS and
-    activation observation keep ``_poc_slot_gate``.
+    QR placement and read-only activation observation may run for any bay in
+    ``slot_map.json``. Customer JWT → rental → bay binding is enforced on the VPS.
     """
     if agent_config is None:
         return FarmTaskResult(ok=False, http_status=503, error="agent_not_configured")
@@ -460,9 +466,14 @@ def run_remote_access_activation_status(
     agent_config: AgentConfig | None,
     command_runner: AdbCommandRunner | None = None,
 ) -> FarmTaskResult:
-    """Read-only SIM/eSIM observation. No provision_esim, no profile mutation."""
+    """Read-only SIM/eSIM observation. No provision_esim, no profile mutation.
+
+    Enable-flag only on the Farm. Slot identity comes from the VPS-authorized
+    ``farm_slot_id`` resolved through ``slot_map.json``. Does not apply
+    ``REMOTE_ACCESS_POC_SLOT_IDS``.
+    """
     slot_id = int(request.farm_slot_id)
-    gated = _poc_slot_gate(agent_config, slot_id)
+    gated = _place_qr_config_gate(agent_config)
     if gated is not None:
         return gated
     serial = str(slot_map.get(slot_id) or "").strip()

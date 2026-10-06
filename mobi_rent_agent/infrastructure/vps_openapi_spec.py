@@ -819,13 +819,15 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         },
         "/rentals/{rental_id}/remote-access": {
             "get": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "Current remote-access session for the caller's rental",
                 "description": (
-                    "Proof of concept, disabled unless `REMOTE_ACCESS_POC_ENABLED=true` and the rental's slot is in "
-                    "`REMOTE_ACCESS_POC_SLOT_IDS`. The backend verifies customer -> rental -> slot -> device "
-                    "server-side; any failure is `403 forbidden`. Never returns platform credentials."
-                    " Includes `activation_state` (REMOTE_ACCESS_READY | DEVICE_REBOOTING | "
+                    "Disabled unless `REMOTE_ACCESS_POC_ENABLED=true`. The rental bay must have a unique GADS "
+                    "workspace in `gads_workspaces.json` (bays 1–20). The backend verifies "
+                    "customer JWT -> rental -> assigned bay -> Farm-mapped device -> that bay's workspace "
+                    "server-side; any failure is `403 forbidden`. Never returns platform credentials, serials, "
+                    "UDIDs, workspace ids, or GADS admin JWT. "
+                    "Includes `activation_state` (REMOTE_ACCESS_READY | DEVICE_REBOOTING | "
                     "CUSTOMER_ACTIVATION_REQUIRED | ACTIVATING | ACTIVE | FAILED), `qr_ready`, and `guidance`. "
                     "When the session is active and not mid-reboot, GET runs the same read-only Farm observation "
                     "as `activation-status` and persists `confirmed`/`partial` so Refresh can return `ACTIVE`."
@@ -839,7 +841,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             },
             "post": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "Create (or rotate) temporary remote access for the caller's rental",
                 "description": (
                     "Creates a per-rental GADS lease on the assigned Pixel and returns an in-app session. "
@@ -863,7 +865,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         },
         "/rentals/{rental_id}/remote-access/{action}": {
             "get": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "Proxied phone stream (`action=stream`)",
                 "description": (
                     "`GET .../stream` proxies the assigned device MJPEG from GADS through the VPS. "
@@ -888,7 +890,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             },
             "post": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status | control | complete",
                 "description": (
                     "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
@@ -938,7 +940,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         },
         "/rentals/{rental_id}/esim/upload": {
             "post": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "Upload eSIM QR image onto the rental Pixel Camera",
                 "description": (
                     "Customer JWT only. Multipart field `qr_image` (PNG/JPG/WEBP). "
@@ -1006,7 +1008,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         },
         "/rentals/{rental_id}/cancel": {
             "post": {
-                "tags": ["Remote access (POC, Slot 1)"],
+                "tags": ["Remote access (in-app setup)"],
                 "summary": "Customer cancel: revoke remote access and start cleanup",
                 "description": (
                     "Customer JWT. Immediately revokes the GADS lease, runs safe QR-artifact cleanup "

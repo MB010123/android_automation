@@ -19,6 +19,13 @@ def test_unique_workspace_map_drops_shared_ids():
     assert cleaned == {1: "solo"}
 
 
+def test_twenty_unique_workspaces_are_kept():
+    mapping = {bay: f"ws-{bay:02d}" for bay in range(1, 21)}
+    cleaned = unique_workspace_map(mapping)
+    assert cleaned == mapping
+    assert len(set(cleaned.values())) == 20
+
+
 def test_merge_uses_slot1_fallback_when_file_omits_bay1():
     merged = merge_workspace_map({8: "ws-8"}, fallback_slot1="ws-1")
     assert merged == {1: "ws-1", 8: "ws-8"}

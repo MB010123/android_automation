@@ -281,6 +281,8 @@ def _service(
     ttl_minutes: int = 60,
     workspace_map: dict[int, str] | None = None,
     gads_slot_ids: tuple[int, ...] | None = None,
+    prepare_slot_ids: tuple[int, ...] | None = (1,),
+    observe_slot_ids: tuple[int, ...] | None = (1,),
     voidfix_package: str | None = None,
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
@@ -311,8 +313,8 @@ def _service(
         background_runner=lambda fn: fn(),  # synchronous in tests
         workspace_map=workspace_map if workspace_map is not None else {1: "ws-poc"},
         gads_slot_ids=gads_slot_ids if gads_slot_ids is not None else allowed,
-        prepare_slot_ids=(1,),
-        observe_slot_ids=(1,),
+        prepare_slot_ids=prepare_slot_ids,
+        observe_slot_ids=observe_slot_ids,
         voidfix_android_package=voidfix_package,
     )
     return service, store, clock
@@ -800,8 +802,8 @@ def test_j_default_config_is_disabled_and_slot1_only(monkeypatch, tmp_path: Path
     assert config.remote_access_poc_enabled is False
     assert config.remote_access_poc_slot_ids == (1,)
     assert config.remote_access_slot_ids is None
-    assert config.remote_access_prepare_slot_ids == (1,)
-    assert config.remote_access_observe_slot_ids == (1,)
+    assert config.remote_access_prepare_slot_ids is None
+    assert config.remote_access_observe_slot_ids is None
     assert config.remote_access_platform_url is None
     monkeypatch.setenv("REMOTE_ACCESS_POC_SLOT_IDS", "1,3")
     monkeypatch.setenv("REMOTE_ACCESS_SESSION_TTL_MINUTES", "500")
@@ -1497,7 +1499,7 @@ def test_http_prepare_esim_ignores_body_qr_url(tmp_path: Path):
         server.shutdown()
 
 
-def test_activation_farm_task_refuses_other_slots():
+def test_activation_farm_task_allows_mapped_non_poc_slots():
     from application.remote_access_farm_task import run_remote_access_activation_status
 
     runner = _QrRunner()
@@ -1509,8 +1511,20 @@ def test_activation_farm_task_refuses_other_slots():
         agent_config=config,
         command_runner=runner,
     )
-    assert other.http_status == 403 and other.error == "slot_not_allowlisted"
-    assert runner.calls == []
+    assert other.error != "slot_not_allowlisted"
+    assert other.http_status != 403
+    assert runner.calls
+    assert {serial for serial, _ in runner.calls} == {SLOT2_SERIAL}
+
+
+def test_legacy_poc_slot_gate_still_slot1_only():
+    from application.remote_access_farm_task import _poc_slot_gate
+
+    config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
+    blocked = _poc_slot_gate(config, 2)
+    assert blocked is not None
+    assert blocked.http_status == 403 and blocked.error == "slot_not_allowlisted"
+    assert _poc_slot_gate(config, 1) is None
 
 
 SLOT7_SERIAL = "SERIAL-SLOT7-TEST"
@@ -1532,6 +1546,8 @@ def _gads_multi(tmp_path: Path, tenant: MemoryTenant, **kwargs):
             SLOT8_SERIAL: "ws-8",
             SLOT9_SERIAL: "ws-9",
         }
+    kwargs.setdefault("prepare_slot_ids", None)
+    kwargs.setdefault("observe_slot_ids", None)
     return _service(
         tmp_path,
         tenant=tenant,
@@ -1665,15 +1681,29 @@ def test_shared_gads_workspace_is_rejected(tmp_path: Path):
     assert platform.calls == []
 
 
-def test_phone8_gads_does_not_enable_prepare_esim(tmp_path: Path):
+def test_phone8_gads_enables_prepare_and_observe(tmp_path: Path):
     tenant = MemoryTenant()
     farm = FakeFarm()
+    farm.activation_details = {
+        "verdict": "ACTIVATION_PARTIAL",
+        "esim_profile_present": True,
+        "esim_enabled": False,
+        "network_registered": False,
+        "cellular": False,
+        "observation_complete": True,
+    }
     service, _, _ = _gads_multi(tmp_path, tenant, farm=farm)
     rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
-    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
-    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 403
-    assert service.activation_status_for_customer(CUSTOMER_A, rental).http_status == 403
-    assert not any(t["type"] == "remote_access_activation_status" for t in farm.tasks)
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201, created.body
+    prepared = service.prepare_esim(CUSTOMER_A, rental)
+    assert prepared.http_status == 202, prepared.body
+    observed = service.activation_status_for_customer(CUSTOMER_A, rental)
+    assert observed.http_status == 200, observed.body
+    assert any(t["type"] == "remote_access_activation_status" and t["slot"] == 8 for t in farm.tasks)
+    blob = json.dumps(observed.body)
+    assert SLOT8_SERIAL not in blob
+    assert "ws-8" not in blob
 
 
 def test_qr_upload_independent_of_gads_workspace_map(tmp_path: Path):

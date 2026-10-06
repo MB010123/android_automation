@@ -1,4 +1,4 @@
-"""Slot-1 remote-access proof of concept: authorization + orchestration.
+"""Customer in-app remote access: authorization + orchestration.
 
 Every public method enforces the chain
 
@@ -7,7 +7,7 @@ Every public method enforces the chain
 server-side. The browser never supplies a device id or slot id; the rental
 row (Lovable/Supabase tenant authority) decides the slot and the local slot
 map decides the device serial. Any failed link returns HTTP 403 and does
-nothing.
+nothing. GADS isolation is one unique workspace per Farm-mapped bay (1–20).
 
 The remote platform (GADS) only provides screen/input and a temporary
 lease. Rental ownership, QR security, eSIM records and billing stay in the
@@ -144,14 +144,14 @@ class RemoteAccessService:
         background_runner: Callable[[Callable[[], None]], None] | None = None,
         workspace_map: dict[int, str] | None = None,
         gads_slot_ids: tuple[int, ...] | None = None,
-        prepare_slot_ids: tuple[int, ...] = (1,),
-        observe_slot_ids: tuple[int, ...] = (1,),
+        prepare_slot_ids: tuple[int, ...] | None = None,
+        observe_slot_ids: tuple[int, ...] | None = None,
         voidfix_android_package: str | None = None,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
         # Full Farm/VPS serial inventory. GADS membership is workspace-per-bay,
-        # not this map's key set. prepare/observe stay on their own lists.
+        # not this map's key set. Unset prepare/observe follow GADS-enabled bays.
         self._devices = {
             int(slot): str(serial).strip()
             for slot, serial in slot_device_map.items()
@@ -165,8 +165,8 @@ class RemoteAccessService:
             }
         )
         self._gads_slots = None if gads_slot_ids is None else tuple(int(s) for s in gads_slot_ids)
-        self._prepare_slots = tuple(int(s) for s in prepare_slot_ids)
-        self._observe_slots = tuple(int(s) for s in observe_slot_ids)
+        self._prepare_slots = None if prepare_slot_ids is None else tuple(int(s) for s in prepare_slot_ids)
+        self._observe_slots = None if observe_slot_ids is None else tuple(int(s) for s in observe_slot_ids)
         self._voidfix_package = str(voidfix_android_package or "").strip() or None
         self._platform = platform
         self._store = store

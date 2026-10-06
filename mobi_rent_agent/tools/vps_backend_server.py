@@ -1228,19 +1228,21 @@ def _build_remote_access_service(
         farm_status_fetcher=farm_status_fetcher,
         workspace_map=workspaces,
         gads_slot_ids=getattr(config, "remote_access_slot_ids", None),
-        prepare_slot_ids=tuple(getattr(config, "remote_access_prepare_slot_ids", (1,)) or (1,)),
-        observe_slot_ids=tuple(getattr(config, "remote_access_observe_slot_ids", (1,)) or (1,)),
+        prepare_slot_ids=getattr(config, "remote_access_prepare_slot_ids", None),
+        observe_slot_ids=getattr(config, "remote_access_observe_slot_ids", None),
         event_recorder=event_store.append,
         esim_url_prefixes=esim_url_prefixes,
         session_ttl_minutes=int(getattr(config, "remote_access_session_ttl_minutes", 60)),
         reboot_timeout_seconds=float(getattr(config, "remote_access_reboot_timeout_seconds", 180.0)),
         voidfix_android_package=getattr(config, "voidfix_android_package", None),
     )
+    prepare_ids = getattr(config, "remote_access_prepare_slot_ids", None)
+    observe_ids = getattr(config, "remote_access_observe_slot_ids", None)
     logger.warning(
         "remote_access ENABLED workspaces=%s prepare=%s observe=%s mapped=%s",
         sorted(workspaces),
-        sorted(getattr(config, "remote_access_prepare_slot_ids", (1,)) or (1,)),
-        sorted(getattr(config, "remote_access_observe_slot_ids", (1,)) or (1,)),
+        "gads-enabled" if prepare_ids is None else sorted(prepare_ids),
+        "gads-enabled" if observe_ids is None else sorted(observe_ids),
         sorted(full_map),
     )
     return service, store

@@ -340,7 +340,9 @@ def test_place_qr_gate_ignores_poc_slot_allowlist():
     gate_names = _called_names(farm_qr._place_qr_config_gate)
     assert "remote_access_poc_slot_ids" not in gate_names
     activation_names = _called_names(farm_qr.run_remote_access_activation_status)
-    assert "_poc_slot_gate" in activation_names
+    assert "_place_qr_config_gate" in activation_names
+    assert "_poc_slot_gate" not in activation_names
+    assert "remote_access_poc_slot_ids" not in activation_names
     config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
     assert _place_qr_config_gate(config) is None
 
@@ -408,38 +410,59 @@ def test_unmapped_slot_qr_placement_is_rejected():
     assert runner.calls == []
 
 
-def test_activation_observation_remains_slot1_restricted():
+def test_activation_observation_allows_mapped_bays():
     runner = _QrRunner()
     config = _agent_config(remote_access_poc_enabled=True, remote_access_poc_slot_ids=(1,))
-    blocked = run_remote_access_activation_status(
+    slot_map = _slot_map_1_to_20()
+    for bay in (1, 2, 8, 15, 20):
+        runner.calls.clear()
+        result = run_remote_access_activation_status(
+            adb_path="adb",
+            slot_map=slot_map,
+            request=FarmTaskRequest(
+                job_id=f"act-{bay}",
+                task_type="remote_access_activation_status",
+                farm_slot_id=bay,
+                payload={},
+            ),
+            agent_config=config,
+            command_runner=runner,
+        )
+        assert result.error != "slot_not_allowlisted", bay
+        assert result.http_status != 403, (bay, result.error)
+        assert runner.calls
+        assert {serial for serial, _ in runner.calls} == {slot_map[bay]}
+    runner.calls.clear()
+    unmapped = run_remote_access_activation_status(
         adb_path="adb",
-        slot_map=_slot_map_1_to_20(),
+        slot_map={1: SLOT1_SERIAL},
         request=FarmTaskRequest(
-            job_id="act-2",
+            job_id="act-missing",
             task_type="remote_access_activation_status",
-            farm_slot_id=2,
+            farm_slot_id=15,
             payload={},
         ),
         agent_config=config,
         command_runner=runner,
     )
-    assert blocked.http_status == 403
-    assert blocked.error == "slot_not_allowlisted"
+    assert unmapped.ok is False
+    assert unmapped.error == "slot_not_found"
     assert runner.calls == []
-    allowed = run_remote_access_activation_status(
+    disabled = run_remote_access_activation_status(
         adb_path="adb",
-        slot_map=_slot_map_1_to_20(),
+        slot_map=slot_map,
         request=FarmTaskRequest(
-            job_id="act-1",
+            job_id="act-off",
             task_type="remote_access_activation_status",
-            farm_slot_id=1,
+            farm_slot_id=8,
             payload={},
         ),
-        agent_config=config,
+        agent_config=_agent_config(remote_access_poc_enabled=False, remote_access_poc_slot_ids=(1,)),
         command_runner=runner,
     )
-    assert allowed.error != "slot_not_allowlisted"
-    assert runner.calls  # Slot 1 observation may proceed past the allowlist
+    assert disabled.http_status == 403
+    assert disabled.error == "remote_access_poc_disabled"
+    assert runner.calls == []
 
 
 def test_provisioning_allowed_slot_ids_unchanged(monkeypatch):

@@ -73,15 +73,19 @@ class AgentConfig:
     slot_msisdn_map_path: str | None = None
     webhook_farm_dispatch_timeout_seconds: float = 180.0,
     webhook_farm_dispatch_max_attempts: int = 3
-    # Remote-access proof of concept (GADS behind the Mobi-Rent backend).
-    # Off by default; only slots in the allowlist may ever be exposed.
-    # This is remote screen/input for the customer's *manual* Android eSIM
-    # flow. It is not eSIM authorization and never touches EuiccManager.
+    # Remote-access (GADS behind the Mobi-Rent backend). Off by default.
+    # Customer in-app setup uses unique per-bay workspaces (1–20) when enabled.
+    # REMOTE_ACCESS_POC_SLOT_IDS is leftover and is not applied to QR, stream,
+    # control, observation, or complete. Provisioning stays on
+    # PROVISIONING_ALLOWED_SLOT_IDS (default Slot 1). This is remote
+    # screen/input for the customer's *manual* Android eSIM flow. It is not
+    # eSIM authorization and never touches EuiccManager.
     remote_access_poc_enabled: bool = False
     remote_access_poc_slot_ids: tuple[int, ...] = (1,)
     remote_access_slot_ids: tuple[int, ...] | None = None
-    remote_access_prepare_slot_ids: tuple[int, ...] = (1,)
-    remote_access_observe_slot_ids: tuple[int, ...] = (1,)
+    # None = every GADS-enabled bay (unique workspace). Explicit CSV restricts.
+    remote_access_prepare_slot_ids: tuple[int, ...] | None = None
+    remote_access_observe_slot_ids: tuple[int, ...] | None = None
     remote_access_platform_url: str | None = None
     remote_access_public_url: str | None = None
     remote_access_admin_username: str | None = None
@@ -225,15 +229,23 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
                     name="REMOTE_ACCESS_SLOT_IDS",
                 )
             ),
-            remote_access_prepare_slot_ids=parse_allowed_slot_ids(
-                os.getenv("REMOTE_ACCESS_PREPARE_SLOT_IDS"),
-                default=(1,),
-                name="REMOTE_ACCESS_PREPARE_SLOT_IDS",
+            remote_access_prepare_slot_ids=(
+                None
+                if os.getenv("REMOTE_ACCESS_PREPARE_SLOT_IDS") is None
+                else parse_allowed_slot_ids(
+                    os.getenv("REMOTE_ACCESS_PREPARE_SLOT_IDS"),
+                    default=(),
+                    name="REMOTE_ACCESS_PREPARE_SLOT_IDS",
+                )
             ),
-            remote_access_observe_slot_ids=parse_allowed_slot_ids(
-                os.getenv("REMOTE_ACCESS_OBSERVE_SLOT_IDS"),
-                default=(1,),
-                name="REMOTE_ACCESS_OBSERVE_SLOT_IDS",
+            remote_access_observe_slot_ids=(
+                None
+                if os.getenv("REMOTE_ACCESS_OBSERVE_SLOT_IDS") is None
+                else parse_allowed_slot_ids(
+                    os.getenv("REMOTE_ACCESS_OBSERVE_SLOT_IDS"),
+                    default=(),
+                    name="REMOTE_ACCESS_OBSERVE_SLOT_IDS",
+                )
             ),
             remote_access_platform_url=os.getenv("REMOTE_ACCESS_PLATFORM_URL") or None,
             remote_access_public_url=os.getenv("REMOTE_ACCESS_PUBLIC_URL") or None,

@@ -46,12 +46,12 @@ Do not deploy from this change set. Do not edit live GADS unless the VPS map is 
 Prerequisites:
 
 1. Farm Agent on the Windows farm PC (`MobiRentFarmAgent` scheduled task) listening `0.0.0.0:8790`.
-2. GADS hub + provider live; unique workspace per bay; Slot 1 UDID in `mobirent-poc-slot1`.
-3. VPS `REMOTE_ACCESS_POC_ENABLED=true`, `PROVISIONING_ALLOWED_SLOT_IDS=1`, workspace map installed, `VOIDFIX_ANDROID_PACKAGE` set to the Pixel's VoidFix package if you want complete→ready.
+2. GADS hub + provider live; **unique workspace per bay 1–20** in `gads_workspaces.json` (never share one workspace).
+3. VPS `REMOTE_ACCESS_POC_ENABLED=true`, `PROVISIONING_ALLOWED_SLOT_IDS=1` (legacy silent provision stays Slot 1), `REMOTE_ACCESS_WORKSPACE_MAP_PATH` installed, `VOIDFIX_ANDROID_PACKAGE` set, and **unset** `REMOTE_ACCESS_PREPARE_SLOT_IDS` / `REMOTE_ACCESS_OBSERVE_SLOT_IDS` (or they will keep complete/observe on Slot 1).
 4. Lovable: customer JWT against `https://api.loanerphones.com`; remove GADS website redirect; use `stream_path` + `control`.
 5. Pixel: Android eSIM UI and default-SMS role dialog reachable. No Device Owner / silent eSIM.
 
-Steps: rent Slot 1 → QR upload → POST remote-access → GET stream → customer eSIM confirm → customer VoidFix SMS approval → POST complete → session closed → phone ready.
+Steps: rent any mapped bay 1–20 → QR upload → POST remote-access → GET stream → customer eSIM confirm → customer VoidFix SMS approval → POST complete → session closed → phone ready.
 
 Cancel: POST `/rentals/{id}/cancel` then confirm the bay is absent from available until `POST /farm/slots/{bay}/cleanup-verified`.
 

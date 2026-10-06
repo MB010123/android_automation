@@ -1,7 +1,9 @@
-# Remote-access POC — Bay 1 / Slot 1 / Pixel 6 only
+# Remote-access — customer in-app setup (bays 1–20) and Slot-1 legacy notes
 
-Status: Slot-1 farm path live-tested. Customer HTTPS reverse proxy and VPS `.env` are
-operator-owned. Feature flag is OFF by default.
+Status: Customer in-app setup (stream, restricted controls, QR upload, eSIM
+observation, VoidFix verify, complete) is **all unique-workspace bays 1–20**.
+Companion `provision_esim` / `PROVISIONING_ALLOWED_SLOT_IDS` remains Slot 1.
+Feature flag is OFF by default.
 
 ## Production notes (after the Slot-1 POC)
 
@@ -78,13 +80,12 @@ self-hosted remote-access platform (GADS). The customer then completes the **nor
 Android eSIM UI** themselves (Settings → Network & internet → SIMs → Add eSIM → scan
 the QR the Farm Agent placed in the camera roll, or enter the code manually).
 
-This POC does **not**:
+This in-app flow does **not**:
 
 - install eSIM profiles silently, call `EuiccManager`, or send `provision_esim`;
 - use or request `WRITE_EMBEDDED_SUBSCRIPTIONS`, carrier privileges, Device Owner,
   factory reset, or any privileged Android image change;
-- change behavior for any slot other than those in `REMOTE_ACCESS_POC_SLOT_IDS`
-  (default `1`);
+- share one GADS workspace across bays (unique workspace per bay 1–20);
 - replace the Mobi-Rent backend for rentals, customers, slot ownership, QR upload,
   billing, or auth. The platform only provides physical access.
 
@@ -144,7 +145,10 @@ Isolation chain enforced by `application/remote_access_service.py::_authorize`:
 3. Tenant row for `rental_id` (Lovable "slot by rental") must exist and
    `row.user_id == customer_id`.
 4. Bay-keyed ownership (`owner_of_slot(bay)`) must also name this customer.
-5. `bay` must be in `REMOTE_ACCESS_POC_SLOT_IDS` and mapped in `slot_map.json`.
+5. `bay` must have a unique GADS workspace (from `gads_workspaces.json`, Slot 1 may
+   fall back to `REMOTE_ACCESS_WORKSPACE_ID`) and a Farm `slot_map.json` serial.
+   `REMOTE_ACCESS_POC_SLOT_IDS` is **not** applied to in-app session, stream,
+   control, observation, or complete.
 6. Rental end (`ends_at`/`end_at`/`rental_end`/`expires_at`/…) must not be past.
 7. For device routes, an *active* session for this rental/customer/slot/device must
    exist.
@@ -206,19 +210,27 @@ Set on the **VPS** (`tools/vps_backend_server.py`) and the **farm PC**
 (`tools/farm_agent_status_server.py`; only the first two matter there):
 
 ```
-REMOTE_ACCESS_POC_ENABLED=true          # default false
-REMOTE_ACCESS_POC_SLOT_IDS=1            # default 1; do not widen for the POC
+REMOTE_ACCESS_POC_ENABLED=true          # default false; enables customer in-app + Farm QR/observe
+REMOTE_ACCESS_POC_SLOT_IDS=1            # leftover; unused by customer in-app/QR/observe/complete
 REMOTE_ACCESS_PLATFORM_URL=http://<gads-hub>:10000
 REMOTE_ACCESS_PUBLIC_URL=https://remote.<your-domain>
 REMOTE_ACCESS_ADMIN_USERNAME=<dedicated backend admin>
 REMOTE_ACCESS_ADMIN_PASSWORD=<secret; VPS .env only>
-REMOTE_ACCESS_WORKSPACE_ID=<workspace containing only the Slot 1 device>
+REMOTE_ACCESS_WORKSPACE_ID=<Slot 1 fallback if the map omits bay 1>
+REMOTE_ACCESS_WORKSPACE_MAP_PATH=/opt/mobi-rent-agent/gads_workspaces.json
+# Unset PREPARE/OBSERVE so complete/observe follow unique workspaces 1–20.
+# If these remain 1, only Slot 1 can prepare-esim / activation-status.
+REMOTE_ACCESS_PREPARE_SLOT_IDS=
+REMOTE_ACCESS_OBSERVE_SLOT_IDS=
+VOIDFIX_ANDROID_PACKAGE=<Pixel VoidFix package>
 REMOTE_ACCESS_SESSION_TTL_MINUTES=60    # 5..360
 REMOTE_ACCESS_REBOOT_TIMEOUT_SECONDS=180
+PROVISIONING_ALLOWED_SLOT_IDS=1         # companion silent provision; keep Slot 1
 ```
 
-The VPS also needs `SLOT_MAP_PATH` (or `mobi_rent_agent/slot_map.json`) containing the
-Slot 1 entry so it can map slot → udid. Only allowlisted entries are loaded.
+The VPS also needs `SLOT_MAP_PATH` (or `mobi_rent_agent/slot_map.json`) containing
+all Farm bays so it can map slot → udid server-side. Shared GADS workspace ids are
+dropped. `REMOTE_ACCESS_POC_SLOT_IDS` does not filter the customer device map.
 
 ## Services required
 
@@ -232,8 +244,8 @@ Slot 1 entry so it can map slot → udid. Only allowlisted entries are loaded.
 ## Slot 1 mapping and device registration
 
 Exact mapping: `slot_map.json["1"]` → `18171FDF6005WG` (Bay 1, Pixel 6). The service
-never hardcodes the serial; it reads the existing slot map filtered to
-`REMOTE_ACCESS_POC_SLOT_IDS`.
+never hardcodes the serial; it reads the existing slot map. Customer GADS enablement
+is unique-workspace-per-bay, not `REMOTE_ACCESS_POC_SLOT_IDS`.
 
 Registration steps (manual, GADS Admin panel, no device changes yet):
 
