@@ -1,8 +1,9 @@
 """Remote-access session state per rental (SQLite, VPS side).
 
 Stores which rental currently holds a platform lease on which slot/device
-and when it expires. The platform password is *not* persisted: it is shown
-to the customer exactly once in the create response.
+and when it expires. The platform password is persisted only on the VPS so
+the in-app stream/control proxy can authenticate to GADS. It is never
+returned in public session views.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ from typing import Any
 
 from domain.remote_access import public_activation_view
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 STATUS_ACTIVE = "active"
 STATUS_REVOKED = "revoked"
@@ -65,6 +66,10 @@ class RemoteAccessSession:
     activation_observed: str | None = None
     activation_observed_at: float | None = None
     activation_evidence: dict[str, Any] | None = None
+    platform_secret: str | None = None
+    setup_phase: str | None = None
+    setup_complete: bool = False
+    voidfix_observed: str | None = None
 
     def is_active(self, now: float) -> bool:
         return self.status == STATUS_ACTIVE and now < self.expires_at
@@ -85,6 +90,12 @@ class RemoteAccessSession:
             "prepare_detail": self.prepare_detail,
             "activation_observed": self.activation_observed,
             "activation_observed_at": _iso_utc(self.activation_observed_at),
+            "session_mode": "in_app",
+            "setup_phase": self.setup_phase or "esim",
+            "setup_complete": bool(self.setup_complete),
+            "voidfix_observed": self.voidfix_observed,
+            "stream_path": f"/rentals/{self.rental_id}/remote-access/stream",
+            "allowed_controls": ["tap", "swipe", "type", "back"],
         }
         body.update(
             public_activation_view(
@@ -133,7 +144,11 @@ class RemoteAccessSessionStore:
                     prepare_job_id TEXT,
                     activation_observed TEXT,
                     activation_observed_at REAL,
-                    activation_evidence TEXT
+                    activation_evidence TEXT,
+                    platform_secret TEXT,
+                    setup_phase TEXT,
+                    setup_complete INTEGER,
+                    voidfix_observed TEXT
                 )
                 """
             )
@@ -158,13 +173,23 @@ class RemoteAccessSessionStore:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN activation_observed_at REAL")
             if "activation_evidence" not in columns:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN activation_evidence TEXT")
+        if version < 4:
+            if "platform_secret" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN platform_secret TEXT")
+            if "setup_phase" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN setup_phase TEXT")
+            if "setup_complete" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN setup_complete INTEGER")
+            if "voidfix_observed" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN voidfix_observed TEXT")
         self._conn.execute("UPDATE remote_access_schema_version SET version = ?", (SCHEMA_VERSION,))
         self._conn.commit()
 
     _COLUMNS = (
         "rental_id, customer_id, slot_id, device_id, platform_username, status, "
         "created_at, expires_at, ended_at, prepare_state, prepare_detail, prepare_job_id, "
-        "activation_observed, activation_observed_at, activation_evidence"
+        "activation_observed, activation_observed_at, activation_evidence, "
+        "platform_secret, setup_phase, setup_complete, voidfix_observed"
     )
 
     @staticmethod
@@ -192,6 +217,10 @@ class RemoteAccessSessionStore:
             activation_observed=row[12] if len(row) > 12 else None,
             activation_observed_at=float(row[13]) if len(row) > 13 and row[13] is not None else None,
             activation_evidence=evidence,
+            platform_secret=str(row[15]) if len(row) > 15 and row[15] else None,
+            setup_phase=str(row[16]) if len(row) > 16 and row[16] else None,
+            setup_complete=bool(row[17]) if len(row) > 17 and row[17] else False,
+            voidfix_observed=str(row[18]) if len(row) > 18 and row[18] else None,
         )
 
     def get(self, rental_id: str) -> RemoteAccessSession | None:
@@ -233,7 +262,7 @@ class RemoteAccessSessionStore:
             self._conn.execute(
                 f"""
                 INSERT OR REPLACE INTO remote_access_sessions ({self._COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.rental_id,
@@ -251,6 +280,10 @@ class RemoteAccessSessionStore:
                     session.activation_observed,
                     session.activation_observed_at,
                     json.dumps(evidence) if evidence else None,
+                    session.platform_secret,
+                    session.setup_phase,
+                    1 if session.setup_complete else 0,
+                    session.voidfix_observed,
                 ),
             )
             self._conn.commit()
@@ -259,7 +292,12 @@ class RemoteAccessSessionStore:
         current = self.get(rental_id)
         if current is None:
             return None
-        ended = replace(current, status=status, ended_at=time.time() if now is None else now)
+        ended = replace(
+            current,
+            status=status,
+            ended_at=time.time() if now is None else now,
+            platform_secret=None,
+        )
         self.upsert(ended)
         return ended
 

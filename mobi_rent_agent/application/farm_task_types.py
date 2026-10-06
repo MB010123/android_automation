@@ -11,6 +11,10 @@ SUPPORTED_TASK_TYPES = {
     "voidfix_repair",
     "remote_access_place_qr",
     "remote_access_activation_status",
+    "setup_session_inspect",
+    "setup_session_input",
+    "setup_session_voidfix_cycle",
+    "setup_session_safe_cleanup",
 }
 
 

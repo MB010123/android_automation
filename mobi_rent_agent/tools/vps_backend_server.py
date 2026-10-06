@@ -60,6 +60,7 @@ from infrastructure.lovable_inbound_webhook import deliver_inbound_to_lovable
 from infrastructure.slot_assignment_store import SlotAssignmentStore
 from infrastructure.slot_event_store import SlotEventStore
 from infrastructure.slot_reservation_store import SlotReservationStore
+from infrastructure.device_cleanup_store import DeviceCleanupStore
 from infrastructure.slot_status_store import SlotStatusStore
 from infrastructure.slot_public_id import public_id_for_farm_slot
 from infrastructure.vps_job_store import VpsJobStore
@@ -305,6 +306,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "unauthorized"})
                 return None
             return ctx
+        if kind == "rental_cancel":
+            if ctx is None or ctx.kind != "user":
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            return ctx
         if kind in REMOTE_ACCESS_KINDS:
             # Customer routes need an authenticated user; only `release`
             # (end of rental) may also come from the Lovable farm-service credential.
@@ -347,13 +353,7 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _handle_remote_access(self, route, ctx: AuthContext, payload: dict[str, Any] | None) -> bool:
-        """Remote-access POC. All authorization happens inside the service.
-
-        The browser only supplies the rental id in the path; slot and device
-        are derived server-side. ``payload`` is ignored on purpose so a
-        client can never smuggle a device_id/slot_id.
-        """
-        del payload
+        """Remote-access session. Slot/device are derived server-side from the rental."""
         service = self.remote_access_service
         if service is None or not service.enabled:
             self._send_json(403, error_body("forbidden"))
@@ -371,10 +371,20 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             self._send_json(result.http_status, result.body)
             return True
+        action = route.action
+        if action == "stream":
+            if method != "GET":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            opened = service.open_stream(customer_id or "", rental_id)
+            if hasattr(opened, "http_status") and hasattr(opened, "body"):
+                self._send_json(int(opened.http_status), dict(opened.body))
+                return True
+            self._proxy_device_stream(opened)
+            return True
         if method != "POST":
             self._send_json(405, {"ok": False, "error": "method_not_allowed"})
             return True
-        action = route.action
         if action == "revoke":
             result = service.revoke_remote_access(customer_id or "", None, rental_id)
         elif action == "release":
@@ -385,7 +395,6 @@ class Handler(BaseHTTPRequestHandler):
                     return True
                 result = service.release_device(slot_id, rental_id)
             else:
-                # A customer ending their own rental: revoke + release own slot.
                 result = service.revoke_remote_access(customer_id or "", None, rental_id)
                 if result.http_status == 200:
                     slot = result.body.get("slot_id")
@@ -399,11 +408,45 @@ class Handler(BaseHTTPRequestHandler):
             result = service.prepare_esim(customer_id or "", rental_id)
         elif action == "activation-status":
             result = service.activation_status_for_customer(customer_id or "", rental_id)
+        elif action == "control":
+            result = service.control_session(customer_id or "", rental_id, payload or {})
+        elif action == "complete":
+            result = service.complete_setup(customer_id or "", rental_id)
         else:
             self._send_json(404, {"error": "not_found"})
             return True
         self._send_json(result.http_status, result.body)
         return True
+
+    def _proxy_device_stream(self, upstream: Any) -> None:
+        """Copy GADS MJPEG through the VPS. Never expose the hub URL."""
+        status = int(getattr(upstream, "status_code", 502) or 502)
+        headers = getattr(upstream, "headers", {}) or {}
+        content_type = "multipart/x-mixed-replace"
+        if hasattr(headers, "get"):
+            content_type = str(headers.get("Content-Type") or content_type)
+        try:
+            if status != 200:
+                self._send_json(502, error_body("remote_access_platform_error"))
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self._apply_cors()
+            self.end_headers()
+            iterator = getattr(upstream, "iter_content", None)
+            chunks = iterator(8192) if callable(iterator) else []
+            for chunk in chunks:
+                if not chunk:
+                    continue
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        finally:
+            closer = getattr(upstream, "close", None)
+            if callable(closer):
+                closer()
 
     def _handle_esim_qr_upload(self, route, ctx: AuthContext) -> None:
         """Customer QR bytes → Farm Agent Camera push. No GADS, no assign."""
@@ -566,6 +609,18 @@ class Handler(BaseHTTPRequestHandler):
         if route.kind == "farm_assign" and route.farm_bay is not None:
             assert self.farm_management_service is not None
             result = self.farm_management_service.assign_slot(route.farm_bay, payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "cleanup_verified" and route.farm_bay is not None:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.verify_cleanup(route.farm_bay)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "rental_cancel" and route.rental_id:
+            assert self.farm_management_service is not None
+            ctx = self._auth_context()
+            customer_id = ctx.user.user_id if ctx is not None and ctx.user is not None else ""
+            result = self.farm_management_service.cancel_rental_for_customer(customer_id, route.rental_id)
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "rental_end" and route.rental_id:
@@ -947,6 +1002,7 @@ def main() -> int:
     vps_job_store = VpsJobStore(Path(vps_jobs_db))
     assignment_store = SlotAssignmentStore(Path(vps_jobs_db).with_name("slot_assignments.sqlite"))
     reservation_store = SlotReservationStore(Path(vps_jobs_db).with_name("slot_reservations.sqlite"))
+    cleanup_store = DeviceCleanupStore(Path(vps_jobs_db).with_name("device_cleanup.sqlite"))
     event_store = SlotEventStore(Path(vps_jobs_db).with_name("slot_events.sqlite"))
     farm_task_client: FarmTaskClient | None = None
     if farm_url and farm_token:
@@ -1010,6 +1066,8 @@ def main() -> int:
         heartbeat_interval_seconds=heartbeat_interval,
         auth_store=tenant_store,
         esim_url_prefixes=auth_prefixes,
+        cleanup_store=cleanup_store,
+        farm_task_client=farm_task_client,
     )
 
     sms_rate_limiter = VpsRateLimiter(
@@ -1102,6 +1160,7 @@ def main() -> int:
         vps_job_store.close()
         assignment_store.close()
         reservation_store.close()
+        cleanup_store.close()
         event_store.close()
         status_store.close()
         if remote_access_store is not None:
@@ -1175,6 +1234,7 @@ def _build_remote_access_service(
         esim_url_prefixes=esim_url_prefixes,
         session_ttl_minutes=int(getattr(config, "remote_access_session_ttl_minutes", 60)),
         reboot_timeout_seconds=float(getattr(config, "remote_access_reboot_timeout_seconds", 180.0)),
+        voidfix_android_package=getattr(config, "voidfix_android_package", None),
     )
     logger.warning(
         "remote_access ENABLED workspaces=%s prepare=%s observe=%s mapped=%s",

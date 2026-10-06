@@ -54,6 +54,8 @@ REQUIRED_PATHS = [
     "/rentals/{rental_id}/remote-access/{action}",
     "/rentals/{rental_id}/esim/upload",
     "/rentals/{rental_id}/end",
+    "/rentals/{rental_id}/cancel",
+    "/farm/slots/{bay}/cleanup-verified",
     "/voidfix/inbound",
 ]
 

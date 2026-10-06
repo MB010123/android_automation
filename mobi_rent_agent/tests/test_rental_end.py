@@ -136,7 +136,7 @@ def test_normal_rental_end_releases_occupancy(tmp_path: Path):
     assert tenant.owner_of_slot(1) is None
     assert reservations.is_reserved(1) is False
     assert assign.is_assigned(1) is False
-    assert 1 in _available(svc)
+    assert 1 not in _available(svc)
     kinds = _event_types(events, 1)
     assert kinds.index("rental_end_started") < kinds.index("device_cleanup_required")
     assert kinds.index("device_cleanup_required") < kinds.index("slot_unclaimed")
@@ -146,6 +146,9 @@ def test_normal_rental_end_releases_occupancy(tmp_path: Path):
     assert "no_factory_reset" in cleanup[0].detail
     assert "no_silent_esim_delete" in cleanup[0].detail
     assert "wipe" not in cleanup[0].detail.lower()
+    verified = svc.verify_cleanup(1)
+    assert verified.http_status == 200
+    assert 1 in _available(svc)
 
 
 def test_expired_rental_ends_without_explicit_flag(tmp_path: Path):
@@ -158,7 +161,7 @@ def test_expired_rental_ends_without_explicit_flag(tmp_path: Path):
     assert result.http_status == 200
     assert tenant.owner_of_slot(1) is None
     assert reservations.is_reserved(1) is False
-    assert 1 in _available(svc)
+    assert 1 not in _available(svc)
 
 
 def test_gads_session_already_gone_is_idempotent(tmp_path: Path):
@@ -220,7 +223,7 @@ def test_reservation_release_is_idempotent(tmp_path: Path):
     assert first.http_status == 200
     assert second.http_status == 200
     assert reservations.is_reserved(1) is False
-    assert 1 in _available(svc)
+    assert 1 not in _available(svc)
 
 
 def test_reservation_not_released_before_end_condition(tmp_path: Path):
@@ -284,11 +287,18 @@ def test_bay_available_only_after_complete_release_sequence(tmp_path: Path):
     tenant.unclaim_fails = False
     done = svc.end_rental(first, explicit=True)
     assert done.http_status == 200
-    assert 1 in _available(svc)
+    assert 1 not in _available(svc)
 
     second = str(uuid.uuid4())
     seed_owned_slot(tenant, bay=1, rental_id=second, user_id=OWNER_B, qr_code_url=FAKE_QR)
     tenant.ensure_profile(OWNER_B, "b@example.com")
+    blocked_cleanup = svc.reserve_slot(1, {"rental_id": second, "user_id": OWNER_B})
+    assert blocked_cleanup.http_status == 409
+    assert blocked_cleanup.body["error"] == "cleanup_required"
+
+    verified = svc.verify_cleanup(1)
+    assert verified.http_status == 200
+    assert 1 in _available(svc)
     claimed = svc.reserve_slot(1, {"rental_id": second, "user_id": OWNER_B})
     assert claimed.http_status == 200
     assert reservations.get(1).rental_id == second
@@ -352,4 +362,6 @@ def test_sweep_releases_only_expired_rentals(tmp_path: Path):
     assert reservations.is_reserved(2) is False
     assert tenant.owner_of_slot(2) is None
     assert 1 not in _available(svc)
+    assert 2 not in _available(svc)
+    assert svc.verify_cleanup(2).http_status == 200
     assert 2 in _available(svc)

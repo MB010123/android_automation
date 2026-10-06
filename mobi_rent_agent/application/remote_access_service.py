@@ -22,7 +22,7 @@ import logging
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -30,6 +30,8 @@ from application.vps_api_contract import error_body
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
+from application.in_app_control_policy import decide_control
+from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
 from domain.remote_access import (
     RemoteAccessPlatform,
     RemoteAccessPlatformError,
@@ -144,6 +146,7 @@ class RemoteAccessService:
         gads_slot_ids: tuple[int, ...] | None = None,
         prepare_slot_ids: tuple[int, ...] = (1,),
         observe_slot_ids: tuple[int, ...] = (1,),
+        voidfix_android_package: str | None = None,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
@@ -164,6 +167,7 @@ class RemoteAccessService:
         self._gads_slots = None if gads_slot_ids is None else tuple(int(s) for s in gads_slot_ids)
         self._prepare_slots = tuple(int(s) for s in prepare_slot_ids)
         self._observe_slots = tuple(int(s) for s in observe_slot_ids)
+        self._voidfix_package = str(voidfix_android_package or "").strip() or None
         self._platform = platform
         self._store = store
         self._tenant = tenant_store
@@ -403,18 +407,15 @@ class RemoteAccessService:
             activation_observed=existing.activation_observed if existing is not None else None,
             activation_observed_at=existing.activation_observed_at if existing is not None else None,
             activation_evidence=existing.activation_evidence if existing is not None else None,
+            platform_secret=grant.platform_password,
+            setup_phase=existing.setup_phase if existing is not None else "esim",
+            setup_complete=existing.setup_complete if existing is not None else False,
+            voidfix_observed=existing.voidfix_observed if existing is not None else None,
         )
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        body = {"ok": True, **session.to_public_dict(now)}
-        # Shown exactly once. Temporary, per-rental, non-admin platform login.
-        body["platform_login"] = {
-            "url": grant.access_url,
-            "username": grant.platform_username,
-            "password": grant.platform_password,
-            "expires_at": session.expires_at,
-        }
+        body = {"ok": True, **session.to_public_dict(now), "ui_state": "live_phone_screen"}
         return ApiResult(201, body)
 
     def get_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
@@ -435,6 +436,158 @@ class RemoteAccessService:
         body = {"ok": True, **session.to_public_dict(self._clock())}
         if evidence:
             body["activation_evidence"] = evidence
+        return ApiResult(200, body)
+
+    def control_session(
+        self,
+        customer_id: str,
+        rental_id: str,
+        payload: dict[str, Any] | None,
+    ) -> ApiResult:
+        auth = self._authorize(customer_id, rental_id, None)
+        if isinstance(auth, ApiResult):
+            return auth
+        session = self._active_session(auth)
+        if isinstance(session, ApiResult):
+            return session
+        decision = decide_control(payload)
+        if not decision.allowed or decision.command is None:
+            return ApiResult(403, error_body("forbidden_control"))
+        guard = self._run_setup_guard(auth, session, recover=True)
+        if isinstance(guard, ApiResult):
+            return guard
+        if not guard.get("allowed"):
+            return ApiResult(409, error_body("setup_state_blocked"))
+        secret = session.platform_secret
+        if not secret:
+            return ApiResult(503, error_body("remote_access_not_configured"))
+        platform = self._require_platform()
+        if isinstance(platform, ApiResult):
+            return platform
+        command = decision.command
+        try:
+            forwarded = self._forward_control(platform, session, secret, command)
+        except RemoteAccessPlatformError as exc:
+            logger.warning("in_app_control_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            return ApiResult(502, error_body("remote_access_platform_error"))
+        if forwarded is False:
+            return ApiResult(502, error_body("remote_access_platform_error"))
+        return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
+
+    def open_stream(self, customer_id: str, rental_id: str) -> ApiResult | Any:
+        """Return a live MJPEG response object, or an ApiResult error."""
+        auth = self._authorize(customer_id, rental_id, None)
+        if isinstance(auth, ApiResult):
+            return auth
+        session = self._active_session(auth)
+        if isinstance(session, ApiResult):
+            return session
+        secret = session.platform_secret
+        platform = self._require_platform()
+        if isinstance(platform, ApiResult):
+            return platform
+        opener = getattr(platform, "open_mjpeg_stream", None)
+        if not callable(opener) or not secret:
+            return ApiResult(503, error_body("remote_access_not_configured"))
+        try:
+            return opener(
+                device_id=session.device_id,
+                platform_username=session.platform_username,
+                platform_password=secret,
+            )
+        except RemoteAccessPlatformError as exc:
+            logger.warning("in_app_stream_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            return ApiResult(502, error_body("remote_access_platform_error"))
+
+    def complete_setup(self, customer_id: str, rental_id: str) -> ApiResult:
+        auth = self._authorize(customer_id, rental_id, None)
+        if isinstance(auth, ApiResult):
+            return auth
+        session = self._active_session(auth)
+        if isinstance(session, ApiResult):
+            return session
+        evidence = self._observe_activation(auth, force=True)
+        session = self._store.get(auth.rental_id) or session
+        if str(session.activation_observed or "") != "confirmed":
+            return ApiResult(
+                409,
+                {
+                    **error_body("setup_incomplete"),
+                    "activation_observed": session.activation_observed,
+                    "ui_state": "esim_setup",
+                },
+            )
+        inspect = self._farm_setup_task(
+            "setup_session_inspect",
+            auth.slot_id,
+            {"phase": PHASE_VOIDFIX, "voidfix_package": self._voidfix_package, "recover": False},
+        )
+        if isinstance(inspect, ApiResult):
+            return inspect
+        details = inspect if isinstance(inspect, dict) else {}
+        if not self._voidfix_package:
+            return ApiResult(
+                409,
+                {
+                    **error_body("setup_incomplete"),
+                    "voidfix_observed": "package_unconfigured",
+                    "ui_state": "voidfix_approval",
+                    "manual_step": (
+                        "VOIDFIX_ANDROID_PACKAGE is unset. Customer default-SMS approval cannot be "
+                        "verified; do not mark the phone ready."
+                    ),
+                },
+            )
+        if not details.get("voidfix_is_default_sms"):
+            self._store.upsert(replace(session, setup_phase=PHASE_VOIDFIX, voidfix_observed="approval_required"))
+            return ApiResult(
+                409,
+                {
+                    **error_body("setup_incomplete"),
+                    "voidfix_observed": "approval_required",
+                    "ui_state": "voidfix_approval",
+                },
+            )
+        cycle = self._farm_setup_task(
+            "setup_session_voidfix_cycle",
+            auth.slot_id,
+            {"voidfix_package": self._voidfix_package},
+        )
+        if isinstance(cycle, ApiResult):
+            return cycle
+        cycle_details = cycle if isinstance(cycle, dict) else {}
+        if not cycle_details.get("voidfix_is_default_sms") or not cycle_details.get("voidfix_running"):
+            self._store.upsert(replace(session, setup_phase=PHASE_VOIDFIX, voidfix_observed="verify_failed"))
+            return ApiResult(
+                409,
+                {
+                    **error_body("setup_incomplete"),
+                    "voidfix_observed": "verify_failed",
+                    "ui_state": "voidfix_approval",
+                },
+            )
+        self._store.upsert(
+            replace(
+                session,
+                setup_phase="complete",
+                setup_complete=True,
+                voidfix_observed="running",
+            )
+        )
+        ended = self._end_session(auth.rental_id, auth.slot_id, status=STATUS_REVOKED)
+        body = {
+            "ok": True,
+            "setup_complete": True,
+            "ui_state": "phone_ready",
+            "remote_session": "closed",
+            "activation_observed": "confirmed",
+            "voidfix_observed": "running",
+        }
+        if ended.http_status != 200:
+            body["ok"] = False
+            body["error"] = "remote_access_platform_error"
+            return ApiResult(502, body)
+        _ = evidence
         return ApiResult(200, body)
 
     def revoke_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
@@ -766,6 +919,105 @@ class RemoteAccessService:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+
+    def _run_setup_guard(
+        self,
+        auth: AuthorizedRental,
+        session: RemoteAccessSession,
+        *,
+        recover: bool,
+    ) -> dict[str, Any] | ApiResult:
+        phase = str(session.setup_phase or PHASE_ESIM)
+        if phase not in {PHASE_ESIM, PHASE_VOIDFIX}:
+            phase = PHASE_ESIM
+        details = self._farm_setup_task(
+            "setup_session_inspect",
+            auth.slot_id,
+            {
+                "phase": phase,
+                "voidfix_package": self._voidfix_package,
+                "recover": recover,
+            },
+        )
+        if isinstance(details, ApiResult):
+            return details
+        if not details.get("allowed"):
+            logger.warning("setup_guard_blocked slot=%s reason=%s", auth.slot_id, details.get("reason"))
+        return details
+
+    def _farm_setup_task(
+        self,
+        task_type: str,
+        slot_id: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | ApiResult:
+        if self._farm is None:
+            return ApiResult(503, error_body("farm_unreachable"))
+        try:
+            response = self._farm.run_task(
+                task_type=task_type,
+                farm_slot_id=int(slot_id),
+                payload=payload,
+                job_id=str(uuid.uuid4()),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("setup_session_farm_failed reason=%s", exc.__class__.__name__)
+            return ApiResult(503, error_body("farm_unreachable"))
+        details = response.body.get("details") if isinstance(response.body, dict) else None
+        if not response.ok:
+            return ApiResult(502, error_body("farm_unreachable"))
+        return details if isinstance(details, dict) else {}
+
+    def _farm_input(self, slot_id: int, kind: str, command: Any) -> bool:
+        payload: dict[str, Any] = {"kind": kind}
+        if kind in {"tap", "swipe"}:
+            payload.update({"x": command.x, "y": command.y})
+        if kind == "swipe":
+            payload.update({"x2": command.x2, "y2": command.y2})
+        result = self._farm_setup_task("setup_session_input", slot_id, payload)
+        return isinstance(result, dict)
+
+    def _forward_control(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+        command: Any,
+    ) -> bool:
+        kwargs = {
+            "device_id": session.device_id,
+            "platform_username": session.platform_username,
+            "platform_password": secret,
+        }
+        if command.action == "tap":
+            tap = getattr(platform, "tap", None)
+            if not callable(tap):
+                return self._farm_input(session.slot_id, "tap", command)
+            tap(**kwargs, x=int(command.x), y=int(command.y))
+            return True
+        if command.action == "type":
+            type_text = getattr(platform, "type_text", None)
+            if not callable(type_text):
+                return False
+            type_text(**kwargs, text=str(command.text))
+            return True
+        if command.action == "swipe":
+            swipe = getattr(platform, "swipe", None)
+            forwarded = False
+            if callable(swipe):
+                forwarded = bool(swipe(**kwargs, x=int(command.x), y=int(command.y), x2=int(command.x2), y2=int(command.y2)))
+            if not forwarded:
+                return self._farm_input(session.slot_id, "swipe", command)
+            return True
+        if command.action == "back":
+            press_back = getattr(platform, "press_back", None)
+            forwarded = False
+            if callable(press_back):
+                forwarded = bool(press_back(**kwargs))
+            if not forwarded:
+                return self._farm_input(session.slot_id, "back", command)
+            return True
+        return False
 
     def _end_session(self, rental_id: str, slot_id: int, *, status: str) -> ApiResult:
         session = self._store.get(rental_id)

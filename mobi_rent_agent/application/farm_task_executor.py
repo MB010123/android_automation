@@ -116,6 +116,42 @@ def execute_controlled_farm_task(
             agent_config=agent_config,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "setup_session_inspect":
+        from application.setup_session_farm_task import run_setup_session_inspect
+
+        return run_setup_session_inspect(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "setup_session_input":
+        from application.setup_session_farm_task import run_setup_session_input
+
+        return run_setup_session_input(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "setup_session_voidfix_cycle":
+        from application.setup_session_farm_task import run_setup_session_voidfix_cycle
+
+        return run_setup_session_voidfix_cycle(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "setup_session_safe_cleanup":
+        from application.setup_session_farm_task import run_setup_session_safe_cleanup
+
+        return run_setup_session_safe_cleanup(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 

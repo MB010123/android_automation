@@ -842,16 +842,17 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "tags": ["Remote access (POC, Slot 1)"],
                 "summary": "Create (or rotate) temporary remote access for the caller's rental",
                 "description": (
-                    "Creates a per-rental, non-admin login on the remote-control platform, leases the slot's "
-                    "device to it for at most `REMOTE_ACCESS_SESSION_TTL_MINUTES` (capped by the rental end), and "
-                    "returns the one-time `platform_login` (url/username/password). The request body is ignored: the "
-                    "browser cannot choose a slot or device. The customer then performs the normal Android eSIM UI "
-                    "flow through the remote screen. This is not eSIM authorization."
+                    "Creates a per-rental GADS lease on the assigned Pixel and returns an in-app session. "
+                    "The browser never receives GADS admin credentials, a GADS JWT, hub-ui login, device "
+                    "list, serial/UDID, or unrestricted GADS URLs. `stream_path` is a VPS-proxied MJPEG URL "
+                    "on this API. Touch/control goes to POST `.../remote-access/control`. The request body "
+                    "is ignored: the browser cannot choose a slot or device. The customer still performs "
+                    "Android's real eSIM and default-SMS confirmations. This is not eSIM authorization."
                 ),
                 "security": user_bearer,
                 "parameters": [_RENTAL_PARAM],
                 "responses": {
-                    "201": {"description": "Created; `platform_login` is shown exactly once"},
+                    "201": {"description": "Created; in-app session (`session_mode=in_app`, `stream_path`)"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
                     "409": {"description": "remote_access_busy"},
@@ -861,9 +862,34 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             },
         },
         "/rentals/{rental_id}/remote-access/{action}": {
+            "get": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "Proxied phone stream (`action=stream`)",
+                "description": (
+                    "`GET .../stream` proxies the assigned device MJPEG from GADS through the VPS. "
+                    "Ownership is derived from the customer JWT → rental. Never returns GADS URLs or tokens. "
+                    "Fails closed if the session is revoked, expired, cancelled, or the bay/serial mapping changed."
+                ),
+                "security": user_bearer,
+                "parameters": [
+                    _RENTAL_PARAM,
+                    {
+                        "name": "action",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string", "enum": ["stream"]},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "multipart/x-mixed-replace MJPEG"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                    "502": {"description": "remote_access_platform_error"},
+                },
+            },
             "post": {
                 "tags": ["Remote access (POC, Slot 1)"],
-                "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status",
+                "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status | control | complete",
                 "description": (
                     "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
                     "return the device to the pool when the rental ends. `device-status`: platform/ADB state of the "
@@ -872,7 +898,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "downloads the rental's authoritative, allowlisted QR image and places it in "
                     "`/sdcard/DCIM/Camera/`, then reboots and waits (async; poll GET `prepare_state` / "
                     "`activation_state`). `activation-status`: read-only four-layer observation; `ACTIVE` only if "
-                    "activation is CONFIRMED. Customer request bodies are ignored. "
+                    "activation is CONFIRMED. `control`: server-side allowlist of tap/swipe/type/back only "
+                    "(Home, Recents, notification shade, keys, ADB, and device identity are rejected). "
+                    "`complete`: requires confirmed eSIM observation plus VoidFix default-SMS verification, then "
+                    "revokes the temporary remote session. Customer bodies other than `control` are ignored. "
                     "No `provision_esim`, no EuiccManager, no policy change."
                 ),
                 "security": user_or_farm,
@@ -884,7 +913,16 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "required": True,
                         "schema": {
                             "type": "string",
-                            "enum": ["revoke", "release", "device-status", "reboot", "prepare-esim", "activation-status"],
+                            "enum": [
+                                "revoke",
+                                "release",
+                                "device-status",
+                                "reboot",
+                                "prepare-esim",
+                                "activation-status",
+                                "control",
+                                "complete",
+                            ],
                         },
                     },
                 ],
@@ -950,9 +988,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "Farm-service only. Sequence: revoke GADS (idempotent; already-gone is success), "
                     "record operator device cleanup (`device_cleanup_required`; no factory reset, "
-                    "no silent eSIM delete), unclaim the tenant slot, then release the durable VPS "
-                    "reservation. Reservation is not released because an assign/provision job completed. "
-                    "A rental that has not ended keeps ownership and occupancy."
+                    "no silent eSIM delete), persist CLEANUP REQUIRED so the bay is not advertised or "
+                    "assigned until `POST /farm/slots/{bay}/cleanup-verified`, unclaim the tenant slot, then "
+                    "release the durable VPS reservation. Reservation is not released because an "
+                    "assign/provision job completed. A rental that has not ended keeps ownership and occupancy."
                 ),
                 "security": bearer,
                 "parameters": [_RENTAL_PARAM],
@@ -962,6 +1001,25 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "409": {"description": "rental_active"},
                     "503": {"description": "auth_unavailable | remote_access_platform_error"},
+                },
+            }
+        },
+        "/rentals/{rental_id}/cancel": {
+            "post": {
+                "tags": ["Remote access (POC, Slot 1)"],
+                "summary": "Customer cancel: revoke remote access and start cleanup",
+                "description": (
+                    "Customer JWT. Immediately revokes the GADS lease, runs safe QR-artifact cleanup "
+                    "(no factory reset, no silent eSIM delete), unclaims the tenant, releases occupancy, "
+                    "and marks the bay CLEANUP REQUIRED until an administrator verifies the device."
+                ),
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "200": {"description": "cancelled; cleanup required"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                    "409": {"description": "rental_active"},
                 },
             }
         },
@@ -1091,6 +1149,25 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         },
                     },
                     "503": {"$ref": "#/components/responses/FarmUnreachable"},
+                },
+            }
+        },
+        "/farm/slots/{bay}/cleanup-verified": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Admin: CLEANUP REQUIRED → available",
+                "description": (
+                    "Farm-service only. After Niaozun/GADS/ADB physical verification, clear the durable "
+                    "CLEANUP REQUIRED hold so the bay can be assigned again. Rejected while the bay is "
+                    "still reserved or assigned. Never performed by a customer session."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {
+                    "200": {"description": "cleanup cleared or already not required"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "slot_unavailable"},
                 },
             }
         },

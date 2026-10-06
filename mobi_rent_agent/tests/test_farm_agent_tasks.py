@@ -28,6 +28,7 @@ class FakeRunner(AdbCommandRunner):
         super().__init__()
         self._state = state
         self.calls: list[tuple[str, list[str]]] = []
+        self.dumpsys_activity = ""
 
     def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
         self.calls.append((serial, arguments))
@@ -35,6 +36,8 @@ class FakeRunner(AdbCommandRunner):
             return AdbCommandResult(stdout=self._state, stderr="")
         if arguments == ["reboot"]:
             return AdbCommandResult(stdout="", stderr="")
+        if arguments[:3] == ["shell", "dumpsys", "activity"]:
+            return AdbCommandResult(stdout=self.dumpsys_activity, stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
 
@@ -201,7 +204,27 @@ def test_airplane_and_voidfix_return_501():
         assert result.message
 
 
-def test_reboot_uses_mapped_serial_only():
+def test_setup_session_inspect_uses_mapped_serial():
+    slot_map = {1: "SERIAL-A"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 com.android.settings/.network.telephony.MobileNetworkActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=1,
+        payload={"phase": "esim", "recover": False},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    assert result.details["allowed"] is True
+    assert any(call[1][:2] == ["shell", "dumpsys"] for call in runner.calls)
     slot_map = {1: "SERIAL-A"}
     runner = FakeRunner()
     req = FarmTaskRequest(job_id="j", task_type="reboot", farm_slot_id=1, payload={})

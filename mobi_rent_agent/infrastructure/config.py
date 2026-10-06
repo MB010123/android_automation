@@ -91,6 +91,9 @@ class AgentConfig:
     remote_access_session_ttl_minutes: int = 60
     remote_access_reboot_timeout_seconds: float = 180.0
     remote_access_qr_url_prefixes: tuple[str, ...] = ()
+    # Android package of the VoidFix SMS app on the Pixel. Observation only;
+    # never assigned as default SMS without the customer confirming in Android.
+    voidfix_android_package: str | None = None
 
     @property
     def sms_enabled(self) -> bool:
@@ -248,6 +251,7 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             remote_access_qr_url_prefixes=_parse_url_prefixes(
                 os.getenv("REMOTE_ACCESS_QR_URL_PREFIXES") or os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES")
             ),
+            voidfix_android_package=(os.getenv("VOIDFIX_ANDROID_PACKAGE") or "").strip() or None,
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

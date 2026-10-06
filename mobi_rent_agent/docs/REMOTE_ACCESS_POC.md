@@ -186,8 +186,11 @@ Modified:
 
 | Method | Path | Result |
 | --- | --- | --- |
-| POST | `/rentals/{rental_id}/remote-access` | 201 session + `platform_login {url, username, password, expires_at}` (shown once) |
-| GET | `/rentals/{rental_id}/remote-access` | 200 session + `activation_state` / `activation_observed` / `activation_observed_at`. Active GET (not mid-reboot) observes with cooldown. |
+| POST | `/rentals/{rental_id}/remote-access` | 201 in-app session (`session_mode=in_app`, `stream_path`). No GADS hub-ui login. |
+| GET | `/rentals/{rental_id}/remote-access` | 200 session + `activation_state` / `setup_phase`. Never returns platform credentials. |
+| GET | `/rentals/{rental_id}/remote-access/stream` | MJPEG proxy of the assigned Pixel only |
+| POST | `/rentals/{rental_id}/remote-access/control` | tap / swipe / type / back (server allowlist) |
+| POST | `/rentals/{rental_id}/remote-access/complete` | 200 `phone_ready` only after confirmed eSIM + VoidFix verify; revokes session |
 | POST | `/rentals/{rental_id}/remote-access/revoke` | 200; deletes platform user, releases device lease |
 | POST | `/rentals/{rental_id}/remote-access/device-status` | 200 `{state, online, available, busy, adb_online}` |
 | POST | `/rentals/{rental_id}/remote-access/reboot` | 202; async reboot + wait, progress in `prepare_state` |
@@ -263,8 +266,9 @@ python -m pytest tests -q
 2. Confirm the device in the hub: backend-side sanity via a test customer's
    `POST …/remote-access/device-status` → `state: online`.
 3. Customer A (owner of an active Slot 1 rental) → `POST …/remote-access` → 201 with
-   `platform_login`. Open `url`, log in with the one-time credentials, confirm the
-   Pixel 6 screen is visible and taps/swipes/keyboard work.
+   `session_mode=in_app` and `stream_path`. Open the MJPEG via
+   `GET {stream_path}` with the customer JWT (LoanerPhones UI). Do **not** open the
+   GADS hub-ui. Confirm the Pixel screen is visible and allowed taps work.
 4. Customer B with their own rental → `POST /rentals/{B}/remote-access` → 403.
    Customer B → `POST /rentals/{A}/remote-access` → 403.
 5. Customer A → `POST …/remote-access/prepare-esim` → 202. Watch `GET …/remote-access`

@@ -31,10 +31,13 @@ RE_AUTH_RESEND = re.compile(r"^/auth/resend-verification$")
 # a slot or device; the backend derives both from the rental row.
 RE_REMOTE_ACCESS = re.compile(rf"^/rentals/({_UUID})/remote-access$")
 RE_REMOTE_ACCESS_ACTION = re.compile(
-    rf"^/rentals/({_UUID})/remote-access/(revoke|release|device-status|reboot|prepare-esim|activation-status)$"
+    rf"^/rentals/({_UUID})/remote-access/"
+    r"(revoke|release|device-status|reboot|prepare-esim|activation-status|control|complete|stream)$"
 )
 RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
+RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
+RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$")
 REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
 
 PUBLIC_AUTH_POST = frozenset(
@@ -51,7 +54,7 @@ USER_OWNED_KINDS = frozenset(
         "slot_esim",
     }
 )
-FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign", "rental_end"})
+FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign", "rental_end", "cleanup_verified"})
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,8 @@ class ParsedRoute:
 def parse_route(path: str) -> ParsedRoute | None:
     if m := RE_ESIM_UPLOAD.match(path):
         return ParsedRoute(kind="esim_qr_upload", rental_id=m.group(1))
+    if m := RE_RENTAL_CANCEL.match(path):
+        return ParsedRoute(kind="rental_cancel", rental_id=m.group(1))
     if m := RE_RENTAL_END.match(path):
         return ParsedRoute(kind="rental_end", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS.match(path):
@@ -78,6 +83,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="farm_available")
     if m := RE_FARM_ASSIGN.match(path):
         return ParsedRoute(kind="farm_assign", farm_bay=int(m.group(1)))
+    if m := RE_FARM_CLEANUP_VERIFIED.match(path):
+        return ParsedRoute(kind="cleanup_verified", farm_bay=int(m.group(1)))
     if m := RE_JOB.match(path):
         return ParsedRoute(kind="job", job_id=m.group(1))
     if m := RE_SLOT_SMS_SEND.match(path):

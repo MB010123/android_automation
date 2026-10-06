@@ -66,6 +66,21 @@ def _png_bytes() -> bytes:
 PNG_BYTES = _png_bytes()
 
 
+class FakeMjpeg:
+    def __init__(self, device_id: str) -> None:
+        self.device_id = device_id
+        self.status_code = 200
+        self.headers = {"Content-Type": "multipart/x-mixed-replace; boundary=frame"}
+        self.closed = False
+
+    def iter_content(self, chunk_size: int = 8192):
+        _ = chunk_size
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\nxxxx\r\n"
+
+    def close(self) -> None:
+        self.closed = True
+
+
 # ---------------------------------------------------------------------------
 # fakes
 # ---------------------------------------------------------------------------
@@ -134,6 +149,44 @@ class FakePlatform:
             in_use_by=self.leases.get(device_id),
         )
 
+    def tap(self, *, device_id: str, platform_username: str, platform_password: str, x: int, y: int) -> None:
+        self.calls.append(("tap", {"device_id": device_id, "x": x, "y": y, "username": platform_username}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+
+    def swipe(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        x: int,
+        y: int,
+        x2: int,
+        y2: int,
+    ) -> bool:
+        self.calls.append(("swipe", {"device_id": device_id, "x": x, "y": y, "x2": x2, "y2": y2}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return True
+
+    def type_text(self, *, device_id: str, platform_username: str, platform_password: str, text: str) -> None:
+        self.calls.append(("type", {"device_id": device_id, "text": text}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+
+    def press_back(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
+        self.calls.append(("back", {"device_id": device_id}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return True
+
+    def open_mjpeg_stream(self, *, device_id: str, platform_username: str, platform_password: str):
+        self.calls.append(("stream", {"device_id": device_id, "username": platform_username}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return FakeMjpeg(device_id)
+
 
 class FakeFarm:
     def __init__(self) -> None:
@@ -167,6 +220,28 @@ class FakeFarm:
             }
         if task_type == "remote_access_activation_status" and self.activation_details:
             body["details"] = self.activation_details
+        if task_type == "setup_session_inspect":
+            body["details"] = {
+                "activity": "com.android.settings/.network.telephony.MobileNetworkActivity",
+                "allowed": True,
+                "recovered": False,
+                "reason": "ok",
+                "phase": payload.get("phase") or "esim",
+                "sms_role_holder": "com.voidfix.app",
+                "voidfix_is_default_sms": True,
+                "voidfix_running": True,
+            }
+        if task_type == "setup_session_voidfix_cycle":
+            body["details"] = {
+                "cycled": True,
+                "voidfix_is_default_sms": True,
+                "voidfix_running": True,
+                "sms_role_holder": "com.voidfix.app",
+            }
+        if task_type == "setup_session_safe_cleanup":
+            body["details"] = {"removed_qr_artifacts": True, "factory_reset": False, "esim_deleted": False}
+        if task_type == "setup_session_input":
+            body["details"] = {"ok": True}
         return FarmTaskResponse(ok=True, http_status=200, body=body)
 
 
@@ -206,6 +281,7 @@ def _service(
     ttl_minutes: int = 60,
     workspace_map: dict[int, str] | None = None,
     gads_slot_ids: tuple[int, ...] | None = None,
+    voidfix_package: str | None = None,
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
     store = RemoteAccessSessionStore(tmp_path / f"ra-{uuid.uuid4().hex}.sqlite")
@@ -237,6 +313,7 @@ def _service(
         gads_slot_ids=gads_slot_ids if gads_slot_ids is not None else allowed,
         prepare_slot_ids=(1,),
         observe_slot_ids=(1,),
+        voidfix_android_package=voidfix_package,
     )
     return service, store, clock
 
@@ -333,11 +410,11 @@ def test_b_customer_a_gets_slot1_access(tmp_path: Path):
     assert result.http_status == 201, result.body
     assert result.body["active"] is True
     assert result.body["slot_id"] == 1
-    login = result.body["platform_login"]
-    assert login["url"] == "https://remote.example/"
-    assert login["username"] == platform_username_for_rental(rental)
-    assert login["password"].startswith("one-time-secret-")
-    assert platform.leases[SLOT1_SERIAL] == login["username"]
+    assert result.body["session_mode"] == "in_app"
+    assert "platform_login" not in result.body
+    assert "password" not in json.dumps(result.body)
+    assert result.body["stream_path"] == f"/rentals/{rental}/remote-access/stream"
+    assert platform.leases[SLOT1_SERIAL] == platform_username_for_rental(rental)
 
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.http_status == 200 and got.body["active"] is True
@@ -484,7 +561,7 @@ def test_f_release_revokes_platform_access(tmp_path: Path):
     service, store, clock = _service(tmp_path, tenant=tenant, platform=platform)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     created = service.create_remote_access(CUSTOMER_A, None, rental)
-    username = created.body["platform_login"]["username"]
+    username = platform_username_for_rental(rental)
     assert username in platform.users
 
     released = service.release_device(1, rental)
@@ -603,10 +680,11 @@ def test_i_admin_credentials_and_serial_never_leak(tmp_path: Path):
             for marker in admin_markers:
                 assert marker not in raw, (status, marker)
         created = responses[0][1]
-        assert created["platform_login"]["username"].startswith("rental-")
-        # The one-time login is a per-rental user; never the admin account
-        assert created["platform_login"]["username"] != "gads-admin-user"
-        # Subsequent GET does not replay the password
+        assert created["session_mode"] == "in_app"
+        assert "platform_login" not in created
+        assert "password" not in json.dumps(created)
+        assert created["stream_path"].endswith("/remote-access/stream")
+        # Subsequent GET does not replay credentials
         assert "platform_login" not in responses[1][1]
         assert responses[1][1]["activation_state"] == "REMOTE_ACCESS_READY"
     finally:
@@ -943,7 +1021,10 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route(f"/rentals/{slot}/esim/upload").rental_id == slot
     assert parse_route(f"/rentals/{slot}/end").kind == "rental_end"
     assert parse_route(f"/rentals/{slot}/end").rental_id == slot
-    assert parse_route(f"/rentals/{slot}/remote-access/activation-status").action == "activation-status"
+    assert parse_route(f"/rentals/{slot}/remote-access/control").action == "control"
+    assert parse_route(f"/rentals/{slot}/remote-access/stream").action == "stream"
+    assert parse_route(f"/rentals/{slot}/cancel").kind == "rental_cancel"
+    assert parse_route("/farm/slots/1/cleanup-verified").kind == "cleanup_verified"
     assert parse_route(f"/rentals/{slot}/remote-access/adb-shell") is None
     assert parse_route(f"/rentals/not-a-uuid/remote-access") is None
 
@@ -1071,6 +1152,7 @@ def _start_http(tmp_path: Path, *, with_service: bool = True):
     service = None
     if with_service:
         service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
+        farm_svc.set_remote_access(service)
     Handler.farm_service_token = FARM_TOKEN
     Handler.auth_service = AuthService(supabase=gotrue, tenant=tenant)
     Handler.auth_rate_limiter = AuthRateLimiter(limit=100, window_seconds=60.0, max_keys=64)
@@ -1105,7 +1187,8 @@ def test_http_full_customer_flow_and_isolation(tmp_path: Path):
         assert status == 403 and body["error"] == "forbidden"
         # A creates
         status, created, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access", token=token_a, body={})
-        assert status == 201 and created["platform_login"]["url"] == "https://remote.example/"
+        assert status == 201 and created["session_mode"] == "in_app"
+        assert "platform_login" not in created
         # A device status ok; B 403
         status, ds, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access/device-status", token=token_a, body={})
         assert status == 200 and ds["state"] == "busy" and ds["slot_id"] == 1

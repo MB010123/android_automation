@@ -232,6 +232,48 @@ class GadsHubClient:
         )
         return result.ok or result.status == 404
 
+    def device_control(
+        self,
+        method: str,
+        udid: str,
+        suffix: str,
+        *,
+        token: str,
+        json_body: dict[str, Any] | None = None,
+    ) -> GadsHttpResult:
+        """Customer-lease token only. Never the admin JWT."""
+        path = f"/device/{quote(udid, safe='')}/{suffix.lstrip('/')}"
+        return self._request(method, path, token=token, json_body=json_body)
+
+    def open_android_mjpeg(self, *, udid: str, token: str, timeout: float = 120.0):
+        """Raw MJPEG from the GADS hub device proxy. Caller must close."""
+        headers = {"Authorization": f"Bearer {token}", "Accept": "multipart/x-mixed-replace"}
+        try:
+            response = self._session.get(
+                f"{self._base}/device/{quote(udid, safe='')}/android-stream-mjpeg",
+                headers=headers,
+                timeout=timeout,
+                stream=True,
+            )
+        except requests.RequestException as exc:
+            raise RemoteAccessPlatformError(f"gads_unreachable: {exc.__class__.__name__}") from exc
+        if response.status_code == 404:
+            response.close()
+            try:
+                response = self._session.get(
+                    f"{self._base}/device/{quote(udid, safe='')}/android-stream",
+                    headers=headers,
+                    timeout=timeout,
+                    stream=True,
+                )
+            except requests.RequestException as exc:
+                raise RemoteAccessPlatformError(f"gads_unreachable: {exc.__class__.__name__}") from exc
+        if response.status_code != 200:
+            status = response.status_code
+            response.close()
+            raise RemoteAccessPlatformError(f"gads_stream_failed status={status}")
+        return response
+
 
 def _first_sse_data(response: requests.Response) -> str | None:
     """Return the payload of the first ``data:`` line, bounded in size."""
@@ -269,6 +311,7 @@ class GadsRemoteAccessPlatform:
         self._workspace_id = workspace_id
         self._public_url = public_url.rstrip("/") + "/"
         self._clock = clock
+        self._user_tokens: dict[str, tuple[str, float]] = {}
 
     def _require_registered_in_workspace(self, device_id: str, workspace_id: str) -> dict[str, Any]:
         expected = str(workspace_id or "").strip()
@@ -314,6 +357,7 @@ class GadsRemoteAccessPlatform:
         )
 
     def revoke_access(self, *, device_id: str, platform_username: str) -> bool:
+        self._user_tokens.pop(str(platform_username), None)
         released = self._client.release_device(device_id)
         deleted = self._client.delete_user(platform_username)
         return bool(released and deleted)
@@ -365,6 +409,104 @@ class GadsRemoteAccessPlatform:
             in_use_by=in_use_by,
             raw=raw,
         )
+
+    def _user_token(self, username: str, password: str) -> str:
+        now = self._clock()
+        cached = self._user_tokens.get(username)
+        if cached and (now - cached[1]) < 3000.0:
+            return cached[0]
+        token = self._client.authenticate(username, password)
+        self._user_tokens[username] = (token, now)
+        return token
+
+    def tap(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        x: int,
+        y: int,
+    ) -> None:
+        token = self._user_token(platform_username, platform_password)
+        result = self._client.device_control(
+            "POST",
+            device_id,
+            "tap",
+            token=token,
+            json_body={"x": int(x), "y": int(y)},
+        )
+        if not (200 <= result.status < 300):
+            raise RemoteAccessPlatformError(f"gads_tap_failed status={result.status}")
+
+    def swipe(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        x: int,
+        y: int,
+        x2: int,
+        y2: int,
+    ) -> bool:
+        token = self._user_token(platform_username, platform_password)
+        result = self._client.device_control(
+            "POST",
+            device_id,
+            "swipe",
+            token=token,
+            json_body={"x": int(x), "y": int(y), "endX": int(x2), "endY": int(y2)},
+        )
+        if result.status == 404:
+            return False
+        if not (200 <= result.status < 300):
+            raise RemoteAccessPlatformError(f"gads_swipe_failed status={result.status}")
+        return True
+
+    def type_text(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        text: str,
+    ) -> None:
+        token = self._user_token(platform_username, platform_password)
+        result = self._client.device_control(
+            "POST",
+            device_id,
+            "typeText",
+            token=token,
+            json_body={"text": text},
+        )
+        if not (200 <= result.status < 300):
+            raise RemoteAccessPlatformError(f"gads_type_failed status={result.status}")
+
+    def press_back(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ) -> bool:
+        token = self._user_token(platform_username, platform_password)
+        result = self._client.device_control("POST", device_id, "back", token=token, json_body={})
+        if result.status == 404:
+            return False
+        if not (200 <= result.status < 300):
+            raise RemoteAccessPlatformError(f"gads_back_failed status={result.status}")
+        return True
+
+    def open_mjpeg_stream(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ):
+        token = self._user_token(platform_username, platform_password)
+        return self._client.open_android_mjpeg(udid=device_id, token=token)
 
 
 def gads_platform_from_config(config: Any, *, session: requests.Session | None = None) -> GadsRemoteAccessPlatform | None:
