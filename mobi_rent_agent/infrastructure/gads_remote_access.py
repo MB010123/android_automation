@@ -493,11 +493,12 @@ class GadsRemoteAccessPlatform:
 def _screen_size(raw: dict[str, Any]) -> tuple[int | None, int | None]:
     info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
     sources = (info, raw)
+    # Generic width/height is often the MJPEG frame (e.g. 720), not the panel.
     pairs = (
         ("screenWidth", "screenHeight"),
         ("screen_width", "screen_height"),
         ("displayWidth", "displayHeight"),
-        ("width", "height"),
+        ("physicalWidth", "physicalHeight"),
     )
     for source in sources:
         if not isinstance(source, dict):

@@ -184,8 +184,11 @@ Coordinates are **native device pixels**, origin top-left, x right, y down.
 
 Resolution sources, in order:
 
-1. `GET .../device-status` field `native_resolution: { width, height }` when GADS reports it.
-2. Otherwise the **JPEG frame** `naturalWidth` × `naturalHeight` (or `ImageBitmap.width/height`).
+1. `GET .../device-status` field `native_resolution: { width, height }` from Farm
+   Agent `adb shell wm size` **Physical size** (not the MJPEG frame, which may be 720px).
+2. If that field is absent, `native_resolution_unavailable` explains why. Do not
+   invent 1080×2400. You may fall back to JPEG `naturalWidth`/`naturalHeight` only
+   as a last resort; that is the stream size, not native coordinates.
 3. Session JSON `coordinate_space` is always `"native_device_pixels"`.
 
 Do not assume a hardcoded Pixel size. Frame size can match the panel
@@ -391,7 +394,7 @@ caller's own stream as busy.
   "available": true,
   "slot_id": 1,
   "coordinate_space": "native_device_pixels",
-  "native_resolution": { "width": 1080, "height": 2400 }
+  "native_resolution": { "width": 1440, "height": 3120 }
 }
 ```
 

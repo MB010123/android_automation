@@ -350,8 +350,15 @@ def test_http_stream_auth_and_get_device_status(tmp_path: Path):
             assert chunk.startswith(b"--")
         status, ds, _ = _http("GET", f"{base}/rentals/{rental}/remote-access/device-status", token=token_a)
         assert status == 200, ds
+        assert status != 405
         assert ds["remote_access_busy"] is False
         assert ds["state"] == "online"
+        assert ds["native_resolution"] == {"width": 1440, "height": 3120}
+        status, posted, _ = _http(
+            "POST", f"{base}/rentals/{rental}/remote-access/device-status", token=token_a, body={}
+        )
+        assert status == 200
+        assert posted["native_resolution"] == ds["native_resolution"]
         status, tap, _ = _http(
             "POST",
             f"{base}/rentals/{rental}/remote-access/control",
@@ -377,11 +384,11 @@ def test_gads_own_in_use_is_not_customer_busy():
         online=True,
         available=False,
         in_use_by="other-internal",
-        screen_width=1080,
-        screen_height=2400,
+        screen_width=1440,
+        screen_height=3120,
     ).to_public_dict()
     assert pub["busy"] is False
-    assert pub["native_resolution"] == {"width": 1080, "height": 2400}
+    assert pub["native_resolution"] == {"width": 1440, "height": 3120}
 
 
 def test_twenty_slot_workspaces_remain_unique(tmp_path: Path):
@@ -402,3 +409,114 @@ def test_twenty_slot_workspaces_remain_unique(tmp_path: Path):
         assert service.control_session(owner, rental, {"action": "back"}).http_status == 200
         stream = service.open_stream(owner, rental)
         assert getattr(stream, "device_id") == serials[bay]
+
+
+def test_parse_wm_size_uses_physical_not_a_default():
+    from application.device_display_size import parse_wm_size
+
+    assert parse_wm_size("Physical size: 1440x3120\n") == (1440, 3120)
+    assert parse_wm_size("Physical size: 1344x2992\nOverride size: 720x1600\n") == (1344, 2992)
+    assert parse_wm_size("") is None
+    assert parse_wm_size("Physical size: 0x0\n") is None
+
+
+def test_get_device_status_returns_farm_wm_size_not_stream_frame(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.display_width = 1344
+    farm.display_height = 2992
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["native_resolution"] == {"width": 1344, "height": 2992}
+    assert status.body["native_resolution"] != {"width": 720, "height": 1600}
+    assert status.body["native_resolution"] != {"width": 1080, "height": 2400}
+    assert status.body["native_resolution"] != {"width": 1080, "height": 2220}
+    assert "native_resolution_unavailable" not in status.body
+    sized = [t for t in farm.tasks if t["type"] == "device_display_size"]
+    assert len(sized) == 1
+    again = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert again.body["native_resolution"] == {"width": 1344, "height": 2992}
+    assert len([t for t in farm.tasks if t["type"] == "device_display_size"]) == 1
+
+
+def test_get_device_status_omits_invented_resolution_when_wm_size_missing(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.fail_types.add("device_display_size")
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert "native_resolution" not in status.body
+    assert status.body["native_resolution_unavailable"] == "wm_size_unavailable"
+
+
+def test_http_get_device_status_is_not_405_and_enforces_ownership(tmp_path: Path):
+    server, port, tenant, _platform, _ = _start_http(tmp_path)
+    base = f"http://127.0.0.1:{port}"
+    try:
+        token_a, user_a = _signup(base, "ds-a@example.com")
+        token_b, _user_b = _signup(base, "ds-b@example.com")
+        rental = _rental(tenant, bay=1, user_id=user_a)
+        url = f"{base}/rentals/{rental}/remote-access/device-status"
+        status, _, _ = _http("GET", url)
+        assert status == 401
+        status, created, _ = _http("POST", f"{base}/rentals/{rental}/remote-access", token=token_a, body={})
+        assert status == 201, created
+        status, body, _ = _http("GET", url, token=token_a)
+        assert status == 200, body
+        assert status != 405
+        assert body["native_resolution"] == {"width": 1440, "height": 3120}
+        stolen = _http("GET", url, token=token_b)
+        assert stolen[0] == 403
+        assert stolen[1]["error"] == "rental_not_owned"
+        status, posted, _ = _http("POST", url, token=token_a, body={})
+        assert status == 200
+        assert posted["native_resolution"] == body["native_resolution"]
+        assert posted["state"] == body["state"]
+    finally:
+        server.shutdown()
+
+
+def test_device_display_size_task_reads_wm_size_from_adb():
+    from infrastructure.adb_companion import AdbCommandResult
+
+    class WmRunner(FakeRunner):
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+            if arguments == ["shell", "wm", "size"]:
+                return AdbCommandResult(stdout="Physical size: 1440x3120\n", stderr="")
+            return super().run(serial, arguments)
+
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map={1: "SERIAL-A"},
+        request=FarmTaskRequest(
+            job_id="job-ds",
+            task_type="device_display_size",
+            farm_slot_id=1,
+            payload={},
+        ),
+        agent_config=_config(),
+        deps=FarmTaskExecutorDeps(command_runner=WmRunner()),
+    )
+    assert result.ok is True
+    assert result.details == {"width": 1440, "height": 3120, "source": "wm_size_physical"}
+
+
+def test_no_hardcoded_pixel_resolution_in_device_status_code():
+    files = (
+        ROOT / "application" / "remote_access_service.py",
+        ROOT / "application" / "device_display_size.py",
+        ROOT / "tools" / "vps_backend_server.py",
+    )
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert "1080x2400" not in text
+        assert "1080x2220" not in text
+        assert "width\": 1080" not in text
+        assert "height\": 2400" not in text
+

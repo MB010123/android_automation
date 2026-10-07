@@ -194,6 +194,8 @@ class FakeFarm:
         self.fail_types: set[str] = set()
         self.activation_details: dict[str, Any] | None = None
         self.inspect_allowed = True
+        self.display_width = 1440
+        self.display_height = 3120
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
@@ -247,6 +249,12 @@ class FakeFarm:
             body["details"] = {"removed_qr_artifacts": True, "factory_reset": False, "esim_deleted": False}
         if task_type == "setup_session_input":
             body["details"] = {"ok": True}
+        if task_type == "device_display_size":
+            body["details"] = {
+                "width": int(self.display_width),
+                "height": int(self.display_height),
+                "source": "wm_size_physical",
+            }
         return FarmTaskResponse(ok=True, http_status=200, body=body)
 
 

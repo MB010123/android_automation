@@ -31,6 +31,7 @@ from application.vps_api_contract import error_body
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
+from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
 from application.in_app_control_policy import decide_control
 from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
 from domain.remote_access import (
@@ -207,6 +208,7 @@ class RemoteAccessService:
         self._flow_locks_guard = threading.Lock()
         self._slot_locks: dict[int, threading.RLock] = {}
         self._slot_locks_guard = threading.Lock()
+        self._native_resolution_cache: dict[int, tuple[int, int]] = {}
         reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
         if callable(reconcile):
             interrupted = reconcile()
@@ -764,8 +766,11 @@ class RemoteAccessService:
             "slot_id": auth.slot_id,
             "coordinate_space": "native_device_pixels",
         }
-        if isinstance(base.get("native_resolution"), dict):
-            body["native_resolution"] = base["native_resolution"]
+        native, unavailable = self._native_resolution_for_slot(auth.slot_id)
+        if native is not None:
+            body["native_resolution"] = native_resolution_body(native[0], native[1])
+        else:
+            body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
         return ApiResult(200, body)
 
     def reboot_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
@@ -1051,6 +1056,27 @@ class RemoteAccessService:
         if not response.ok:
             return ApiResult(502, error_body("farm_unreachable"))
         return details if isinstance(details, dict) else {}
+
+    def _native_resolution_for_slot(self, slot_id: int) -> tuple[tuple[int, int] | None, str | None]:
+        """Physical panel size from Farm ``wm size``. Never uses the MJPEG frame size."""
+        bay = int(slot_id)
+        cached = self._native_resolution_cache.get(bay)
+        if cached is not None:
+            return cached, None
+        details = self._farm_setup_task(DEVICE_DISPLAY_SIZE_TASK, bay, {})
+        if isinstance(details, ApiResult):
+            logger.warning("device_display_size_unavailable slot=%s", bay)
+            return None, "wm_size_unavailable"
+        try:
+            width = int(details.get("width"))
+            height = int(details.get("height"))
+        except (TypeError, ValueError):
+            return None, "wm_size_unreported"
+        if width <= 0 or height <= 0:
+            return None, "wm_size_unreported"
+        size = (width, height)
+        self._native_resolution_cache[bay] = size
+        return size, None
 
     def _farm_input(self, slot_id: int, kind: str, command: Any) -> bool:
         payload: dict[str, Any] = {"kind": kind}
