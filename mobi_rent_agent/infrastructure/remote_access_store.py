@@ -96,6 +96,7 @@ class RemoteAccessSession:
             "voidfix_observed": self.voidfix_observed,
             "stream_path": f"/rentals/{self.rental_id}/remote-access/stream",
             "allowed_controls": ["tap", "swipe", "type", "back"],
+            "coordinate_space": "native_device_pixels",
         }
         body.update(
             public_activation_view(

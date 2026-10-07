@@ -36,6 +36,8 @@ class RemoteDeviceStatus:
     online: bool
     available: bool
     in_use_by: str | None = None
+    screen_width: int | None = None
+    screen_height: int | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -48,13 +50,20 @@ class RemoteDeviceStatus:
             # Online assigned phones stay "online" for the owning customer.
             # Cross-rental conflict is HTTP 409 remote_access_busy, not this flag.
             state = "online"
-        return {
+        body: dict[str, Any] = {
             "slot_id": self.slot_id,
             "state": state,
             "online": self.online,
             "available": self.online,
             "busy": False,
+            "coordinate_space": "native_device_pixels",
         }
+        if self.screen_width and self.screen_height:
+            body["native_resolution"] = {
+                "width": int(self.screen_width),
+                "height": int(self.screen_height),
+            }
+        return body
 
 
 @dataclass(frozen=True)

@@ -858,21 +858,23 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "200": {"description": "Existing valid session reused"},
                     "201": {"description": "Created; in-app session (`session_mode=in_app`, `stream_path`)"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
-                    "403": {"description": "forbidden"},
-                    "409": {"description": "remote_access_busy"},
-                    "502": {"description": "remote_access_platform_error"},
-                    "503": {"description": "remote_access_not_configured"},
+                    "403": {"description": "rental_not_owned | session_expired"},
+                    "404": {"description": "rental_not_found"},
+                    "409": {"description": "remote_access_busy | phone_offline | remote_access_not_ready"},
+                    "502": {"description": "gads_unavailable"},
+                    "503": {"description": "gads_unavailable | phone_unavailable"},
                 },
             },
         },
         "/rentals/{rental_id}/remote-access/{action}": {
             "get": {
                 "tags": ["Remote access (in-app setup)"],
-                "summary": "Proxied phone stream (`action=stream`)",
+                "summary": "Phone stream (`stream`) or device status (`device-status`)",
                 "description": (
-                    "`GET .../stream` proxies the assigned device MJPEG from GADS through the VPS. "
-                    "Ownership is derived from the customer JWT → rental. Never returns GADS URLs or tokens. "
-                    "Fails closed if the session is revoked, expired, cancelled, or the bay/serial mapping changed."
+                    "`GET .../stream` proxies MJPEG (`multipart/x-mixed-replace; boundary=frame` unless GADS "
+                    "supplies another boundary) through the VPS. `GET .../device-status` returns customer-facing "
+                    "online/offline/unavailable state. The customer's own stream is never `remote_access_busy`. "
+                    "Never returns GADS URLs, tokens, serials, or workspace IDs."
                 ),
                 "security": user_bearer,
                 "parameters": [
@@ -881,14 +883,16 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "name": "action",
                         "in": "path",
                         "required": True,
-                        "schema": {"type": "string", "enum": ["stream"]},
+                        "schema": {"type": "string", "enum": ["stream", "device-status"]},
                     },
                 ],
                 "responses": {
-                    "200": {"description": "multipart/x-mixed-replace MJPEG"},
+                    "200": {"description": "MJPEG stream or JSON device-status"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
-                    "403": {"description": "forbidden"},
-                    "502": {"description": "remote_access_platform_error"},
+                    "403": {"description": "rental_not_owned | session_expired"},
+                    "404": {"description": "rental_not_found"},
+                    "409": {"description": "remote_access_not_ready | phone_offline | remote_access_busy"},
+                    "502": {"description": "gads_unavailable"},
                 },
             },
             "post": {
@@ -896,17 +900,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status | control | complete",
                 "description": (
                     "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
-                    "return the device to the pool when the rental ends. `device-status`: platform/ADB state of the "
-                    "rental's device; requires an active session. `reboot`: reboot via the existing Farm Agent ADB "
-                    "task, then wait for ADB and platform reconnect (async; poll GET). `prepare-esim`: Farm Agent "
-                    "downloads the rental's authoritative, allowlisted QR image and places it in "
-                    "`/sdcard/DCIM/Camera/`, then reboots and waits (async; poll GET `prepare_state` / "
-                    "`activation_state`). `activation-status`: read-only four-layer observation; `ACTIVE` only if "
-                    "activation is CONFIRMED. `control`: server-side allowlist of tap/swipe/type/back only "
-                    "(Home, Recents, notification shade, keys, ADB, and device identity are rejected). "
-                    "`complete`: requires confirmed eSIM observation plus VoidFix default-SMS verification, then "
-                    "revokes the temporary remote session. Customer bodies other than `control` are ignored. "
-                    "No `provision_esim`, no EuiccManager, no policy change."
+                    "return the device to the pool when the rental ends. `device-status`: also accepted as POST. "
+                    "`control`: tap/swipe/type/back only in native device pixels "
+                    "(swipe accepts `start_x`/`start_y`/`end_x`/`end_y` or `x`/`y`/`x2`/`y2`, optional `duration_ms`). "
+                    "Home, Recents, notification shade, keys, ADB, and device identity are rejected. "
+                    "`complete`: closes the remote session and runs safe QR cleanup; does not delete eSIM or factory-reset. "
+                    "`requires_manual_action` never blocks remote access. No `provision_esim`, no EuiccManager."
                 ),
                 "security": user_or_farm,
                 "parameters": [

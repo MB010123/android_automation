@@ -54,7 +54,8 @@ def test_customer_cancel_revokes_and_holds_cleanup(tmp_path: Path):
     assert tenant.owner_of_slot(1) is None
     assert 1 not in _available(svc)
     stranger = svc.cancel_rental_for_customer(OWNER_B, rental)
-    assert stranger.http_status == 403
+    assert stranger.http_status in {403, 404}
+    assert stranger.body["error"] in {"rental_not_owned", "rental_not_found"}
 
 
 def test_verify_rejected_while_still_occupied(tmp_path: Path):

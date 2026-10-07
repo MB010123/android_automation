@@ -218,8 +218,10 @@ def test_esim_becomes_active_only_after_confirmed_observation(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     premature = service.complete_setup(CUSTOMER_A, rental)
-    assert premature.http_status == 409
-    assert premature.body["error"] == "setup_incomplete"
+    assert premature.http_status == 200, premature.body
+    assert premature.body["setup_complete"] is False
+    assert premature.body["remote_session"] == "closed"
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     farm.activation_details = {"verdict": "ACTIVATION_CONFIRMED"}
     observed = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert observed.http_status == 200

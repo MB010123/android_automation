@@ -94,7 +94,7 @@ class FakePlatform:
         self.leases: dict[str, str] = {}  # device_id -> username
         self.users: set[str] = set()
         self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.online: dict[str, bool] = {SLOT1_SERIAL: True}
+        self.online: dict[str, bool] = {serial: True for serial in self.registered}
         self.fail_grant: str | None = None
         self.fail_revoke = False
         self.device_workspace: dict[str, str] = {}
@@ -161,8 +161,11 @@ class FakePlatform:
         y: int,
         x2: int,
         y2: int,
+        duration_ms: int | None = None,
     ) -> bool:
-        self.calls.append(("swipe", {"device_id": device_id, "x": x, "y": y, "x2": x2, "y2": y2}))
+        self.calls.append(
+            ("swipe", {"device_id": device_id, "x": x, "y": y, "x2": x2, "y2": y2, "duration_ms": duration_ms})
+        )
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
         return True
@@ -460,7 +463,7 @@ def test_c_customer_b_cannot_access_customer_a_slot1(tmp_path: Path):
         service.prepare_esim(CUSTOMER_B, rental_a),
     ):
         assert call.http_status == 403, call.body
-        assert call.body["error"] == "forbidden"
+        assert call.body["error"] == "rental_not_owned"
     assert len(platform.calls) == before
     assert platform.leases[SLOT1_SERIAL] == platform_username_for_rental(rental_a)
 
@@ -512,9 +515,9 @@ def test_d_http_body_device_id_is_ignored(tmp_path: Path):
         assert status == 201, body
         assert body["slot_id"] == 1
         assert platform.leases == {SLOT1_SERIAL: platform_username_for_rental(rental_a)}
-        # Unknown rental id -> 403 (not 404) so rentals cannot be enumerated
         status, body, _ = _http("GET", f"{base}/rentals/{uuid.uuid4()}/remote-access", token=token_a)
-        assert status == 403
+        assert status == 404
+        assert body["error"] == "rental_not_found"
     finally:
         server.shutdown()
 
@@ -550,8 +553,13 @@ def test_e_expired_session_denies_device_routes(tmp_path: Path):
     clock.now += 11 * 60
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.http_status == 200 and got.body["active"] is False and got.body["status"] == "expired"
-    assert service.device_status_for_customer(CUSTOMER_A, rental).http_status == 403
-    assert service.reboot_for_customer(CUSTOMER_A, rental).http_status == 403
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["session_active"] is False
+    assert status.body["remote_access_busy"] is False
+    reboot = service.reboot_for_customer(CUSTOMER_A, rental)
+    assert reboot.http_status == 403
+    assert reboot.body["error"] == "session_expired"
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +582,10 @@ def test_f_release_revokes_platform_access(tmp_path: Path):
     assert SLOT1_SERIAL not in platform.leases
     assert ("release", {"device_id": SLOT1_SERIAL}) in platform.calls
     assert store.get(rental).status == "released"
-    assert service.device_status_for_customer(CUSTOMER_A, rental).http_status == 403
+    after = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert after.http_status == 200
+    assert after.body["session_active"] is False
+    assert after.body["remote_access_busy"] is False
 
 
 def test_f_customer_revoke(tmp_path: Path):
@@ -612,7 +623,7 @@ def test_g_release_makes_slot1_available_for_next_rental(tmp_path: Path):
     assert created.http_status == 201
     assert platform.leases[SLOT1_SERIAL] == platform_username_for_rental(rental_b)
     # ...and A (old rental) is now locked out
-    assert service.get_remote_access(CUSTOMER_A, None, rental_a).http_status == 403
+    assert service.get_remote_access(CUSTOMER_A, None, rental_a).http_status == 404
 
 
 # ---------------------------------------------------------------------------
@@ -629,8 +640,8 @@ def test_h_reboot_only_slot1_via_existing_farm_task(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
 
     # Not allowlisted / not mapped slots are refused before any farm call
-    assert service.reboot_device(2).http_status == 403
-    assert service.reboot_device(19).http_status == 403
+    assert service.reboot_device(2).http_status == 503
+    assert service.reboot_device(19).http_status == 503
     assert farm.tasks == []
 
     result = service.reboot_device(1)
@@ -639,7 +650,7 @@ def test_h_reboot_only_slot1_via_existing_farm_task(tmp_path: Path):
     assert farm.tasks == [{"type": "reboot", "slot": 1, "payload": {}, "job_id": farm.tasks[0]["job_id"]}]
 
     # Customer path requires an active session, then runs the same flow
-    assert service.reboot_for_customer(CUSTOMER_A, rental).http_status == 403
+    assert service.reboot_for_customer(CUSTOMER_A, rental).http_status == 409
     service.create_remote_access(CUSTOMER_A, None, rental)
     status_seq._seq = [[1], [], []]
     accepted = service.reboot_for_customer(CUSTOMER_A, rental)
@@ -747,7 +758,7 @@ def test_create_fails_closed_when_public_url_not_https(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     result = service.create_remote_access(CUSTOMER_A, None, rental)
     assert result.http_status == 503
-    assert result.body["error"] == "remote_access_not_configured"
+    assert result.body["error"] == "gads_unavailable"
     assert "100.118" not in json.dumps(result.body)
     assert "password" not in json.dumps(result.body).lower()
 
@@ -817,10 +828,10 @@ def test_j_disabled_service_refuses_everything(tmp_path: Path):
     farm = FakeFarm()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm, enabled=False)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
-    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
-    assert service.get_device_status(1).http_status == 403
-    assert service.reboot_device(1).http_status == 403
-    assert service.release_device(1, rental).http_status == 403
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 503
+    assert service.get_device_status(1).http_status == 503
+    assert service.reboot_device(1).http_status == 503
+    assert service.release_device(1, rental).http_status == 503
     assert platform.calls == [] and farm.tasks == []
 
 
@@ -830,10 +841,10 @@ def test_j_other_slots_refused_even_with_valid_rental(tmp_path: Path):
     farm = FakeFarm()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental_b = _rental(tenant, bay=2, user_id=CUSTOMER_B)
-    assert service.create_remote_access(CUSTOMER_B, None, rental_b).http_status == 403
-    assert service.get_device_status(2).http_status == 403
-    assert service.reboot_device(2).http_status == 403
-    assert service.release_device(2, rental_b).http_status == 403
+    assert service.create_remote_access(CUSTOMER_B, None, rental_b).http_status == 503
+    assert service.get_device_status(2).http_status == 503
+    assert service.reboot_device(2).http_status == 503
+    assert service.release_device(2, rental_b).http_status == 503
     assert platform.calls == [] and farm.tasks == []
 
 
@@ -969,7 +980,7 @@ def test_prepare_esim_flow_places_qr_then_reboots(tmp_path: Path):
         tmp_path, tenant=tenant, platform=platform, farm=farm, farm_status=FarmStatusSequence([[1], [], []])
     )
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
-    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 403  # no active session yet
+    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 409  # no active session yet
     service.create_remote_access(CUSTOMER_A, None, rental)
     accepted = service.prepare_esim(CUSTOMER_A, rental)
     assert accepted.http_status == 202, accepted.body
@@ -1087,7 +1098,7 @@ def test_k_vps_server_without_poc_flag_has_no_remote_access_routes(tmp_path: Pat
         token_a, user_a = _signup(base, "a@example.com")
         rental = _rental(tenant, bay=1, user_id=user_a)
         status, body, _ = _http("POST", f"{base}/rentals/{rental}/remote-access", token=token_a, body={})
-        assert status == 403 and body["error"] == "forbidden"
+        assert status == 503 and body["error"] == "phone_unavailable"
         # Existing user route still works
         status, listed, _ = _http("GET", f"{base}/slots", token=token_a)
         assert status == 200 and listed["count"] == 1
@@ -1198,7 +1209,7 @@ def test_http_full_customer_flow_and_isolation(tmp_path: Path):
         assert status == 401
         # B on A's rental -> 403
         status, body, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access", token=token_b, body={})
-        assert status == 403 and body["error"] == "forbidden"
+        assert status == 403 and body["error"] == "rental_not_owned"
         # A creates
         status, created, _ = _http("POST", f"{base}/rentals/{rental_a}/remote-access", token=token_a, body={})
         assert status == 201 and created["session_mode"] == "in_app"
@@ -1221,7 +1232,7 @@ def test_http_full_customer_flow_and_isolation(tmp_path: Path):
             token=token_a,
             body={"esim_qr_url": "https://evil.example/qr.png", "slot_id": 2, "device_id": SLOT2_SERIAL},
         )
-        assert status == 403 and body["error"] == "forbidden"
+        assert status == 403 and body["error"] == "session_expired"
     finally:
         server.shutdown()
 
@@ -1412,8 +1423,8 @@ def test_activation_status_without_gads_session_is_forbidden(tmp_path: Path):
     service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=FakeFarm())
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     denied = service.activation_status_for_customer(CUSTOMER_A, rental)
-    assert denied.http_status == 403
-    assert denied.body["error"] == "forbidden"
+    assert denied.http_status == 409
+    assert denied.body["error"] == "remote_access_not_ready"
 
 
 def test_http_200_without_confirmation_is_not_active(tmp_path: Path):
@@ -1665,8 +1676,8 @@ def test_unregistered_phone8_gads_device_fails_closed(tmp_path: Path):
     service, _, _ = _gads_multi(tmp_path, tenant, platform=platform)
     rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
     result = service.create_remote_access(CUSTOMER_A, None, rental)
-    assert result.http_status == 502
-    assert result.body["error"] == "remote_access_platform_error"
+    assert result.http_status == 503
+    assert result.body["error"] == "phone_unavailable"
     assert SLOT1_SERIAL not in json.dumps(result.body)
 
 
@@ -1694,8 +1705,8 @@ def test_shared_gads_workspace_is_rejected(tmp_path: Path):
     )
     r8 = _rental(tenant, bay=8, user_id=CUSTOMER_A)
     r7 = _rental(tenant, bay=7, user_id=CUSTOMER_B)
-    assert service.create_remote_access(CUSTOMER_A, None, r8).http_status == 403
-    assert service.create_remote_access(CUSTOMER_B, None, r7).http_status == 403
+    assert service.create_remote_access(CUSTOMER_A, None, r8).http_status == 503
+    assert service.create_remote_access(CUSTOMER_B, None, r7).http_status == 503
     assert platform.calls == []
 
 
@@ -1745,7 +1756,7 @@ def test_qr_upload_independent_of_gads_workspace_map(tmp_path: Path):
         },
     )
     rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
-    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 503
     uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert uploaded.http_status == 200, uploaded.body
     assert farm.tasks[0]["slot"] == 8

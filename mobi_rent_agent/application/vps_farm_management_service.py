@@ -476,16 +476,18 @@ class VpsFarmManagementService:
         """Customer cancel: revoke GADS immediately, then fail-closed rental-end."""
         rental = str(rental_id or "").strip()
         customer = str(customer_id or "").strip()
-        if not RENTAL_ID_RE.match(rental) or not customer:
-            return ApiResult(403, error_body("forbidden"))
+        if not customer:
+            return ApiResult(401, error_body("unauthorized"))
+        if not RENTAL_ID_RE.match(rental):
+            return ApiResult(404, error_body("rental_not_found"))
         row = self._tenant_row_for_rental(rental)
         if isinstance(row, ApiResult):
             return row
         if not isinstance(row, dict):
-            return ApiResult(403, error_body("forbidden"))
+            return ApiResult(404, error_body("rental_not_found"))
         owner = str(row.get("user_id") or "").strip()
         if owner != customer:
-            return ApiResult(403, error_body("forbidden"))
+            return ApiResult(403, error_body("rental_not_owned"))
         return self.end_rental(rental, explicit=True)
 
     def verify_cleanup(self, bay: int) -> ApiResult:

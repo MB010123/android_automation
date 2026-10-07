@@ -356,7 +356,7 @@ class Handler(BaseHTTPRequestHandler):
         """Remote-access session. Slot/device are derived server-side from the rental."""
         service = self.remote_access_service
         if service is None or not service.enabled:
-            self._send_json(403, error_body("forbidden"))
+            self._send_json(503, error_body("phone_unavailable"))
             return True
         rental_id = route.rental_id or ""
         method = self.command
@@ -382,6 +382,13 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             self._proxy_device_stream(opened)
             return True
+        if action == "device-status":
+            if method not in {"GET", "POST"}:
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            result = service.device_status_for_customer(customer_id or "", rental_id)
+            self._send_json(result.http_status, result.body)
+            return True
         if method != "POST":
             self._send_json(405, {"ok": False, "error": "method_not_allowed"})
             return True
@@ -400,8 +407,6 @@ class Handler(BaseHTTPRequestHandler):
                     slot = result.body.get("slot_id")
                     if isinstance(slot, int):
                         result = service.release_device(slot, rental_id)
-        elif action == "device-status":
-            result = service.device_status_for_customer(customer_id or "", rental_id)
         elif action == "reboot":
             result = service.reboot_for_customer(customer_id or "", rental_id)
         elif action == "prepare-esim":
@@ -422,16 +427,19 @@ class Handler(BaseHTTPRequestHandler):
         """Copy GADS MJPEG through the VPS. Never expose the hub URL."""
         status = int(getattr(upstream, "status_code", 502) or 502)
         headers = getattr(upstream, "headers", {}) or {}
-        content_type = "multipart/x-mixed-replace"
+        content_type = "multipart/x-mixed-replace; boundary=frame"
         if hasattr(headers, "get"):
             content_type = str(headers.get("Content-Type") or content_type)
+        if "multipart/x-mixed-replace" in content_type.lower() and "boundary=" not in content_type.lower():
+            content_type = "multipart/x-mixed-replace; boundary=frame"
         try:
             if status != 200:
-                self._send_json(502, error_body("remote_access_platform_error"))
+                self._send_json(502, error_body("gads_unavailable"))
                 return
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
             self._apply_cors()
             self.end_headers()
             iterator = getattr(upstream, "iter_content", None)

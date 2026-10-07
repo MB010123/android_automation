@@ -374,6 +374,7 @@ class GadsRemoteAccessPlatform:
             available = online
             in_use_by = str(live.get("in_use_by") or "") or None
             break
+        width, height = _screen_size(raw)
         return RemoteDeviceStatus(
             slot_id=slot_id,
             device_id=device_id,
@@ -381,6 +382,8 @@ class GadsRemoteAccessPlatform:
             online=online,
             available=available,
             in_use_by=in_use_by,
+            screen_width=width,
+            screen_height=height,
             raw=raw,
         )
 
@@ -423,14 +426,18 @@ class GadsRemoteAccessPlatform:
         y: int,
         x2: int,
         y2: int,
+        duration_ms: int | None = None,
     ) -> bool:
         token = self._user_token(platform_username, platform_password)
+        body: dict[str, Any] = {"x": int(x), "y": int(y), "endX": int(x2), "endY": int(y2)}
+        if duration_ms is not None:
+            body["duration"] = int(duration_ms)
         result = self._client.device_control(
             "POST",
             device_id,
             "swipe",
             token=token,
-            json_body={"x": int(x), "y": int(y), "endX": int(x2), "endY": int(y2)},
+            json_body=body,
         )
         if result.status == 404:
             return False
@@ -481,6 +488,29 @@ class GadsRemoteAccessPlatform:
     ):
         token = self._user_token(platform_username, platform_password)
         return self._client.open_android_mjpeg(udid=device_id, token=token)
+
+
+def _screen_size(raw: dict[str, Any]) -> tuple[int | None, int | None]:
+    info = raw.get("info") if isinstance(raw.get("info"), dict) else {}
+    sources = (info, raw)
+    pairs = (
+        ("screenWidth", "screenHeight"),
+        ("screen_width", "screen_height"),
+        ("displayWidth", "displayHeight"),
+        ("width", "height"),
+    )
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for wkey, hkey in pairs:
+            try:
+                width = int(source[wkey])
+                height = int(source[hkey])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if width > 0 and height > 0:
+                return width, height
+    return None, None
 
 
 def gads_platform_from_config(config: Any, *, session: requests.Session | None = None) -> GadsRemoteAccessPlatform | None:

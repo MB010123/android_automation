@@ -152,7 +152,7 @@ def test_upload_requires_ownership(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     stolen = service.upload_esim_qr(CUSTOMER_B, rental, PNG_BYTES)
     assert stolen.http_status == 403
-    assert stolen.body["error_code"] == "forbidden"
+    assert stolen.body["error_code"] == "rental_not_owned"
     assert farm.tasks == []
     ok = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert ok.http_status == 200
@@ -271,7 +271,8 @@ def test_owned_slot2_qr_upload_succeeds(tmp_path: Path):
     )
     rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
     gads = service.create_remote_access(CUSTOMER_A, None, rental)
-    assert gads.http_status == 403
+    assert gads.http_status == 503
+    assert gads.body["error"] == "phone_unavailable"
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert result.http_status == 200, result.body
     assert result.body["placed"] is True
@@ -300,7 +301,7 @@ def test_owned_slots_3_to_20_follow_mapped_bay_authorization(tmp_path: Path):
     for bay in range(3, 21):
         farm.tasks.clear()
         rental = _rental(tenant, bay=bay, user_id=CUSTOMER_A)
-        assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
+        assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 503
         result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
         assert result.http_status == 200, (bay, result.body)
         assert farm.tasks[0]["slot"] == bay
@@ -314,7 +315,7 @@ def test_non_owner_slot2_qr_upload_is_forbidden(tmp_path: Path):
     rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
     stolen = service.upload_esim_qr(CUSTOMER_B, rental, PNG_BYTES)
     assert stolen.http_status == 403
-    assert stolen.body["error_code"] == "forbidden"
+    assert stolen.body["error_code"] == "rental_not_owned"
     assert stolen.body["step"] == "qr_upload"
     assert farm.tasks == []
 
@@ -325,8 +326,8 @@ def test_unmapped_bay_cannot_upload_qr(tmp_path: Path):
     service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1))
     rental = _rental(tenant, bay=2, user_id=CUSTOMER_A)
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
-    assert result.http_status == 403
-    assert result.body["error_code"] == "forbidden"
+    assert result.http_status == 503
+    assert result.body["error_code"] == "phone_unavailable"
     assert farm.tasks == []
 
 
@@ -335,8 +336,8 @@ def test_unknown_rental_qr_upload_is_rejected(tmp_path: Path):
     farm = FakeFarm()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm, farm_status=_mapped(1, 2))
     missing = service.upload_esim_qr(CUSTOMER_A, str(uuid.uuid4()), PNG_BYTES)
-    assert missing.http_status == 403
-    assert missing.body["error_code"] == "forbidden"
+    assert missing.http_status == 404
+    assert missing.body["error_code"] == "rental_not_found"
     assert farm.tasks == []
 
 
@@ -350,9 +351,9 @@ def test_slot2_gads_stays_blocked_slot1_gads_unchanged(tmp_path: Path):
     granted = service.create_remote_access(CUSTOMER_A, None, rental1)
     assert granted.http_status == 201
     blocked = service.create_remote_access(CUSTOMER_A, None, rental2)
-    assert blocked.http_status == 403
-    assert blocked.body.get("error") == "forbidden"
-    assert service.get_device_status(2).http_status == 403
+    assert blocked.http_status == 503
+    assert blocked.body.get("error") == "phone_unavailable"
+    assert service.get_device_status(2).http_status == 503
     assert [c[0] for c in platform.calls if c[0] == "grant"]
     assert not any(c[0] == "grant" and c[1].get("device_id") == SLOT2_SERIAL for c in platform.calls)
 

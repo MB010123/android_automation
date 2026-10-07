@@ -15,6 +15,19 @@ def test_allowed_tap_and_swipe():
     assert tap.allowed and tap.command is not None and tap.command.action == "tap"
     swipe = decide_control({"action": "swipe", "x": 100, "y": 800, "x2": 100, "y2": 400})
     assert swipe.allowed and swipe.command is not None and swipe.command.action == "swipe"
+    aliased = decide_control(
+        {
+            "action": "swipe",
+            "start_x": 10,
+            "start_y": 20,
+            "end_x": 30,
+            "end_y": 40,
+            "duration_ms": 250,
+        }
+    )
+    assert aliased.allowed and aliased.command is not None
+    assert aliased.command.x == 10 and aliased.command.y2 == 40
+    assert aliased.command.duration_ms == 250
 
 
 def test_type_and_back_allowed():
@@ -37,6 +50,7 @@ def test_home_recents_notification_and_keys_rejected():
     ):
         decision = decide_control(payload)
         assert decision.allowed is False, payload
+        assert decision.reason == "forbidden_control"
 
 
 def test_browser_cannot_name_another_device():
@@ -50,3 +64,14 @@ def test_browser_cannot_name_another_device():
         decision = decide_control({"action": "tap", "x": 1, "y": 1, key: value})
         assert decision.allowed is False
         assert decision.reason == "forbidden_control"
+
+
+def test_invalid_control_is_not_forbidden():
+    missing = decide_control({"action": "tap", "x": 1})
+    assert missing.allowed is False and missing.reason == "invalid_control"
+    unknown = decide_control({"action": "pinch", "x": 1, "y": 1})
+    assert unknown.allowed is False and unknown.reason == "invalid_control"
+    bad_duration = decide_control(
+        {"action": "swipe", "start_x": 1, "start_y": 2, "end_x": 3, "end_y": 4, "duration_ms": 0}
+    )
+    assert bad_duration.allowed is False and bad_duration.reason == "invalid_control"

@@ -185,7 +185,8 @@ def test_missing_workspace_bay_cannot_open_session(tmp_path: Path):
     )
     rental = _rental(tenant, bay=20, user_id=CUSTOMER_A)
     denied = service.create_remote_access(CUSTOMER_A, None, rental)
-    assert denied.http_status == 403
+    assert denied.http_status == 503
+    assert denied.body["error"] == "phone_unavailable"
     assert service.device_for_slot(20) is None
     assert service.device_for_slot(1) == SLOT1_SERIAL
 
@@ -202,8 +203,8 @@ def test_explicit_prepare_observe_csv_still_restricts(tmp_path: Path):
     )
     rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
-    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 403
-    assert service.activation_status_for_customer(CUSTOMER_A, rental).http_status == 403
+    assert service.prepare_esim(CUSTOMER_A, rental).http_status == 503
+    assert service.activation_status_for_customer(CUSTOMER_A, rental).http_status == 503
     assert not any(t["type"] == "remote_access_activation_status" for t in farm.tasks)
 
 

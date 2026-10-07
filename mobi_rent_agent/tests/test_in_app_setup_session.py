@@ -60,7 +60,8 @@ def test_wrong_expired_cancelled_and_missing_mapping_denied(tmp_path: Path):
     service.revoke_remote_access(CUSTOMER_A, None, rental2)
     assert service.open_stream(CUSTOMER_A, rental2).http_status == 403
     missing = service.create_remote_access(CUSTOMER_A, None, str(uuid.uuid4()))
-    assert missing.http_status == 403
+    assert missing.http_status == 404
+    assert missing.body["error"] == "rental_not_found"
 
 
 def test_missing_workspace_or_device_denied(tmp_path: Path):
@@ -76,7 +77,7 @@ def test_missing_workspace_or_device_denied(tmp_path: Path):
         workspace_map={},
         gads_slot_ids=(2,),
     )
-    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 403
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 503
 
 
 def test_stream_is_assigned_device_only_and_closes_after_revoke(tmp_path: Path):
@@ -112,8 +113,9 @@ def test_stream_fails_closed_if_mapping_changes(tmp_path: Path):
     session = store.get(rental)
     store.upsert(replace(session, device_id="OTHER-SERIAL"))
     denied = service.open_stream(CUSTOMER_A, rental)
-    assert getattr(denied, "http_status", None) == 403
-    assert service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 1, "y": 1}).http_status == 403
+    assert getattr(denied, "http_status", None) == 503
+    assert denied.body["error"] == "phone_unavailable"
+    assert service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 1, "y": 1}).http_status == 503
 
 
 def test_allowed_tap_swipe_and_blocked_controls(tmp_path: Path):
@@ -162,8 +164,12 @@ def test_complete_requires_esim_and_voidfix_then_revokes(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     premature = service.complete_setup(CUSTOMER_A, rental)
-    assert premature.http_status == 409
-    assert premature.body["error"] == "setup_incomplete"
+    assert premature.http_status == 200, premature.body
+    assert premature.body["setup_complete"] is False
+    assert premature.body["remote_session"] == "closed"
+    assert premature.body["esim_deleted"] is False
+    assert store.get(rental).status != STATUS_ACTIVE
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     store.set_activation_observed(rental, "confirmed")
     done = service.complete_setup(CUSTOMER_A, rental)
     assert done.http_status == 200, done.body
@@ -182,9 +188,11 @@ def test_complete_without_voidfix_package_does_not_report_ready(tmp_path: Path):
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     store.set_activation_observed(rental, "confirmed")
     result = service.complete_setup(CUSTOMER_A, rental)
-    assert result.http_status == 409
+    assert result.http_status == 200, result.body
     assert result.body["voidfix_observed"] == "package_unconfigured"
+    assert result.body["setup_complete"] is False
     assert result.body.get("ui_state") != "phone_ready"
+    assert result.body["remote_session"] == "closed"
 
 
 def _tenant():

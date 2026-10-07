@@ -9,6 +9,22 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 ALLOWED_ACTIONS = frozenset({"tap", "swipe", "type", "back"})
+FORBIDDEN_ACTIONS = frozenset(
+    {
+        "home",
+        "recents",
+        "notification",
+        "notifications",
+        "keyevent",
+        "keycode",
+        "adb",
+        "app",
+        "shell",
+        "key",
+        "power",
+        "recent",
+    }
+)
 FORBIDDEN_PAYLOAD_KEYS = frozenset(
     {
         "slot_id",
@@ -41,6 +57,27 @@ _MAX_COORD = 8192
 _MAX_TEXT = 64
 _TOP_SHADE_Y = 80
 _BOTTOM_NAV_Y = 2500
+_MIN_DURATION_MS = 1
+_MAX_DURATION_MS = 5000
+
+_TAP_KEYS = frozenset({"action", "x", "y"})
+_TYPE_KEYS = frozenset({"action", "text"})
+_BACK_KEYS = frozenset({"action"})
+_SWIPE_KEYS = frozenset(
+    {
+        "action",
+        "x",
+        "y",
+        "x2",
+        "y2",
+        "start_x",
+        "start_y",
+        "end_x",
+        "end_y",
+        "duration",
+        "duration_ms",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -51,6 +88,7 @@ class ControlCommand:
     x2: int | None = None
     y2: int | None = None
     text: str | None = None
+    duration_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -68,12 +106,14 @@ def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
         if str(key) in FORBIDDEN_PAYLOAD_KEYS:
             return ControlDecision(False, reason="forbidden_control")
     action = str(payload.get("action") or "").strip().lower()
-    if action in {"home", "recents", "notification", "keyevent", "adb", "app"}:
+    if not action:
+        return ControlDecision(False, reason="invalid_control")
+    if action in FORBIDDEN_ACTIONS:
         return ControlDecision(False, reason="forbidden_control")
     if action not in ALLOWED_ACTIONS:
-        return ControlDecision(False, reason="forbidden_control")
+        return ControlDecision(False, reason="invalid_control")
     if action == "back":
-        extra = {k for k in payload if k not in {"action"}}
+        extra = {k for k in payload if k not in _BACK_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
         return ControlDecision(True, ControlCommand(action="back"))
@@ -83,31 +123,39 @@ def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
             return ControlDecision(False, reason="invalid_control")
         if any(ord(ch) < 32 for ch in text):
             return ControlDecision(False, reason="forbidden_control")
-        extra = {k for k in payload if k not in {"action", "text"}}
+        extra = {k for k in payload if k not in _TYPE_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
         return ControlDecision(True, ControlCommand(action="type", text=text))
-    x = _coord(payload.get("x"))
-    y = _coord(payload.get("y"))
-    if x is None or y is None:
-        return ControlDecision(False, reason="invalid_control")
     if action == "tap":
-        extra = {k for k in payload if k not in {"action", "x", "y"}}
+        extra = {k for k in payload if k not in _TAP_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
+        x = _coord(payload.get("x"))
+        y = _coord(payload.get("y"))
+        if x is None or y is None:
+            return ControlDecision(False, reason="invalid_control")
         return ControlDecision(True, ControlCommand(action="tap", x=x, y=y))
-    x2 = _coord(payload.get("x2"))
-    y2 = _coord(payload.get("y2"))
-    if x2 is None or y2 is None:
-        return ControlDecision(False, reason="invalid_control")
-    extra = {k for k in payload if k not in {"action", "x", "y", "x2", "y2"}}
+    extra = {k for k in payload if k not in _SWIPE_KEYS}
     if extra:
+        return ControlDecision(False, reason="invalid_control")
+    x = _coord(payload.get("start_x") if payload.get("start_x") is not None else payload.get("x"))
+    y = _coord(payload.get("start_y") if payload.get("start_y") is not None else payload.get("y"))
+    x2 = _coord(payload.get("end_x") if payload.get("end_x") is not None else payload.get("x2"))
+    y2 = _coord(payload.get("end_y") if payload.get("end_y") is not None else payload.get("y2"))
+    if x is None or y is None or x2 is None or y2 is None:
+        return ControlDecision(False, reason="invalid_control")
+    duration_ms = _duration_ms(payload)
+    if duration_ms is False:
         return ControlDecision(False, reason="invalid_control")
     if _is_notification_shade(y, y2):
         return ControlDecision(False, reason="forbidden_control")
     if _is_home_or_recents_gesture(y, y2):
         return ControlDecision(False, reason="forbidden_control")
-    return ControlDecision(True, ControlCommand(action="swipe", x=x, y=y, x2=x2, y2=y2))
+    return ControlDecision(
+        True,
+        ControlCommand(action="swipe", x=x, y=y, x2=x2, y2=y2, duration_ms=duration_ms),
+    )
 
 
 def _coord(value: Any) -> int | None:
@@ -119,6 +167,25 @@ def _coord(value: Any) -> int | None:
         return None
     if number < 0 or number > _MAX_COORD:
         return None
+    return number
+
+
+def _duration_ms(payload: Mapping[str, Any]) -> int | None | bool:
+    """Return duration, None if omitted, False if present but invalid."""
+    if "duration_ms" in payload:
+        raw = payload.get("duration_ms")
+    elif "duration" in payload:
+        raw = payload.get("duration")
+    else:
+        return None
+    if isinstance(raw, bool) or raw is None:
+        return False
+    try:
+        number = int(raw)
+    except (TypeError, ValueError):
+        return False
+    if number < _MIN_DURATION_MS or number > _MAX_DURATION_MS:
+        return False
     return number
 
 
