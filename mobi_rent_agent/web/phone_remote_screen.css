@@ -1,0 +1,58 @@
+.phone-remote-surface {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  margin-left: auto;
+  margin-right: auto;
+  aspect-ratio: 9 / 19.5;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  background: #0b0b0c;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+}
+
+.phone-remote-surface canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.phone-remote-hit {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.phone-remote-hit[data-ready="false"] {
+  cursor: wait;
+}
+
+.phone-remote-dot {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: rgba(59, 130, 246, 0.38);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  pointer-events: none;
+}
+
+.phone-remote-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.phone-remote-toolbar button,
+.phone-remote-toolbar input {
+  font-size: 0.875rem;
+}
