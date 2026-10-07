@@ -425,10 +425,10 @@ def test_successful_euicc_download_is_install_accepted_not_failed():
             payload_resolver=FakeResolver(),
         ),
     )
-    assert farm_result.ok is True
-    assert farm_result.http_status == 200
-    assert farm_result.install_state == INSTALL_ACCEPTED
-    assert farm_result.error is None
+    assert farm_result.ok is False
+    assert farm_result.http_status == 422
+    assert "human Settings/LPA required" in (farm_result.message or "")
+    provisioner.provision.assert_not_called()
 
 
 def test_verified_cellular_state_produces_install_verified():

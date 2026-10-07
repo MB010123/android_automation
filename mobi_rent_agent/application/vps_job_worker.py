@@ -103,11 +103,11 @@ class VpsJobWorker:
         self._apply_farm_response(record, response)
 
     def recover_running_job(self, job_id: str) -> None:
-        """Recover a stale running assign without blindly resending provision_esim.
+        """Recover a stale running assign without resending automatic eSIM.
 
-        Query the Farm Agent job cache first. Retry run_task only when that
-        cache proves the previous attempt failed before the activation code
-        was sent. A cache miss is INSTALL_VERIFICATION_UNKNOWN.
+        Query the Farm Agent job cache first. Never retry run_task: automatic
+        provision is disabled and human Settings/LPA is the expected path.
+        A cache miss is INSTALL_VERIFICATION_UNKNOWN.
         """
         record = self._jobs.get(job_id)
         if record is None or record.status != "running":
@@ -127,17 +127,9 @@ class VpsJobWorker:
         install_state = str(body.get("install_state") or "")
         sent = bool(body.get("activation_code_sent"))
         if install_state == INSTALL_FAILED and not sent:
-            if self._farm is None:
-                self._apply_farm_response(record, cached)
-                return
-            logger.info("running_job_retry_pre_send_failure job_id=%s", job_id)
-            response = self._farm.run_task(
-                task_type=record.type,
-                farm_slot_id=int(record.farm_slot_id or 0),
-                payload=record.request_payload,
-                job_id=job_id,
-            )
-            self._apply_farm_response(record, response)
+            # Do not retry automatic eSIM. Human Settings/LPA is the expected path.
+            logger.info("running_job_manual_action_not_retried job_id=%s", job_id)
+            self._apply_farm_response(record, cached)
             return
         logger.info("running_job_recovered_from_farm_cache job_id=%s", job_id)
         self._apply_farm_response(record, cached)

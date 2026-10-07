@@ -190,6 +190,7 @@ class FakeFarm:
         self.tasks: list[dict[str, Any]] = []
         self.fail_types: set[str] = set()
         self.activation_details: dict[str, Any] | None = None
+        self.inspect_allowed = True
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
@@ -219,10 +220,14 @@ class FakeFarm:
             body["details"] = self.activation_details
         if task_type == "setup_session_inspect":
             body["details"] = {
-                "activity": "com.android.settings/.network.telephony.MobileNetworkActivity",
-                "allowed": True,
+                "activity": (
+                    "com.android.settings/.network.telephony.MobileNetworkActivity"
+                    if self.inspect_allowed
+                    else "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+                ),
+                "allowed": self.inspect_allowed,
                 "recovered": False,
-                "reason": "ok",
+                "reason": "ok" if self.inspect_allowed else "left_setup",
                 "phase": payload.get("phase") or "esim",
                 "sms_role_holder": "com.voidfix.app",
                 "voidfix_is_default_sms": True,
@@ -1027,7 +1032,7 @@ def test_k_existing_task_types_and_routes_unchanged():
 
 
 def test_k_assign_task_unaffected_by_poc_flags():
-    """`assign` keeps its own allowlist and provisioner regardless of REMOTE_ACCESS_* settings."""
+    """`assign` keeps its own allowlist regardless of REMOTE_ACCESS_* settings."""
     from domain.models import ActivationJob, ProvisioningResult
     from domain.provisioning_state import ActivationVerdict
     from domain.slot_isolation import SlotIsolationPolicy
@@ -1060,7 +1065,19 @@ def test_k_assign_task_unaffected_by_poc_flags():
             agent_config=config,
             deps=FarmTaskExecutorDeps(command_runner=runner, provisioner=provisioner, payload_resolver=Resolver(), isolation=SlotIsolationPolicy((1, 2))),
         )
-        assert result.ok and provisioner.calls == [SLOT2_SERIAL], (poc_enabled, result)
+        assert result.ok is False, (poc_enabled, result)
+        assert "human Settings/LPA required" in (result.message or "")
+        assert provisioner.calls == []
+        denied = execute_farm_task(
+            adb_path="adb",
+            slot_map={1: SLOT1_SERIAL, 2: SLOT2_SERIAL},
+            request=FarmTaskRequest(job_id=str(uuid.uuid4()), task_type="assign", farm_slot_id=2, payload={"esim_qr_url": "https://example.test/qr.png"}),
+            agent_config=config,
+            deps=FarmTaskExecutorDeps(command_runner=runner, provisioner=provisioner, payload_resolver=Resolver(), isolation=SlotIsolationPolicy((1,))),
+        )
+        assert denied.ok is False
+        assert denied.error == "provisioning_failed"
+        assert provisioner.calls == []
 
 
 def test_k_vps_server_without_poc_flag_has_no_remote_access_routes(tmp_path: Path):

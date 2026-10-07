@@ -369,8 +369,9 @@ class GadsRemoteAccessPlatform:
                 continue
             raw = live
             online = bool(live.get("connected")) and str(live.get("provider_state") or "") == "live"
-            in_use = bool(live.get("in_use"))
-            available = online and bool(live.get("available")) and not in_use
+            # GADS in_use/available flags include the customer's own MJPEG session.
+            # They are not a cross-rental conflict; that is remote_access_busy.
+            available = online
             in_use_by = str(live.get("in_use_by") or "") or None
             break
         return RemoteDeviceStatus(

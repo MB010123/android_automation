@@ -44,16 +44,16 @@ class RemoteDeviceStatus:
             state = "unregistered"
         elif not self.online:
             state = "offline"
-        elif not self.available:
-            state = "busy"
         else:
+            # Online assigned phones stay "online" for the owning customer.
+            # Cross-rental conflict is HTTP 409 remote_access_busy, not this flag.
             state = "online"
         return {
             "slot_id": self.slot_id,
             "state": state,
             "online": self.online,
-            "available": self.available,
-            "busy": self.online and not self.available,
+            "available": self.online,
+            "busy": False,
         }
 
 

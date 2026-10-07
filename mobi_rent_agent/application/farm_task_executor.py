@@ -7,20 +7,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
-from application.install_state import (
-    INSTALL_FAILED,
-    INSTALL_VERIFIED,
-    KEEP_ASSIGNMENT_STATES,
-)
+from application.install_state import INSTALL_FAILED
 from domain.models import ActivationJob
 from domain.ports import ActivationPayloadResolver, SubscriptionProvisioner
 from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
-from infrastructure.activation_payload import ActivationPayloadError, QrActivationPayloadResolver
 from infrastructure.esim_qr_security import esim_fetch_url_is_public_https
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.adb_health import AdbDeviceHealthController
 from infrastructure.config import AgentConfig
-from infrastructure.subscription_provisioner_factory import build_subscription_provisioner
 
 logger = logging.getLogger("farm_agent.task_executor")
 
@@ -212,16 +206,7 @@ def _run_assign(
             activation_code_sent=False,
         )
 
-    if deps.provisioner is not None:
-        provisioner = deps.provisioner
-        payload_resolver = deps.payload_resolver or QrActivationPayloadResolver(
-            timeout_seconds=config.request_timeout_seconds,
-        )
-        isolation = deps.isolation or SlotIsolationPolicy(config.provisioning_allowed_slot_ids)
-    else:
-        provisioner, payload_resolver, isolation = build_subscription_provisioner(config)
-        if deps.isolation is not None:
-            isolation = deps.isolation
+    isolation = deps.isolation or SlotIsolationPolicy(config.provisioning_allowed_slot_ids)
 
     try:
         isolation.refuse_if_empty({slot_id: serial})
@@ -294,7 +279,7 @@ def _run_assign(
         )
 
     try:
-        job = ActivationJob(job_id=request.job_id, slot_id=slot_id, qr_url=qr_url)
+        ActivationJob(job_id=request.job_id, slot_id=slot_id, qr_url=qr_url)
     except ValueError as exc:
         return FarmTaskResult(
             ok=False,
@@ -305,68 +290,18 @@ def _run_assign(
             activation_code_sent=False,
         )
 
-    assert payload_resolver is not None
-    try:
-        resolved = payload_resolver.resolve(job)
-    except (ActivationPayloadError, ValueError) as exc:
-        return FarmTaskResult(
-            ok=False,
-            http_status=422,
-            error="provisioning_failed",
-            message=str(exc),
-            install_state=INSTALL_FAILED,
-            activation_code_sent=False,
-        )
-
     logger.info(
-        "farm_task_assign_start slot=%s job_id=%s",
+        "farm_task_assign_manual_only slot=%s job_id=%s",
         slot_id,
         request.job_id,
-    )
-    try:
-        result = provisioner.provision(serial, resolved)
-    except Exception as exc:
-        logger.exception("farm_task_assign_exception slot=%s", slot_id)
-        return FarmTaskResult(
-            ok=False,
-            http_status=422,
-            error="provisioning_failed",
-            message=str(exc),
-            install_state=INSTALL_FAILED,
-            activation_code_sent=False,
-        )
-
-    install_state = result.install_state or (INSTALL_VERIFIED if result.success else INSTALL_FAILED)
-    sent = bool(result.activation_code_sent)
-    if install_state in KEEP_ASSIGNMENT_STATES:
-        logger.info(
-            "farm_task_assign_finished slot=%s job_id=%s install_state=%s",
-            slot_id,
-            request.job_id,
-            install_state,
-        )
-        return FarmTaskResult(
-            ok=True,
-            http_status=200,
-            message=result.error or "provisioning_completed",
-            install_state=install_state,
-            activation_code_sent=sent,
-        )
-
-    detail = result.error or "provisioning failed"
-    logger.warning(
-        "farm_task_assign_failed slot=%s job_id=%s error=%s",
-        slot_id,
-        request.job_id,
-        detail,
     )
     return FarmTaskResult(
         ok=False,
         http_status=422,
         error="provisioning_failed",
-        message=detail,
+        message="human Settings/LPA required; automatic eSIM provision is disabled",
         install_state=INSTALL_FAILED,
-        activation_code_sent=sent,
+        activation_code_sent=False,
     )
 
 

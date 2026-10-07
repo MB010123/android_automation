@@ -183,7 +183,7 @@ def test_stale_job_sent_but_unverified_becomes_unknown(tmp_path: Path):
     assert tenant.esims == []
 
 
-def test_stale_job_pre_send_failure_may_be_retried(tmp_path: Path):
+def test_stale_job_pre_send_failure_is_not_retried(tmp_path: Path):
     farm = FarmSpy()
     farm.run_response = FarmTaskResponse(
         ok=True,
@@ -193,13 +193,11 @@ def test_stale_job_pre_send_failure_may_be_retried(tmp_path: Path):
     svc, worker, _f, _jobs, assign, tenant, _n, job_id = _seed_running_assign(tmp_path, farm=farm)
     farm.lookup_by_job[job_id] = _cached(INSTALL_FAILED, sent=False, ok=False)
     worker.recover_running_job(job_id)
-    assert len(farm.run_calls) == 1
-    assert farm.run_calls[0]["job_id"] == job_id
-    assert farm.run_calls[0]["task_type"] == "assign"
+    assert farm.run_calls == []
     job = svc.get_job(job_id).body
-    assert job["install_state"] == INSTALL_ACCEPTED
-    assert assign.is_assigned(1) is False
-    assert len(tenant.esims) == 1
+    assert job["state"] == "failed"
+    assert job["install_state"] == INSTALL_FAILED
+    assert tenant.esims == []
 
 
 def test_recovery_never_sends_provision_esim_on_uncertain_or_cached_result(tmp_path: Path):

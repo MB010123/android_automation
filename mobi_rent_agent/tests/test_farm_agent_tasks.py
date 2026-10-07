@@ -79,7 +79,7 @@ def test_parse_rejects_forbidden_serial_in_payload():
         )
 
 
-def test_assign_success_when_provisioner_succeeds():
+def test_assign_never_calls_automatic_esim_provision():
     slot_map = {1: "SERIAL-A"}
     provisioner = MagicMock()
     provisioner.provision.return_value = ProvisioningResult(
@@ -88,7 +88,7 @@ def test_assign_success_when_provisioner_succeeds():
         slot_id=1,
         verdict=ActivationVerdict.ACTIVATION_CONFIRMED,
     )
-    runner = FakeRunner()
+    resolver = FakeResolver()
     req = FarmTaskRequest(
         job_id="job-1",
         task_type="assign",
@@ -101,18 +101,19 @@ def test_assign_success_when_provisioner_succeeds():
         request=req,
         agent_config=_config(),
         deps=FarmTaskExecutorDeps(
-            command_runner=runner,
+            command_runner=FakeRunner(),
             provisioner=provisioner,
-            payload_resolver=FakeResolver(),
+            payload_resolver=resolver,
         ),
     )
-    assert result.ok is True
-    assert result.http_status == 200
-    provisioner.provision.assert_called_once()
-    assert provisioner.provision.call_args[0][0] == "SERIAL-A"
+    assert result.ok is False
+    assert result.http_status == 422
+    assert result.error == "provisioning_failed"
+    assert "human Settings/LPA required" in (result.message or "")
+    provisioner.provision.assert_not_called()
 
 
-def test_assign_failed_when_provisioner_fails():
+def test_assign_failed_when_provisioner_would_fail():
     slot_map = {1: "SERIAL-A"}
     provisioner = MagicMock()
     provisioner.provision.return_value = ProvisioningResult(
@@ -141,6 +142,7 @@ def test_assign_failed_when_provisioner_fails():
     assert result.ok is False
     assert result.error == "provisioning_failed"
     assert result.http_status == 422
+    provisioner.provision.assert_not_called()
 
 
 def test_assign_slot_isolation():

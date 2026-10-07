@@ -462,11 +462,9 @@ class RemoteAccessService:
         decision = decide_control(payload)
         if not decision.allowed or decision.command is None:
             return ApiResult(403, error_body("forbidden_control"))
-        guard = self._run_setup_guard(auth, session, recover=True)
-        if isinstance(guard, ApiResult):
-            return guard
-        if not guard.get("allowed"):
-            return ApiResult(409, error_body("setup_state_blocked"))
+        # Do not gate tap/swipe/type/back on setup-activity whitelist or slot
+        # requires_manual_action. The customer must navigate Android Settings/LPA
+        # themselves. Restricted actions stay forbidden via decide_control.
         secret = session.platform_secret
         if not secret:
             return ApiResult(503, error_body("remote_access_not_configured"))
