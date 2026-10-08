@@ -181,6 +181,18 @@ class FakePlatform:
             raise RemoteAccessPlatformError("device_not_locked")
         return True
 
+    def press_home(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
+        self.calls.append(("home", {"device_id": device_id}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return True
+
+    def press_recents(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
+        self.calls.append(("recents", {"device_id": device_id}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return True
+
     def open_mjpeg_stream(self, *, device_id: str, platform_username: str, platform_password: str):
         self.calls.append(("stream", {"device_id": device_id, "username": platform_username}))
         if self.leases.get(device_id) != platform_username:

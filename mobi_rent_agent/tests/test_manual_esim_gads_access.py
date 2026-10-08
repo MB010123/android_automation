@@ -101,8 +101,8 @@ def test_restricted_controls_and_cross_rental_stay_blocked(tmp_path: Path):
     rental_b = _rental(tenant, bay=9, user_id=CUSTOMER_B)
     assert service.create_remote_access(CUSTOMER_A, None, rental_a).http_status == 201
     assert service.create_remote_access(CUSTOMER_B, None, rental_b).http_status == 201
-    assert service.control_session(CUSTOMER_A, rental_a, {"action": "home"}).http_status == 403
-    assert service.control_session(CUSTOMER_A, rental_a, {"action": "recents"}).http_status == 403
+    assert service.control_session(CUSTOMER_A, rental_a, {"action": "home"}).http_status == 200
+    assert service.control_session(CUSTOMER_A, rental_a, {"action": "recents"}).http_status == 200
     shade = service.control_session(
         CUSTOMER_A, rental_a, {"action": "swipe", "x": 10, "y": 5, "x2": 10, "y2": 400}
     )

@@ -59,7 +59,7 @@ Cancel: POST `/rentals/{id}/cancel` then confirm the bay is absent from availabl
 - Remove GADS hub-ui redirect / username / password screens.
 - Render MJPEG from VPS `stream_path` with `Authorization: Bearer <customer JWT>`.
 - Map pointer events to `control` taps/swipes in **device pixels** (not CSS pixels) after measuring the stream frame.
-- Show only Back plus on-screen tapping; do not draw Home/Recents.
+- Show Back, Home, and Recents plus on-screen tapping/swiping. Do not send keycodes.
 - After QR upload success, call `POST /remote-access` and go to connecting → live screen.
 - Call `complete` when the customer taps “I finished setup”; handle 409 by showing `esim_setup` or `voidfix_approval`.
 - Wire Cancel rental to `POST /rentals/{id}/cancel`.

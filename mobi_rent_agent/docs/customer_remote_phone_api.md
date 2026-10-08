@@ -50,7 +50,7 @@ take a GADS exclusive device lock.
   "expires_at": 1730000000,
   "session_mode": "in_app",
   "stream_path": "/rentals/00000000-0000-4000-8000-000000000099/remote-access/stream",
-  "allowed_controls": ["tap", "swipe", "type", "back"],
+  "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents"],
   "coordinate_space": "native_device_pixels",
   "ui_state": "live_phone_screen",
   "setup_phase": "esim",
@@ -213,7 +213,8 @@ native_y = (client_y - rect.top)  / rect.height * native_height
 Round to integers. Clamp to `[0, native_width-1]` / `[0, native_height-1]`.
 
 Send those integers in tap/swipe bodies. The backend rejects coordinates
-outside `0..8192` and rejects Home/Recents/notification-shade **gestures**.
+outside `0..8192` and rejects notification-shade pulls. Bottom-edge navigation
+gestures are allowed. Home/Recents are also explicit semantic actions.
 
 ---
 
@@ -249,9 +250,11 @@ outside `0..8192` and rejects Home/Recents/notification-shade **gestures**.
 Aliases also accepted: `x`/`y`/`x2`/`y2` instead of `start_*`/`end_*`,
 and `duration` instead of `duration_ms`. Duration is optional (1–5000 ms).
 
-Do **not** send a swipe that starts in the status-bar band and pulls down
-(notification shade) or an upward swipe from the gesture bar (Home/Recents).
-Those return 403 `forbidden_control`.
+Bottom-edge upward swipes are accepted as normal Android navigation (Home /
+Recents / Back gestures). Do **not** send a swipe that starts in the
+status-bar band and pulls down (notification shade); that returns 403
+`forbidden_control`. Explicit Home/Recents use semantic `{ "action": "home" }`
+/ `{ "action": "recents" }` — never Android keycodes.
 
 ---
 
@@ -275,13 +278,24 @@ The phone must already have a focused text field. This is not an ADB keyevent.
 
 No coordinates. This is Android Back only.
 
-Forbidden (do not send): `home`, `recents`, notification shade, `keycode`,
-`adb`, `shell`, `command`, serials, workspace ids.
+```json
+{ "action": "home" }
+```
+
+```json
+{ "action": "recents" }
+```
+
+No coordinates and no keycodes. The VPS maps these to GADS (Farm Agent
+fallback uses the matching Android nav event internally).
+
+Forbidden (do not send): notification shade, `keycode`, `keyevent`, `adb`,
+`shell`, `command`, serials, workspace ids.
 
 | HTTP | `error` |
 | --- | --- |
 | 422 | `invalid_control` (bad/missing numbers, unknown action, extra fields) |
-| 403 | `forbidden_control` (Home/Recents/shade/ADB/identity spoof) |
+| 403 | `forbidden_control` (shade/ADB/identity spoof/raw keys) |
 | 409 | `remote_access_not_ready` |
 | 403 | `session_expired` / `rental_not_owned` |
 
@@ -445,8 +459,8 @@ phone-service release path. Same ownership rules as remote access.
 - Slot 1 and Slot 2 are independent. Two customers can stream at once.
 - Calling start-session twice for the same rental reuses one GADS session.
 - Keep one stream reader; send controls on other requests.
-- Serialize tap/swipe/type/back on the client if you want strict ordering;
-  the backend also serializes control per rental.
+- Serialize tap/swipe/type/back/home/recents on the client if you want strict
+  ordering; the backend also serializes control per rental.
 
 ---
 
@@ -456,7 +470,7 @@ phone-service release path. Same ownership rules as remote access.
 POST /rentals/{id}/remote-access
 GET  /rentals/{id}/remote-access/device-status
 GET  /rentals/{id}/remote-access/stream          // canvas
-POST /rentals/{id}/remote-access/control         // tap | swipe | type | back
+POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents
 POST /rentals/{id}/esim/upload                   // optional, multipart qr_image
 POST /rentals/{id}/remote-access/complete
 ```

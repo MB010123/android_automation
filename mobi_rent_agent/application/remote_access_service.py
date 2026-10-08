@@ -542,9 +542,9 @@ class RemoteAccessService:
             code = decision.reason if decision.reason in {"invalid_control", "forbidden_control"} else "invalid_control"
             status = 422 if code == "invalid_control" else 403
             return ApiResult(status, error_body(code))
-        # Do not gate tap/swipe/type/back on setup-activity whitelist or slot
-        # requires_manual_action. The customer must navigate Android Settings/LPA
-        # themselves. Restricted actions stay forbidden via decide_control.
+        # Do not gate tap/swipe/type/back/home/recents on setup-activity whitelist
+        # or slot requires_manual_action. The customer must navigate Android
+        # Settings/LPA themselves. Restricted actions stay forbidden via decide_control.
         secret = session.platform_secret
         if not secret:
             return ApiResult(503, error_body("gads_unavailable"))
@@ -1133,13 +1133,13 @@ class RemoteAccessService:
             if not forwarded:
                 return self._farm_input(session.slot_id, "swipe", command)
             return True
-        if command.action == "back":
-            press_back = getattr(platform, "press_back", None)
+        if command.action in {"back", "home", "recents"}:
+            press = getattr(platform, f"press_{command.action}", None)
             forwarded = False
-            if callable(press_back):
-                forwarded = bool(press_back(**kwargs))
+            if callable(press):
+                forwarded = bool(press(**kwargs))
             if not forwarded:
-                return self._farm_input(session.slot_id, "back", command)
+                return self._farm_input(session.slot_id, command.action, command)
             return True
         return False
 

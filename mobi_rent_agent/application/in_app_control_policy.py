@@ -1,18 +1,18 @@
 """Server-side allowlist for customer in-app phone control.
 
-The browser may propose tap/swipe/type/back only. Home, Recents, notification
-shade, raw keys, ADB, and device identity are rejected here — never only in JS.
+The browser may propose semantic actions only (tap/swipe/type/back/home/recents).
+Raw keys, ADB, shell, device identity, and notification-shade pulls are rejected
+here — never only in JS. Bottom-edge swipes are normal navigation, not forbidden.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-ALLOWED_ACTIONS = frozenset({"tap", "swipe", "type", "back"})
+PUBLIC_CONTROL_ACTIONS = ("tap", "swipe", "type", "back", "home", "recents")
+ALLOWED_ACTIONS = frozenset(PUBLIC_CONTROL_ACTIONS)
 FORBIDDEN_ACTIONS = frozenset(
     {
-        "home",
-        "recents",
         "notification",
         "notifications",
         "keyevent",
@@ -51,18 +51,15 @@ FORBIDDEN_PAYLOAD_KEYS = frozenset(
     }
 )
 
-# Pixel-class portrait. Used only to reject edge gestures, not to accept coords.
-_DEFAULT_HEIGHT = 2960
 _MAX_COORD = 8192
 _MAX_TEXT = 64
 _TOP_SHADE_Y = 80
-_BOTTOM_NAV_Y = 2500
 _MIN_DURATION_MS = 1
 _MAX_DURATION_MS = 5000
 
 _TAP_KEYS = frozenset({"action", "x", "y"})
 _TYPE_KEYS = frozenset({"action", "text"})
-_BACK_KEYS = frozenset({"action"})
+_NAV_KEYS = frozenset({"action"})
 _SWIPE_KEYS = frozenset(
     {
         "action",
@@ -112,11 +109,11 @@ def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
         return ControlDecision(False, reason="forbidden_control")
     if action not in ALLOWED_ACTIONS:
         return ControlDecision(False, reason="invalid_control")
-    if action == "back":
-        extra = {k for k in payload if k not in _BACK_KEYS}
+    if action in {"back", "home", "recents"}:
+        extra = {k for k in payload if k not in _NAV_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
-        return ControlDecision(True, ControlCommand(action="back"))
+        return ControlDecision(True, ControlCommand(action=action))
     if action == "type":
         text = payload.get("text")
         if not isinstance(text, str) or not text or len(text) > _MAX_TEXT:
@@ -149,8 +146,6 @@ def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
     if duration_ms is False:
         return ControlDecision(False, reason="invalid_control")
     if _is_notification_shade(y, y2):
-        return ControlDecision(False, reason="forbidden_control")
-    if _is_home_or_recents_gesture(y, y2):
         return ControlDecision(False, reason="forbidden_control")
     return ControlDecision(
         True,
@@ -191,10 +186,3 @@ def _duration_ms(payload: Mapping[str, Any]) -> int | None | bool:
 
 def _is_notification_shade(y1: int, y2: int) -> bool:
     return y1 <= _TOP_SHADE_Y and (y2 - y1) >= 120
-
-
-def _is_home_or_recents_gesture(y1: int, y2: int) -> bool:
-    """Upward swipe from the bottom gesture bar (Home / Recents)."""
-    if y1 < _BOTTOM_NAV_Y:
-        return False
-    return y1 > y2 and (y1 - y2) >= 150 and y1 >= int(_DEFAULT_HEIGHT * 0.84)

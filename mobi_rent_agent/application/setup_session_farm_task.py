@@ -135,7 +135,7 @@ def run_setup_session_input(
     request: FarmTaskRequest,
     command_runner: AdbCommandRunner | None = None,
 ) -> FarmTaskResult:
-    """VPS-only fallback for swipe/back when GADS has no matching endpoint."""
+    """VPS-only fallback for swipe/nav when GADS has no matching endpoint."""
     serial = _serial(slot_map, request.farm_slot_id)
     if not serial:
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
@@ -145,6 +145,10 @@ def run_setup_session_input(
     try:
         if kind == "back":
             _shell(runner, adb_path, serial, ["input", "keyevent", "4"])
+        elif kind == "home":
+            _shell(runner, adb_path, serial, ["input", "keyevent", "3"])
+        elif kind == "recents":
+            _shell(runner, adb_path, serial, ["input", "keyevent", "187"])
         elif kind == "swipe":
             args = [
                 "input",

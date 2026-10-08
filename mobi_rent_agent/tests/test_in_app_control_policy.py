@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.in_app_control_policy import decide_control
+from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS, decide_control
 
 
 def test_allowed_tap_and_swipe():
@@ -30,23 +30,32 @@ def test_allowed_tap_and_swipe():
     assert aliased.command.duration_ms == 250
 
 
-def test_type_and_back_allowed():
+def test_type_back_home_and_recents_allowed():
     typed = decide_control({"action": "type", "text": "OK"})
     assert typed.allowed and typed.command is not None and typed.command.text == "OK"
-    back = decide_control({"action": "back"})
-    assert back.allowed and back.command is not None and back.command.action == "back"
+    for action in ("back", "home", "recents"):
+        decision = decide_control({"action": action})
+        assert decision.allowed, action
+        assert decision.command is not None and decision.command.action == action
+    assert PUBLIC_CONTROL_ACTIONS == ("tap", "swipe", "type", "back", "home", "recents")
 
 
-def test_home_recents_notification_and_keys_rejected():
+def test_bottom_edge_upward_swipe_is_normal_navigation():
+    gesture = decide_control({"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000})
+    assert gesture.allowed and gesture.command is not None
+    assert gesture.command.action == "swipe"
+    assert gesture.command.y == 2900 and gesture.command.y2 == 2000
+
+
+def test_notification_and_keys_rejected():
     for payload in (
-        {"action": "home"},
-        {"action": "recents"},
         {"action": "swipe", "x": 100, "y": 10, "x2": 100, "y2": 500},
-        {"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000},
         {"action": "keyevent", "keycode": 3},
         {"action": "tap", "x": 1, "y": 1, "command": "reboot"},
         {"action": "tap", "x": 1, "y": 1, "udid": "OTHER"},
         {"action": "adb"},
+        {"action": "home", "keycode": 3},
+        {"action": "shell"},
     ):
         decision = decide_control(payload)
         assert decision.allowed is False, payload
@@ -75,3 +84,5 @@ def test_invalid_control_is_not_forbidden():
         {"action": "swipe", "start_x": 1, "start_y": 2, "end_x": 3, "end_y": 4, "duration_ms": 0}
     )
     assert bad_duration.allowed is False and bad_duration.reason == "invalid_control"
+    extra = decide_control({"action": "home", "x": 1})
+    assert extra.allowed is False and extra.reason == "invalid_control"

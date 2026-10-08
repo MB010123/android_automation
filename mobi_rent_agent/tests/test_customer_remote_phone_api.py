@@ -51,7 +51,7 @@ def test_create_reuses_session_and_hides_internals(tmp_path: Path):
     assert first.http_status == 201, first.body
     _assert_safe(first.body)
     assert first.body["stream_path"].endswith("/remote-access/stream")
-    assert first.body["allowed_controls"] == ["tap", "swipe", "type", "back"]
+    assert first.body["allowed_controls"] == ["tap", "swipe", "type", "back", "home", "recents"]
     assert first.body["coordinate_space"] == "native_device_pixels"
     grants = [c for c in platform.calls if c[0] == "grant"]
     reused = service.create_remote_access(CUSTOMER_A, None, rental)
@@ -94,11 +94,19 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
     )
     typed = service.control_session(CUSTOMER_A, rental, {"action": "type", "text": "hi"})
     back = service.control_session(CUSTOMER_A, rental, {"action": "back"})
+    home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
+    recents = service.control_session(CUSTOMER_A, rental, {"action": "recents"})
+    edge = service.control_session(
+        CUSTOMER_A, rental, {"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000}
+    )
     assert swipe.http_status == 200 and typed.http_status == 200 and back.http_status == 200
+    assert home.http_status == 200 and recents.http_status == 200 and edge.http_status == 200
+    assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type", "back", "home", "recents"}
     assert store.get(rental).is_active(1_000_000.0)
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
-    swipe_call = [c for c in platform.calls if c[0] == "swipe"][-1]
-    assert swipe_call[1]["duration_ms"] == 250
+    swipe_calls = [c for c in platform.calls if c[0] == "swipe"]
+    assert swipe_calls[0][1]["duration_ms"] == 250
+    assert swipe_calls[-1][1]["y"] == 2900 and swipe_calls[-1][1]["y2"] == 2000
 
 
 def test_stream_and_control_concurrently(tmp_path: Path):
@@ -248,16 +256,19 @@ def test_forbidden_controls_rejected(tmp_path: Path):
     service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform())
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
-    home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
-    recents = service.control_session(CUSTOMER_A, rental, {"action": "recents"})
     shade = service.control_session(
         CUSTOMER_A, rental, {"action": "swipe", "x": 10, "y": 5, "x2": 10, "y2": 400}
     )
     adb = service.control_session(CUSTOMER_A, rental, {"action": "adb"})
-    assert {home.body["error"], recents.body["error"], shade.body["error"], adb.body["error"]} == {
+    keys = service.control_session(CUSTOMER_A, rental, {"action": "keyevent", "keycode": 3})
+    shell = service.control_session(CUSTOMER_A, rental, {"action": "shell"})
+    spoof = service.control_session(
+        CUSTOMER_A, rental, {"action": "home", "keycode": 3}
+    )
+    assert {shade.body["error"], adb.body["error"], keys.body["error"], shell.body["error"], spoof.body["error"]} == {
         "forbidden_control"
     }
-    assert home.http_status == 403
+    assert shade.http_status == 403 and keys.http_status == 403
 
 
 def test_complete_releases_session_without_deleting_esim(tmp_path: Path):
@@ -367,6 +378,41 @@ def test_http_stream_auth_and_get_device_status(tmp_path: Path):
         )
         assert status == 200, tap
         assert any(c[0] == "tap" for c in platform.calls)
+        status, home, _ = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "home"},
+        )
+        assert status == 200, home
+        status, recents, _ = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "recents"},
+        )
+        assert status == 200, recents
+        status, edge, _ = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000},
+        )
+        assert status == 200, edge
+        stolen = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_b,
+            body={"action": "home"},
+        )
+        assert stolen[0] == 403
+        keys = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "keyevent", "keycode": 3},
+        )
+        assert keys[0] == 403
         status, done, _ = _http(
             "POST", f"{base}/rentals/{rental}/remote-access/complete", token=token_a, body={}
         )
@@ -505,6 +551,40 @@ def test_device_display_size_task_reads_wm_size_from_adb():
     )
     assert result.ok is True
     assert result.details == {"width": 1440, "height": 3120, "source": "wm_size_physical"}
+
+
+def test_farm_nav_input_uses_fixed_internal_events():
+    runner = FakeRunner()
+    for kind, code in (("home", "3"), ("recents", "187"), ("back", "4")):
+        runner.calls.clear()
+        result = execute_farm_task(
+            adb_path="adb",
+            slot_map={2: "SERIAL-B"},
+            request=FarmTaskRequest(
+                job_id=f"job-{kind}",
+                task_type="setup_session_input",
+                farm_slot_id=2,
+                payload={"kind": kind},
+            ),
+            agent_config=_config(),
+            deps=FarmTaskExecutorDeps(command_runner=runner),
+        )
+        assert result.ok is True, kind
+        assert runner.calls == [("SERIAL-B", ["shell", "input", "keyevent", code])]
+    denied = execute_farm_task(
+        adb_path="adb",
+        slot_map={2: "SERIAL-B"},
+        request=FarmTaskRequest(
+            job_id="job-shell",
+            task_type="setup_session_input",
+            farm_slot_id=2,
+            payload={"kind": "shell"},
+        ),
+        agent_config=_config(),
+        deps=FarmTaskExecutorDeps(command_runner=FakeRunner()),
+    )
+    assert denied.ok is False
+    assert denied.error == "invalid_control"
 
 
 def test_no_hardcoded_pixel_resolution_in_device_status_code():

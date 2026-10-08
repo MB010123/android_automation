@@ -86,7 +86,8 @@ def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):
     assert tap.http_status == 200 and swipe.http_status == 200
     assert typed.http_status == 200 and back.http_status == 200
     assert {c[0] for c in platform.calls} >= {"grant", "stream", "tap", "swipe", "type", "back"}
-    assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 403
+    assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 200
+    assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 200
 
 
 def test_unauthorized_rental_and_cross_slot_access_rejected(tmp_path: Path):

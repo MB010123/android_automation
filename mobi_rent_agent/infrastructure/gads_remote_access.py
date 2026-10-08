@@ -471,12 +471,62 @@ class GadsRemoteAccessPlatform:
         platform_username: str,
         platform_password: str,
     ) -> bool:
+        return self._press_nav(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffix="back",
+        )
+
+    def press_home(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ) -> bool:
+        return self._press_nav(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffix="home",
+        )
+
+    def press_recents(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ) -> bool:
+        if self._press_nav(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffix="recents",
+        ):
+            return True
+        return self._press_nav(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffix="recentApps",
+        )
+
+    def _press_nav(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        suffix: str,
+    ) -> bool:
         token = self._user_token(platform_username, platform_password)
-        result = self._client.device_control("POST", device_id, "back", token=token, json_body={})
+        result = self._client.device_control("POST", device_id, suffix, token=token, json_body={})
         if result.status == 404:
             return False
         if not (200 <= result.status < 300):
-            raise RemoteAccessPlatformError(f"gads_back_failed status={result.status}")
+            raise RemoteAccessPlatformError(f"gads_{suffix}_failed status={result.status}")
         return True
 
     def open_mjpeg_stream(
