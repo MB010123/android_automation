@@ -27,12 +27,15 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 
-from application.vps_api_contract import customer_inventory_identity_fields, error_body
+from application.vps_api_contract import (
+    customer_inventory_identity_fields,
+    error_body,
+)
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
-from application.in_app_control_policy import FORBIDDEN_PAYLOAD_KEYS, decide_control
+from application.in_app_control_policy import FORBIDDEN_PAYLOAD_KEYS, NAV_ACTIONS, decide_control
 from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
 from domain.remote_access import (
     ACTIVATION_CUSTOMER_REQUIRED,
@@ -455,7 +458,6 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            self._launch_esim_setup_if_needed(auth, existing)
             body = {"ok": True, **existing.to_public_dict(now)}
             return ApiResult(200, body)
 
@@ -507,7 +509,6 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        self._launch_esim_setup_if_needed(auth, session)
         body = {"ok": True, **session.to_public_dict(now)}
         return ApiResult(201, body)
 
@@ -543,18 +544,15 @@ class RemoteAccessService:
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
-        setup_mode = self._in_esim_setup_mode(session)
-        decision = decide_control(payload, setup_mode=setup_mode)
+        decision = decide_control(payload, setup_mode=False)
         if not decision.allowed or decision.command is None:
-            code = decision.reason if decision.reason in {"invalid_control", "forbidden_control"} else "invalid_control"
+            code = (
+                decision.reason
+                if decision.reason in {"invalid_control", "forbidden_control"}
+                else "invalid_control"
+            )
             status = 422 if code == "invalid_control" else 403
-            if setup_mode:
-                self._run_setup_guard(auth, session, recover=True)
             return ApiResult(status, error_body(code))
-        if setup_mode:
-            blocked = self._block_if_esim_setup_disallowed(auth, session)
-            if blocked is not None:
-                return blocked
         secret = session.platform_secret
         if not secret:
             return ApiResult(503, error_body("gads_unavailable"))
@@ -568,6 +566,8 @@ class RemoteAccessService:
         except RemoteAccessPlatformError as exc:
             logger.warning("in_app_control_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
             return ApiResult(502, error_body("gads_unavailable"))
+        if isinstance(forwarded, ApiResult):
+            return forwarded
         if forwarded is False:
             return ApiResult(502, error_body("gads_unavailable"))
         return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
@@ -1229,62 +1229,12 @@ class RemoteAccessService:
     # internals
     # ------------------------------------------------------------------
 
-    def _in_esim_setup_mode(self, session: RemoteAccessSession) -> bool:
-        """eSIM setup restrictions stay on until ACTIVATION_CONFIRMED."""
-        if str(session.activation_observed or "").strip().lower() == "confirmed":
-            return False
-        phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
-        if phase == PHASE_VOIDFIX:
-            return False
-        return True
-
     def _mark_phone_ready(self, session: RemoteAccessSession) -> None:
         """Persist PHONE_READY from confirmed observation. Does not touch eSIM or VoidFix."""
         phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
         if phase != PHASE_VOIDFIX:
             phase = "complete"
         self._store.upsert(replace(session, setup_complete=True, setup_phase=phase))
-
-    def _launch_esim_setup_if_needed(self, auth: AuthorizedRental, session: RemoteAccessSession) -> None:
-        """Best-effort SIM-profiles launch. Never fails session create/stream."""
-        if not self._in_esim_setup_mode(session):
-            return
-        self._run_setup_guard(auth, session, recover=True)
-
-    def _block_if_esim_setup_disallowed(
-        self,
-        auth: AuthorizedRental,
-        session: RemoteAccessSession,
-    ) -> ApiResult | None:
-        details = self._run_setup_guard(auth, session, recover=True)
-        if isinstance(details, ApiResult) or not details.get("allowed"):
-            return ApiResult(403, error_body("setup_state_blocked"))
-        return None
-
-    def _run_setup_guard(
-        self,
-        auth: AuthorizedRental,
-        session: RemoteAccessSession,
-        *,
-        recover: bool,
-    ) -> dict[str, Any] | ApiResult:
-        phase = str(session.setup_phase or PHASE_ESIM)
-        if phase not in {PHASE_ESIM, PHASE_VOIDFIX}:
-            phase = PHASE_ESIM
-        details = self._farm_setup_task(
-            "setup_session_inspect",
-            auth.slot_id,
-            {
-                "phase": phase,
-                "voidfix_package": self._voidfix_package,
-                "recover": recover,
-            },
-        )
-        if isinstance(details, ApiResult):
-            return details
-        if not details.get("allowed"):
-            logger.warning("setup_guard_blocked slot=%s reason=%s", auth.slot_id, details.get("reason"))
-        return details
 
     def _farm_setup_task(
         self,
@@ -1301,12 +1251,17 @@ class RemoteAccessService:
                 payload=payload,
                 job_id=str(uuid.uuid4()),
             )
+        except TimeoutError:
+            logger.warning("setup_session_farm_timeout slot=%s task=%s", slot_id, task_type)
+            return ApiResult(504, error_body("timeout"))
         except Exception as exc:  # noqa: BLE001
             logger.warning("setup_session_farm_failed reason=%s", exc.__class__.__name__)
             return ApiResult(503, error_body("farm_unreachable"))
         details = response.body.get("details") if isinstance(response.body, dict) else None
         if not response.ok:
-            return ApiResult(502, error_body("farm_unreachable"))
+            status = 504 if response.http_status == 504 else 503 if response.http_status == 503 else 502
+            code = "timeout" if status == 504 else "farm_unreachable"
+            return ApiResult(status, error_body(code))
         return details if isinstance(details, dict) else {}
 
     def _inventory_identity_for_authorized_rental(self, auth: AuthorizedRental) -> dict[str, Any]:
@@ -1377,14 +1332,19 @@ class RemoteAccessService:
         self._native_resolution_cache[bay] = size
         return size, None
 
-    def _farm_input(self, slot_id: int, kind: str, command: Any) -> bool:
+    def _farm_input(self, slot_id: int, kind: str, command: Any) -> bool | ApiResult:
         payload: dict[str, Any] = {"kind": kind}
         if kind in {"tap", "swipe"}:
             payload.update({"x": command.x, "y": command.y})
         if kind == "swipe":
             payload.update({"x2": command.x2, "y2": command.y2})
+            duration_ms = getattr(command, "duration_ms", None)
+            if duration_ms is not None:
+                payload["duration_ms"] = int(duration_ms)
         result = self._farm_setup_task("setup_session_input", slot_id, payload)
-        return isinstance(result, dict)
+        if isinstance(result, ApiResult):
+            return result
+        return True
 
     def _forward_control(
         self,
@@ -1392,7 +1352,7 @@ class RemoteAccessService:
         session: RemoteAccessSession,
         secret: str,
         command: Any,
-    ) -> bool:
+    ) -> bool | ApiResult:
         kwargs = {
             "device_id": session.device_id,
             "platform_username": session.platform_username,
@@ -1432,14 +1392,23 @@ class RemoteAccessService:
             if not forwarded:
                 return self._farm_input(session.slot_id, "swipe", command)
             return True
-        if command.action in {"back", "home", "recents"}:
-            press = getattr(platform, f"press_{command.action}", None)
+        if command.action in NAV_ACTIONS:
+            method = {
+                "notification_shade": "press_notification_shade",
+                "quick_settings": "press_quick_settings",
+            }.get(command.action, f"press_{command.action}")
+            press = getattr(platform, method, None)
             forwarded = False
             if callable(press):
                 forwarded = bool(press(**kwargs))
             if not forwarded:
                 return self._farm_input(session.slot_id, command.action, command)
             return True
+        if command.action == "rotate":
+            set_rotation = getattr(platform, "set_rotation", None)
+            if not callable(set_rotation):
+                return False
+            return bool(set_rotation(**kwargs, orientation=str(command.orientation)))
         return False
 
     def _end_session(self, rental_id: str, slot_id: int, *, status: str) -> ApiResult:

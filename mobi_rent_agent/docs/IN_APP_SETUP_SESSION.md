@@ -11,7 +11,7 @@ or name a bay/serial/UDID/workspace.
 3. `live_phone_screen` — `<img>` / MJPEG from `GET {stream_path}` with customer JWT
 4. `esim_setup` — overlay copy: complete Android eSIM confirmation on the Pixel
 5. `voidfix_approval` — overlay copy: set VoidFix as default SMS app when Android asks
-6. `phone_ready` — existing observer reported `ACTIVATION_CONFIRMED`; `ui_state=phone_ready`; hide stream
+6. `phone_ready` — existing observer reported `ACTIVATION_CONFIRMED`; `ui_state=phone_ready`; **keep the live stream**. Home/Recents/shade/QS are already enabled from session start; Phone Ready is observational only.
 7. `cancelled` — `POST /rentals/{rental_id}/cancel`
 
 ## APIs (customer JWT)
@@ -22,17 +22,17 @@ or name a bay/serial/UDID/workspace.
 | POST | `/rentals/{rental_id}/remote-access` | 201 `{session_mode:in_app, stream_path, allowed_controls, ui_state}` — **no** `platform_login` |
 | GET | `/rentals/{rental_id}/remote-access` | poll `activation_state`, `setup_phase`, `setup_complete` |
 | GET | `/rentals/{rental_id}/remote-access/stream` | MJPEG proxy (`multipart/x-mixed-replace`) |
-| POST | `/rentals/{rental_id}/remote-access/control` | `{action:tap\|swipe\|type\|back, x,y,x2,y2,text}` only |
+| POST | `/rentals/{rental_id}/remote-access/control` | `{action:tap\|swipe\|type\|back\|home\|recents\|notification_shade\|quick_settings\|rotate}` |
 | POST | `/rentals/{rental_id}/remote-access/complete` | 200 ready **only** if eSIM `confirmed` and VoidFix verified |
 | POST | `/rentals/{rental_id}/remote-access/revoke` | close session without ending rental |
 | POST | `/rentals/{rental_id}/cancel` | revoke + CLEANUP REQUIRED |
 
-Never send: `slot_id`, `farm_slot_id`, `serial`, `udid`, `workspace_id`, `home`, `recents`, ADB, GADS URLs.
+Never send: `slot_id`, `farm_slot_id`, `serial`, `udid`, `workspace_id`, ADB, GADS URLs, keycodes.
 
 `403 forbidden` for wrong user / wrong rental / expired / cancelled.
-`403 forbidden_control` for blocked gestures (including Home/Recents while `setup_phase=esim`).
+`403 forbidden_control` for ADB/keys/identity spoof.
+Home, Recents, shade, Quick Settings, rotate, Settings, apps, and gestures are allowed from session start — before and after eSIM activation. Leaving SIM Settings is not blocked and does not auto-recover to the eSIM screen.
 `409 setup_incomplete` if complete is called too early (`ui_state` tells which step).
-`403 setup_state_blocked` if the Pixel left the allowed eSIM setup activities.
 
 ## Admin (Farm service token)
 
@@ -59,7 +59,7 @@ Cancel: POST `/rentals/{id}/cancel` then confirm the bay is absent from availabl
 - Remove GADS hub-ui redirect / username / password screens.
 - Render MJPEG from VPS `stream_path` with `Authorization: Bearer <customer JWT>`.
 - Map pointer events to `control` taps/swipes in **device pixels** (not CSS pixels) after measuring the stream frame.
-- Show Back, Home, and Recents plus on-screen tapping/swiping. Do not send keycodes.
+- Show Back, Home, Recents, Notifications, and Quick Settings plus on-screen tapping/swiping. Do not send keycodes. Those buttons work from session start (not gated on Phone Ready). Do not hide the stream at Phone Ready. Do not force the customer back to SIM Settings.
 - After QR upload success, call `POST /remote-access` and go to connecting → live screen.
 - Call `complete` when the customer taps “I finished setup”; handle 409 by showing `esim_setup` or `voidfix_approval`.
 - Wire Cancel rental to `POST /rentals/{id}/cancel`.

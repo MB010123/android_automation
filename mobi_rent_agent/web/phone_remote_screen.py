@@ -4,15 +4,28 @@ The live SlotRent page paints MJPEG by swapping ``<img src>`` on every JPEG
 frame. That cancels pointer capture and often leaves naturalWidth at 0, so
 clicks look like a still image. This module is the control surface: map
 display coordinates onto the last decoded frame, classify tap vs swipe, and
-emit only the VPS allowlist (tap / swipe / type / back).
+emit the VPS allowlist (tap / swipe / type / back / home / recents /
+notification_shade / quick_settings / rotate).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
 
-ALLOWED_ACTIONS = frozenset({"tap", "swipe", "type", "back"})
-FORBIDDEN_ACTIONS = frozenset({"home", "recents", "notification", "keyevent", "adb", "shell"})
+ALLOWED_ACTIONS = frozenset(
+    {
+        "tap",
+        "swipe",
+        "type",
+        "back",
+        "home",
+        "recents",
+        "notification_shade",
+        "quick_settings",
+        "rotate",
+    }
+)
+FORBIDDEN_ACTIONS = frozenset({"keyevent", "adb", "shell", "keycode"})
 FORBIDDEN_KEYS = frozenset(
     {
         "slot_id",
@@ -27,9 +40,11 @@ FORBIDDEN_KEYS = frozenset(
         "adb_command",
     }
 )
+NAV_ACTIONS = frozenset({"back", "home", "recents", "notification_shade", "quick_settings"})
 # Display-space movement (CSS pixels) that turns a press into a swipe.
 SWIPE_THRESHOLD_PX = 12.0
 MAX_TEXT = 64
+_ALLOWED_ORIENTATIONS = frozenset({"portrait", "landscape"})
 
 
 @dataclass(frozen=True)
@@ -89,12 +104,21 @@ def classify_gesture(
 
 def control_payload(action: str, **fields: Any) -> dict[str, Any] | None:
     act = str(action or "").strip().lower()
+    if act == "overview":
+        act = "recents"
+    if act in {"notification", "notifications"}:
+        act = "notification_shade"
     if act in FORBIDDEN_ACTIONS or act not in ALLOWED_ACTIONS:
         return None
     if any(key in fields for key in FORBIDDEN_KEYS):
         return None
-    if act == "back":
-        return {"action": "back"}
+    if act in NAV_ACTIONS:
+        return {"action": act}
+    if act == "rotate":
+        orientation = str(fields.get("orientation") or "").strip().lower()
+        if orientation not in _ALLOWED_ORIENTATIONS:
+            return None
+        return {"action": "rotate", "orientation": orientation}
     if act == "type":
         text = str(fields.get("text") or "")
         if not text or len(text) > MAX_TEXT:
@@ -124,6 +148,7 @@ class PhoneRemoteController:
         self.prevent_scroll = False
         self.image_navigation_blocked = True
         self.indicator: tuple[float, float] | None = None
+        self.last_error: str | None = None
         self._press: dict[str, Any] | None = None
 
     @property
@@ -194,7 +219,7 @@ class PhoneRemoteController:
             payload = control_payload("swipe", x=start[0], y=start[1], x2=end[0], y2=end[1])
         if payload is None:
             return None
-        self._send(payload)
+        self._emit(payload)
         return payload
 
     def pointer_cancel(self) -> None:
@@ -202,11 +227,26 @@ class PhoneRemoteController:
         self.indicator = None
 
     def send_back(self) -> dict[str, Any] | None:
+        return self._send_named("back")
+
+    def send_home(self) -> dict[str, Any] | None:
+        return self._send_named("home")
+
+    def send_recents(self) -> dict[str, Any] | None:
+        return self._send_named("recents")
+
+    def send_notification_shade(self) -> dict[str, Any] | None:
+        return self._send_named("notification_shade")
+
+    def send_quick_settings(self) -> dict[str, Any] | None:
+        return self._send_named("quick_settings")
+
+    def send_rotate(self, orientation: str) -> dict[str, Any] | None:
         if not self.ready:
             return None
-        payload = control_payload("back")
+        payload = control_payload("rotate", orientation=orientation)
         if payload:
-            self._send(payload)
+            self._emit(payload)
         return payload
 
     def send_type(self, text: str) -> dict[str, Any] | None:
@@ -214,5 +254,20 @@ class PhoneRemoteController:
             return None
         payload = control_payload("type", text=text)
         if payload:
-            self._send(payload)
+            self._emit(payload)
         return payload
+
+    def record_result(self, ok: bool, error: str | None = None) -> None:
+        self.last_error = None if ok else (error or "control_failed")
+
+    def _send_named(self, action: str) -> dict[str, Any] | None:
+        if not self.ready:
+            return None
+        payload = control_payload(action)
+        if payload:
+            self._emit(payload)
+        return payload
+
+    def _emit(self, payload: dict[str, Any]) -> None:
+        self.last_error = None
+        self._send(payload)

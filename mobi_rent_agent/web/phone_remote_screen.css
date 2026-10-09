@@ -46,6 +46,12 @@
   pointer-events: none;
 }
 
+.phone-remote-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .phone-remote-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -55,4 +61,15 @@
 .phone-remote-toolbar button,
 .phone-remote-toolbar input {
   font-size: 0.875rem;
+}
+
+.phone-remote-toolbar button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.phone-remote-status {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #b91c1c;
 }

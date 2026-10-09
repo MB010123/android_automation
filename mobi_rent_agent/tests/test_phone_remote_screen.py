@@ -134,18 +134,39 @@ def test_back_and_type_work_when_ready():
     assert sent[-2:] == [{"action": "back"}, {"action": "type", "text": "hello"}]
 
 
-def test_home_recents_shade_remain_unavailable():
+def test_home_recents_shade_are_semantic_actions():
     ctl, sent = _ready()
-    assert control_payload("home") is None
-    assert control_payload("recents") is None
-    assert control_payload("notification") is None
+    assert control_payload("home") == {"action": "home"}
+    assert control_payload("recents") == {"action": "recents"}
+    assert control_payload("notification") == {"action": "notification_shade"}
+    assert control_payload("notification_shade") == {"action": "notification_shade"}
+    assert control_payload("quick_settings") == {"action": "quick_settings"}
+    assert control_payload("rotate", orientation="landscape") == {
+        "action": "rotate",
+        "orientation": "landscape",
+    }
+    assert ctl.send_home() == {"action": "home"}
+    assert ctl.send_recents() == {"action": "recents"}
+    assert ctl.send_notification_shade() == {"action": "notification_shade"}
+    assert ctl.send_quick_settings() == {"action": "quick_settings"}
     assert control_payload("tap", x=1, y=1, serial="X") is None
     assert control_payload("tap", x=1, y=1, udid="X") is None
     assert control_payload("tap", x=1, y=1, workspace_id="ws") is None
+    assert control_payload("keyevent") is None
     assert FORBIDDEN_ACTIONS.isdisjoint(ALLOWED_ACTIONS)
     js = (ROOT / "web" / "phone_remote_screen.js").read_text(encoding="utf-8")
+    tsx = (ROOT / "web" / "PhoneRemoteScreen.tsx").read_text(encoding="utf-8")
     assert "home: 1" in js and "recents: 1" in js
-    assert sent == []
+    assert "notification_shade: 1" in js
+    assert 'setupMode ? ["tap", "swipe", "type", "back"]' not in tsx
+    assert "Available after Phone Ready" not in tsx
+    assert '"home"' in tsx and '"recents"' in tsx
+    assert sent[-4:] == [
+        {"action": "home"},
+        {"action": "recents"},
+        {"action": "notification_shade"},
+        {"action": "quick_settings"},
+    ]
 
 
 def test_controls_disabled_before_session_and_stream_ready():
@@ -181,4 +202,4 @@ def test_auth_and_rental_id_stay_out_of_control_payloads():
         "rental_id",
     ):
         assert banned not in body
-    assert set(body) <= {"action", "x", "y", "x2", "y2", "text"}
+    assert set(body) <= {"action", "x", "y", "x2", "y2", "text", "orientation"}

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from application.in_app_control_policy import public_allowed_controls
 from domain.remote_access import public_activation_view
 
 SCHEMA_VERSION = 4
@@ -81,6 +82,8 @@ class RemoteAccessSession:
         if status == STATUS_ACTIVE and not active:
             status = STATUS_EXPIRED
         confirmed = str(self.activation_observed or "").strip().lower() == "confirmed"
+        phase = str(self.setup_phase or "esim").strip().lower()
+        setup_mode = not confirmed and phase != "voidfix"
         if confirmed:
             ui_state = "phone_ready"
         elif active:
@@ -100,9 +103,10 @@ class RemoteAccessSession:
             "session_mode": "in_app",
             "setup_phase": self.setup_phase or "esim",
             "setup_complete": bool(self.setup_complete) or confirmed,
+            "setup_mode": setup_mode,
             "voidfix_observed": self.voidfix_observed,
             "stream_path": f"/rentals/{self.rental_id}/remote-access/stream",
-            "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents"],
+            "allowed_controls": public_allowed_controls(setup_mode=False),
             "coordinate_space": "native_device_pixels",
             "ui_state": ui_state,
         }

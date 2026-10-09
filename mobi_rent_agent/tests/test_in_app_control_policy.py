@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS, decide_control
+from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS, decide_control, public_allowed_controls
 
 
 def test_allowed_tap_and_swipe():
@@ -33,22 +33,42 @@ def test_allowed_tap_and_swipe():
 def test_type_back_home_and_recents_allowed():
     typed = decide_control({"action": "type", "text": "OK"})
     assert typed.allowed and typed.command is not None and typed.command.text == "OK"
-    for action in ("back", "home", "recents"):
+    for action in ("back", "home", "recents", "notification_shade", "quick_settings"):
         decision = decide_control({"action": action})
         assert decision.allowed, action
         assert decision.command is not None and decision.command.action == action
-    assert PUBLIC_CONTROL_ACTIONS == ("tap", "swipe", "type", "back", "home", "recents")
+    rotated = decide_control({"action": "rotate", "orientation": "landscape"})
+    assert rotated.allowed and rotated.command is not None
+    assert rotated.command.orientation == "landscape"
+    assert PUBLIC_CONTROL_ACTIONS == (
+        "tap",
+        "swipe",
+        "type",
+        "back",
+        "home",
+        "recents",
+        "notification_shade",
+        "quick_settings",
+        "rotate",
+    )
 
 
-def test_setup_mode_rejects_home_and_recents_only():
-    assert decide_control({"action": "home"}, setup_mode=True).allowed is False
-    assert decide_control({"action": "home"}, setup_mode=True).reason == "forbidden_control"
-    assert decide_control({"action": "recents"}, setup_mode=True).allowed is False
+def test_setup_mode_does_not_restrict_system_nav():
+    for action in ("home", "recents", "notification_shade", "quick_settings"):
+        allowed = decide_control({"action": action}, setup_mode=True)
+        assert allowed.allowed is True, action
+        assert allowed.command is not None and allowed.command.action == action
+    rotate = decide_control({"action": "rotate", "orientation": "portrait"}, setup_mode=True)
+    assert rotate.allowed is True and rotate.command is not None
     assert decide_control({"action": "back"}, setup_mode=True).allowed is True
     tap = decide_control({"action": "tap", "x": 10, "y": 20}, setup_mode=True)
     assert tap.allowed is True
     assert decide_control({"action": "home"}).allowed is True
     assert decide_control({"action": "recents"}).allowed is True
+    assert decide_control({"action": "notification_shade"}).allowed is True
+    assert decide_control({"action": "quick_settings"}).allowed is True
+    assert public_allowed_controls(setup_mode=True) == list(PUBLIC_CONTROL_ACTIONS)
+    assert public_allowed_controls(setup_mode=False) == list(PUBLIC_CONTROL_ACTIONS)
 
 
 def test_bottom_edge_upward_swipe_is_normal_navigation():
@@ -56,11 +76,25 @@ def test_bottom_edge_upward_swipe_is_normal_navigation():
     assert gesture.allowed and gesture.command is not None
     assert gesture.command.action == "swipe"
     assert gesture.command.y == 2900 and gesture.command.y2 == 2000
+    setup = decide_control(
+        {"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000}, setup_mode=True
+    )
+    assert setup.allowed is True
 
 
-def test_notification_and_keys_rejected():
+def test_shade_swipe_allowed_before_and_after_ready():
+    payload = {"action": "swipe", "x": 100, "y": 10, "x2": 100, "y2": 500}
+    during_setup = decide_control(payload, setup_mode=True)
+    assert during_setup.allowed is True and during_setup.command is not None
+    ready = decide_control(payload)
+    assert ready.allowed is True and ready.command is not None
+    assert ready.command.action == "swipe"
+
+
+def test_notification_aliases_and_keys_rejected():
+    assert decide_control({"action": "notifications"}).command.action == "notification_shade"
+    assert decide_control({"action": "overview"}).command.action == "recents"
     for payload in (
-        {"action": "swipe", "x": 100, "y": 10, "x2": 100, "y2": 500},
         {"action": "keyevent", "keycode": 3},
         {"action": "tap", "x": 1, "y": 1, "command": "reboot"},
         {"action": "tap", "x": 1, "y": 1, "udid": "OTHER"},
@@ -97,3 +131,5 @@ def test_invalid_control_is_not_forbidden():
     assert bad_duration.allowed is False and bad_duration.reason == "invalid_control"
     extra = decide_control({"action": "home", "x": 1})
     assert extra.allowed is False and extra.reason == "invalid_control"
+    bad_rotate = decide_control({"action": "rotate", "orientation": "upside_down"})
+    assert bad_rotate.allowed is False and bad_rotate.reason == "invalid_control"

@@ -71,7 +71,7 @@ def run_setup_session_inspect(
     payload = request.payload if isinstance(request.payload, dict) else {}
     phase = str(payload.get("phase") or "esim").strip().lower()
     voidfix_package = str(payload.get("voidfix_package") or "").strip() or None
-    recover = bool(payload.get("recover", True))
+    recover = bool(payload.get("recover", False))
     runner = command_runner
     try:
         activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
@@ -149,6 +149,10 @@ def run_setup_session_input(
             _shell(runner, adb_path, serial, ["input", "keyevent", "3"])
         elif kind == "recents":
             _shell(runner, adb_path, serial, ["input", "keyevent", "187"])
+        elif kind == "notification_shade":
+            _shell(runner, adb_path, serial, ["cmd", "statusbar", "expand-notifications"])
+        elif kind == "quick_settings":
+            _shell(runner, adb_path, serial, ["cmd", "statusbar", "expand-settings"])
         elif kind == "swipe":
             args = [
                 "input",
@@ -158,6 +162,9 @@ def run_setup_session_input(
                 str(int(payload["x2"])),
                 str(int(payload["y2"])),
             ]
+            duration_ms = payload.get("duration_ms")
+            if duration_ms is not None:
+                args.append(str(int(duration_ms)))
             _shell(runner, adb_path, serial, args)
         elif kind == "tap":
             _shell(

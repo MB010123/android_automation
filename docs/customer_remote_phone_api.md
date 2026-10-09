@@ -1,6 +1,7 @@
 # Customer remote-phone API (frontend integration spec)
 
-Status: backend contract for a future Lovable/customer UI.
+Status: backend contract for Lovable (external) plus the in-repo `web/` live-screen copy.
+The production customer UI is **Lovable-only and is not in this repo**; wire Home/Recents/shade/QS from this contract. `mobi_rent_agent/web/` is the in-repo control surface used as a copy target.
 Do **not** connect the browser to GADS, Farm Agent, ADB, or the Pixel.
 
 Architecture:
@@ -50,7 +51,8 @@ take a GADS exclusive device lock.
   "expires_at": 1730000000,
   "session_mode": "in_app",
   "stream_path": "/rentals/00000000-0000-4000-8000-000000000099/remote-access/stream",
-  "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents"],
+  "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents", "notification_shade", "quick_settings", "rotate"],
+  "setup_mode": true,
   "coordinate_space": "native_device_pixels",
   "ui_state": "live_phone_screen",
   "setup_phase": "esim",
@@ -71,16 +73,18 @@ platform password, JWT, or hub URLs.
 
 ### Errors
 
-| HTTP | `error` | When |
-| --- | --- | --- |
-| 401 | `unauthorized` | Missing/invalid customer JWT |
-| 404 | `rental_not_found` | Unknown rental id |
-| 403 | `rental_not_owned` | Signed-in user does not own the rental |
-| 403 | `session_expired` | Rental end time has passed |
-| 409 | `phone_offline` | Assigned Pixel is offline |
-| 409 | `remote_access_busy` | **Another rental** currently holds the remote-access lease |
-| 503 | `phone_unavailable` | Bay not mapped / remote access disabled |
-| 502/503 | `gads_unavailable` | Screen service not configured or rejected the grant |
+
+| HTTP    | `error`              | When                                                       |
+| ------- | -------------------- | ---------------------------------------------------------- |
+| 401     | `unauthorized`       | Missing/invalid customer JWT                               |
+| 404     | `rental_not_found`   | Unknown rental id                                          |
+| 403     | `rental_not_owned`   | Signed-in user does not own the rental                     |
+| 403     | `session_expired`    | Rental end time has passed                                 |
+| 409     | `phone_offline`      | Assigned Pixel is offline                                  |
+| 409     | `remote_access_busy` | **Another rental** currently holds the remote-access lease |
+| 503     | `phone_unavailable`  | Bay not mapped / remote access disabled                    |
+| 502/503 | `gads_unavailable`   | Screen service not configured or rejected the grant        |
+
 
 `remote_access_busy` is **only** the cross-rental lease conflict. The customer's
 own live stream is not "busy".
@@ -170,7 +174,7 @@ Recommended:
 3. For each part, take bytes after the part headers (`image/jpeg`).
 4. `createImageBitmap` / `Image.decode` the JPEG.
 5. Draw to a `<canvas>` sized to the **display box** (CSS pixels). Keep the
-   bitmap's `width`/`height` as native frame dimensions.
+  bitmap's `width`/`height` as native frame dimensions.
 
 Do **not** assign each JPEG to `img.src` in a way that races with click
 coordinates. Overlay hit-testing must use the same rectangle as the drawn
@@ -185,9 +189,9 @@ Coordinates are **native device pixels**, origin top-left, x right, y down.
 Resolution sources, in order:
 
 1. `GET .../device-status` field `native_resolution: { width, height }` from Farm
-   Agent `adb shell wm size` **Physical size** (not the MJPEG frame, which may be 720px).
+  Agent `adb shell wm size` **Physical size** (not the MJPEG frame, which may be 720px).
 2. If that field is absent, `native_resolution_unavailable` explains why. Do not
-   invent 1080×2400. You may fall back to JPEG `naturalWidth`/`naturalHeight` only
+  invent 1080×2400. You may fall back to JPEG `naturalWidth`/`naturalHeight` only
    as a last resort; that is the stream size, not native coordinates.
 3. Session JSON `coordinate_space` is always `"native_device_pixels"`.
 
@@ -213,8 +217,10 @@ native_y = (client_y - rect.top)  / rect.height * native_height
 Round to integers. Clamp to `[0, native_width-1]` / `[0, native_height-1]`.
 
 Send those integers in tap/swipe bodies. The backend rejects coordinates
-outside `0..8192` and rejects notification-shade pulls. Bottom-edge navigation
-gestures are allowed. Home/Recents are also explicit semantic actions.
+outside `0..8192`. Bottom-edge navigation gestures and status-bar pull-downs
+are allowed from session start (before and after eSIM activation). Prefer
+semantic Home / Recents / `notification_shade` / `quick_settings` rather than
+only coordinate swipes.
 
 ---
 
@@ -251,16 +257,20 @@ Aliases also accepted: `x`/`y`/`x2`/`y2` instead of `start_*`/`end_*`,
 and `duration` instead of `duration_ms`. Duration is optional (1–5000 ms).
 
 Bottom-edge upward swipes are accepted as normal Android navigation (Home /
-Recents / Back gestures). Do **not** send a swipe that starts in the
-status-bar band and pulls down (notification shade); that returns 403
-`forbidden_control`. Explicit Home/Recents use semantic `{ "action": "home" }`
-/ `{ "action": "recents" }` — never Android keycodes.
+Recents / Back gestures). Status-bar pull-downs are forwarded as normal shade
+gestures from session start. Prefer semantic `{ "action": "home" }`,
+`{ "action": "recents" }`, `{ "action": "notification_shade" }`,
+`{ "action": "quick_settings" }` — never Android keycodes.
 
-While `setup_phase` is `esim` and `setup_complete` is false, the VPS inspects
-the foreground Android activity before forwarding tap/swipe/type/back. Home
-and Recents return 403 `forbidden_control`. Leaving the allowed eSIM Settings
-screens returns 403 `setup_state_blocked` and does not forward the control.
-After setup is complete, Home/Recents keep the normal customer policy.
+Assigned customers have full normal Android access before, during, and after
+eSIM activation. `setup_mode` is telemetry (true until `ACTIVATION_CONFIRMED`
+and not VoidFix) and does **not** gate controls. Home, Recents, shade, Quick
+Settings, rotate, Settings, apps, and gestures are in `allowed_controls` from
+session start. Leaving SIM Settings is not blocked and does not auto-launch
+the eSIM screen. QR upload / eSIM activation remain a normal customer action,
+not a kiosk. Reconnect and page refresh reuse the session without re-applying
+setup restrictions. The live stream stays available while the session is
+active — do not hide it just because `ui_state=phone_ready`.
 
 ---
 
@@ -292,19 +302,38 @@ No coordinates. This is Android Back only.
 { "action": "recents" }
 ```
 
-No coordinates and no keycodes. The VPS maps these to GADS (Farm Agent
-fallback uses the matching Android nav event internally).
+```json
+{ "action": "notification_shade" }
+```
 
-Forbidden (do not send): notification shade, `keycode`, `keyevent`, `adb`,
-`shell`, `command`, serials, workspace ids.
+```json
+{ "action": "quick_settings" }
+```
 
-| HTTP | `error` |
-| --- | --- |
-| 422 | `invalid_control` (bad/missing numbers, unknown action, extra fields) |
-| 403 | `forbidden_control` (shade/ADB/identity spoof/raw keys; Home/Recents during eSIM setup) |
-| 403 | `setup_state_blocked` (foreground activity left the eSIM setup allowlist) |
-| 409 | `remote_access_not_ready` |
-| 403 | `session_expired` / `rental_not_owned` |
+```json
+{ "action": "rotate", "orientation": "portrait" }
+```
+
+`orientation` is `portrait` or `landscape`. Recents also accepts alias `overview`.
+Shade also accepts `notifications`. No coordinates and no keycodes. The VPS maps
+these to GADS; Farm Agent fallback uses the matching Android nav / `cmd statusbar`
+event internally (not customer ADB). Rotate is GADS-only — if the hub has no
+rotation endpoint the control returns 502 `gads_unavailable` (no `wm` overscan).
+
+Forbidden (do not send): `keycode`, `keyevent`, `adb`, `shell`, `command`,
+serials, workspace ids.
+
+
+| HTTP | `error`                                                                                          |
+| ---- | ------------------------------------------------------------------------------------------------ |
+| 422  | `invalid_control` (bad/missing numbers, unknown action, extra fields)                            |
+| 403  | `forbidden_control` (ADB/identity spoof/raw keys)                                                |
+| 409  | `remote_access_not_ready`                                                                        |
+| 403  | `session_expired` / `rental_not_owned`                                                           |
+| 502  | `gads_unavailable` (GADS rejected or missing; never a fake 200)                                  |
+| 503  | `farm_unreachable` (Farm fallback needed and Farm is down)                                       |
+| 504  | `timeout` (Farm fallback timed out)                                                              |
+
 
 ---
 
@@ -322,21 +351,23 @@ Every JSON error uses:
 
 Switch on `error`, not on the human `message`, and **not** on HTTP 409 alone.
 
-| `error` | Meaning | Frontend |
-| --- | --- | --- |
-| `unauthorized` | JWT missing/invalid | Re-auth |
-| `rental_not_found` | Bad rental id | Leave screen |
-| `rental_not_owned` | Wrong user | Leave screen |
-| `phone_offline` | Pixel offline | Retry later; show offline |
-| `phone_unavailable` | Bay/device not ready | Support / wait |
-| `remote_access_busy` | Another rental owns the lease | Do not retry as if "phone busy from our stream" |
-| `remote_access_not_ready` | No active session | Call start-session |
-| `session_expired` | Rental or session ended | End UI |
-| `gads_unavailable` | Screen service down | Retry with backoff |
-| `invalid_control` | Bad tap/swipe/type body | Fix mapping |
-| `forbidden_control` | Disallowed gesture | Ignore / don't send |
-| `manual_esim_required` | Informational code; **does not** block remote access | Show "finish eSIM in Settings" |
-| `setup_incomplete` | Legacy setup-finish warning | Do not treat as stream failure |
+
+| `error`                   | Meaning                                              | Frontend                                        |
+| ------------------------- | ---------------------------------------------------- | ----------------------------------------------- |
+| `unauthorized`            | JWT missing/invalid                                  | Re-auth                                         |
+| `rental_not_found`        | Bad rental id                                        | Leave screen                                    |
+| `rental_not_owned`        | Wrong user                                           | Leave screen                                    |
+| `phone_offline`           | Pixel offline                                        | Retry later; show offline                       |
+| `phone_unavailable`       | Bay/device not ready                                 | Support / wait                                  |
+| `remote_access_busy`      | Another rental owns the lease                        | Do not retry as if "phone busy from our stream" |
+| `remote_access_not_ready` | No active session                                    | Call start-session                              |
+| `session_expired`         | Rental or session ended                              | End UI                                          |
+| `gads_unavailable`        | Screen service down                                  | Retry with backoff                              |
+| `invalid_control`         | Bad tap/swipe/type body                              | Fix mapping                                     |
+| `forbidden_control`       | ADB/keys/identity spoof                              | Do not retry as a gesture                       |
+| `manual_esim_required`    | Informational code; **does not** block remote access | Show "finish eSIM in Settings"                  |
+| `setup_incomplete`        | Legacy setup-finish warning                          | Do not treat as stream failure                  |
+
 
 Never display a generic "The phone is busy" for every 409.
 
@@ -431,22 +462,24 @@ caller's own stream as busy.
 }
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `state` | `online` \| `offline` \| `unavailable` |
-| `requires_manual_action` | Customer must finish eSIM in Android Settings/LPA. **Remote access remains allowed.** |
-| `remote_access_available` | Phone online and no other rental holds the lease |
-| `remote_access_busy` | Another rental owns the lease |
-| `native_resolution` | Optional; otherwise use JPEG frame size |
-| `imei2` | Assigned phone IMEI2 from `public.slots.imei2`; otherwise `null` |
-| `imei2_status` | `known` \| `unknown`. Never a placeholder |
-| `eid` | Assigned phone eUICC EID when already stored on the tenant slot/rental row; otherwise `null` |
-| `eid_status` | `known` \| `unknown`. Never a placeholder |
-| `carrier` | Assigned slot carrier from `public.slots.carrier_name`; otherwise `null` |
-| `carrier_status` | `known` \| `unknown`. Never a placeholder |
-| `phone_number` | Assigned slot number from `public.slots.phone_number`; otherwise `null` |
-| `phone_number_status` | `known` \| `unknown`. Never a placeholder |
-| `cellular_status` | Always `unknown`. There is no approved live radio reader |
+
+| Field                     | Meaning                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| `state`                   | `online` | `offline` | `unavailable`                                                         |
+| `requires_manual_action`  | Customer must finish eSIM in Android Settings/LPA. **Remote access remains allowed.**        |
+| `remote_access_available` | Phone online and no other rental holds the lease                                             |
+| `remote_access_busy`      | Another rental owns the lease                                                                |
+| `native_resolution`       | Optional; otherwise use JPEG frame size                                                      |
+| `imei2`                   | Assigned phone IMEI2 from `public.slots.imei2`; otherwise `null`                             |
+| `imei2_status`            | `known` | `unknown`. Never a placeholder                                                     |
+| `eid`                     | Assigned phone eUICC EID when already stored on the tenant slot/rental row; otherwise `null` |
+| `eid_status`              | `known` | `unknown`. Never a placeholder                                                     |
+| `carrier`                 | Assigned slot carrier from `public.slots.carrier_name`; otherwise `null`                     |
+| `carrier_status`          | `known` | `unknown`. Never a placeholder                                                     |
+| `phone_number`            | Assigned slot number from `public.slots.phone_number`; otherwise `null`                      |
+| `phone_number_status`     | `known` | `unknown`. Never a placeholder                                                     |
+| `cellular_status`         | Always `unknown`. There is no approved live radio reader                                     |
+
 
 These identity fields are **read-only inventory passthrough** for the owned
 assigned rental only. Empty or whitespace inventory is `null` / `unknown`.
@@ -501,14 +534,16 @@ Diagnostics use existing device-status and stored activation/setup state.
 `cellular_status` is `unknown` (Farm health does not expose radio). Reboot does
 not wait for GADS to return and does not change eSIM, VoidFix, or setup-mode.
 
-| HTTP | Meaning |
-| --- | --- |
-| 200 | diagnostics snapshot |
-| 202 | `recovery=reboot_requested` (Farm reboot accepted) |
-| 429 | cooldown |
-| 409 | another troubleshoot/reconnect in flight on this bay |
-| 503 | Farm unreachable (reboot) |
-| 504 | Farm timeout (reboot) |
+
+| HTTP | Meaning                                              |
+| ---- | ---------------------------------------------------- |
+| 200  | diagnostics snapshot                                 |
+| 202  | `recovery=reboot_requested` (Farm reboot accepted)   |
+| 429  | cooldown                                             |
+| 409  | another troubleshoot/reconnect in flight on this bay |
+| 503  | Farm unreachable (reboot)                            |
+| 504  | Farm timeout (reboot)                                |
+
 
 ---
 
@@ -524,14 +559,16 @@ returns `501 action_not_supported` because there is no approved airplane-mode
 command on `mobi_rent.network` (VPN status/start/stop only) and raw
 `adb shell settings` is not exposed. This endpoint does **not** fake success.
 
-| HTTP | `error` |
-| --- | --- |
-| 501 | `action_not_supported` |
-| 429 | `rate_limited` (cooldown) |
-| 409 | `remote_access_busy` (in-flight on this bay) |
-| 504 | `timeout` |
-| 403 | `rental_not_owned` / `forbidden_control` |
-| 404 | `rental_not_found` |
+
+| HTTP | `error`                                      |
+| ---- | -------------------------------------------- |
+| 501  | `action_not_supported`                       |
+| 429  | `rate_limited` (cooldown)                    |
+| 409  | `remote_access_busy` (in-flight on this bay) |
+| 504  | `timeout`                                    |
+| 403  | `rental_not_owned` / `forbidden_control`     |
+| 404  | `rental_not_found`                           |
+
 
 ---
 
@@ -549,8 +586,8 @@ phone-service release path. Same ownership rules as remote access.
 - Slot 1 and Slot 2 are independent. Two customers can stream at once.
 - Calling start-session twice for the same rental reuses one GADS session.
 - Keep one stream reader; send controls on other requests.
-- Serialize tap/swipe/type/back/home/recents on the client if you want strict
-  ordering; the backend also serializes control per rental.
+- Serialize tap/swipe/type/back/home/recents/notification_shade/quick_settings/rotate
+on the client if you want strict ordering; the backend also serializes control per rental.
 
 ---
 
@@ -560,7 +597,7 @@ phone-service release path. Same ownership rules as remote access.
 POST /rentals/{id}/remote-access
 GET  /rentals/{id}/remote-access/device-status
 GET  /rentals/{id}/remote-access/stream          // canvas
-POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents
+POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents | notification_shade | quick_settings | rotate
 POST /rentals/{id}/esim/upload                   // optional, multipart qr_image
 POST /rentals/{id}/remote-access/troubleshoot        // diagnose | reboot
 POST /rentals/{id}/remote-access/reconnect-cellular  // 501 action_not_supported today

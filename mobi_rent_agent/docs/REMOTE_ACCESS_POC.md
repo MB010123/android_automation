@@ -193,7 +193,7 @@ Modified:
 | POST | `/rentals/{rental_id}/remote-access` | 201 in-app session (`session_mode=in_app`, `stream_path`). No GADS hub-ui login. |
 | GET | `/rentals/{rental_id}/remote-access` | 200 session + `activation_state` / `setup_phase`. Never returns platform credentials. |
 | GET | `/rentals/{rental_id}/remote-access/stream` | MJPEG proxy of the assigned Pixel only |
-| POST | `/rentals/{rental_id}/remote-access/control` | tap / swipe / type / back (server allowlist) |
+| POST | `/rentals/{rental_id}/remote-access/control` | tap / swipe / type / back / home / recents / notification_shade / quick_settings / rotate |
 | POST | `/rentals/{rental_id}/remote-access/complete` | 200 `phone_ready` only after confirmed eSIM + VoidFix verify; revokes session |
 | POST | `/rentals/{rental_id}/remote-access/revoke` | 200; deletes platform user, releases device lease |
 | POST | `/rentals/{rental_id}/remote-access/device-status` | 200 `{state, online, available, busy, adb_online}` |

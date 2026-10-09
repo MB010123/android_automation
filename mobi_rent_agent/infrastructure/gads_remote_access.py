@@ -499,19 +499,82 @@ class GadsRemoteAccessPlatform:
         platform_username: str,
         platform_password: str,
     ) -> bool:
-        if self._press_nav(
+        return self._press_nav_any(
             device_id=device_id,
             platform_username=platform_username,
             platform_password=platform_password,
-            suffix="recents",
-        ):
-            return True
-        return self._press_nav(
-            device_id=device_id,
-            platform_username=platform_username,
-            platform_password=platform_password,
-            suffix="recentApps",
+            suffixes=("recents", "recentApps"),
         )
+
+    def press_notification_shade(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ) -> bool:
+        return self._press_nav_any(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffixes=("notifications", "expandNotifications", "notificationShade"),
+        )
+
+    def press_quick_settings(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+    ) -> bool:
+        return self._press_nav_any(
+            device_id=device_id,
+            platform_username=platform_username,
+            platform_password=platform_password,
+            suffixes=("quickSettings", "expandSettings", "expandQuickSettings"),
+        )
+
+    def set_rotation(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        orientation: str,
+    ) -> bool:
+        """GADS rotation only. No ADB ``wm`` / overscan fallback."""
+        token = self._user_token(platform_username, platform_password)
+        body = {"orientation": str(orientation)}
+        result = self._client.device_control(
+            "POST", device_id, "rotation", token=token, json_body=body
+        )
+        if result.status == 404:
+            result = self._client.device_control(
+                "POST", device_id, "orientation", token=token, json_body=body
+            )
+        if result.status == 404:
+            return False
+        if not (200 <= result.status < 300):
+            raise RemoteAccessPlatformError(f"gads_rotation_failed status={result.status}")
+        return True
+
+    def _press_nav_any(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        suffixes: tuple[str, ...],
+    ) -> bool:
+        for suffix in suffixes:
+            if self._press_nav(
+                device_id=device_id,
+                platform_username=platform_username,
+                platform_password=platform_password,
+                suffix=suffix,
+            ):
+                return True
+        return False
 
     def _press_nav(
         self,

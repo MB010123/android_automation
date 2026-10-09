@@ -178,7 +178,7 @@ def test_diagnostics_do_not_change_setup_mode_stream_or_phone_ready(tmp_path: Pa
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT1_SERIAL
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
-    assert home.http_status == 403
+    assert home.http_status == 200
     session = store.get(rental)
     store.upsert(
         replace(
@@ -196,5 +196,5 @@ def test_diagnostics_do_not_change_setup_mode_stream_or_phone_ready(tmp_path: Pa
     home_ready = service.control_session(CUSTOMER_A, rental, {"action": "home"})
     assert home_ready.http_status == 200
     inspects = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
-    assert inspects
+    assert not any(t["payload"].get("recover") for t in inspects)
     assert not any(t["type"] == "reboot" for t in farm.tasks)

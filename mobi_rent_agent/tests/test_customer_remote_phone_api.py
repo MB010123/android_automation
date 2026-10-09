@@ -52,7 +52,19 @@ def test_create_reuses_session_and_hides_internals(tmp_path: Path):
     assert first.http_status == 201, first.body
     _assert_safe(first.body)
     assert first.body["stream_path"].endswith("/remote-access/stream")
-    assert first.body["allowed_controls"] == ["tap", "swipe", "type", "back", "home", "recents"]
+    assert first.body["allowed_controls"] == [
+        "tap",
+        "swipe",
+        "type",
+        "back",
+        "home",
+        "recents",
+        "notification_shade",
+        "quick_settings",
+        "rotate",
+    ]
+    assert first.body["setup_mode"] is True
+    assert "denied_controls" not in first.body
     assert first.body["coordinate_space"] == "native_device_pixels"
     grants = [c for c in platform.calls if c[0] == "grant"]
     reused = service.create_remote_access(CUSTOMER_A, None, rental)
@@ -101,20 +113,41 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
         CUSTOMER_A, rental, {"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000}
     )
     assert swipe.http_status == 200 and typed.http_status == 200 and back.http_status == 200
-    assert home.http_status == 403 and recents.http_status == 403 and edge.http_status == 200
+    assert home.http_status == 200 and recents.http_status == 200 and edge.http_status == 200
     session = store.get(rental)
     store.set_activation_observed(rental, "confirmed")
     session = store.get(rental)
     store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
     recents = service.control_session(CUSTOMER_A, rental, {"action": "recents"})
+    shade_cmd = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
+    shade_swipe = service.control_session(
+        CUSTOMER_A, rental, {"action": "swipe", "x": 10, "y": 5, "x2": 10, "y2": 400}
+    )
+    rotated = service.control_session(
+        CUSTOMER_A, rental, {"action": "rotate", "orientation": "portrait"}
+    )
     assert home.http_status == 200 and recents.http_status == 200
-    assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type", "back", "home", "recents"}
+    assert shade_cmd.http_status == 200 and qs.http_status == 200
+    assert shade_swipe.http_status == 200 and rotated.http_status == 200
+    assert {c[0] for c in platform.calls} >= {
+        "tap",
+        "swipe",
+        "type",
+        "back",
+        "home",
+        "recents",
+        "notification_shade",
+        "quick_settings",
+        "rotate",
+    }
     assert store.get(rental).is_active(1_000_000.0)
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
     swipe_calls = [c for c in platform.calls if c[0] == "swipe"]
     assert swipe_calls[0][1]["duration_ms"] == 250
-    assert swipe_calls[-1][1]["y"] == 2900 and swipe_calls[-1][1]["y2"] == 2000
+    assert any(c[1]["y"] == 2900 and c[1]["y2"] == 2000 for c in swipe_calls)
+    assert any(c[1]["y"] == 5 and c[1]["y2"] == 400 for c in swipe_calls)
 
 
 def test_stream_and_control_concurrently(tmp_path: Path):
@@ -273,10 +306,11 @@ def test_forbidden_controls_rejected(tmp_path: Path):
     spoof = service.control_session(
         CUSTOMER_A, rental, {"action": "home", "keycode": 3}
     )
-    assert {shade.body["error"], adb.body["error"], keys.body["error"], shell.body["error"], spoof.body["error"]} == {
+    assert shade.http_status == 200
+    assert {adb.body["error"], keys.body["error"], shell.body["error"], spoof.body["error"]} == {
         "forbidden_control"
     }
-    assert shade.http_status == 403 and keys.http_status == 403
+    assert keys.http_status == 403
 
 
 def test_complete_releases_session_without_deleting_esim(tmp_path: Path):
@@ -392,16 +426,14 @@ def test_http_stream_auth_and_get_device_status(tmp_path: Path):
             token=token_a,
             body={"action": "home"},
         )
-        assert status == 403, home
-        assert home["error"] == "forbidden_control"
+        assert status == 200, home
         status, recents, _ = _http(
             "POST",
             f"{base}/rentals/{rental}/remote-access/control",
             token=token_a,
             body={"action": "recents"},
         )
-        assert status == 403, recents
-        assert recents["error"] == "forbidden_control"
+        assert status == 200, recents
         store = Handler.remote_access_service._store
         store.set_activation_observed(rental, "confirmed")
         session = store.get(rental)
@@ -599,6 +631,25 @@ def test_farm_nav_input_uses_fixed_internal_events():
         )
         assert result.ok is True, kind
         assert runner.calls == [("SERIAL-B", ["shell", "input", "keyevent", code])]
+    for kind, args in (
+        ("notification_shade", ["cmd", "statusbar", "expand-notifications"]),
+        ("quick_settings", ["cmd", "statusbar", "expand-settings"]),
+    ):
+        runner.calls.clear()
+        result = execute_farm_task(
+            adb_path="adb",
+            slot_map={2: "SERIAL-B"},
+            request=FarmTaskRequest(
+                job_id=f"job-{kind}",
+                task_type="setup_session_input",
+                farm_slot_id=2,
+                payload={"kind": kind},
+            ),
+            agent_config=_config(),
+            deps=FarmTaskExecutorDeps(command_runner=runner),
+        )
+        assert result.ok is True, kind
+        assert runner.calls == [("SERIAL-B", ["shell", *args])]
     denied = execute_farm_task(
         adb_path="adb",
         slot_map={2: "SERIAL-B"},

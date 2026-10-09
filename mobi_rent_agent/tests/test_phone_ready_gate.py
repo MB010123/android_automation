@@ -67,7 +67,8 @@ def test_online_phone_and_gads_session_are_not_phone_ready(tmp_path: Path):
     assert got.http_status == 200
     _assert_not_phone_ready(got.body)
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
-    assert home.http_status == 403
+    assert home.http_status == 200
+    assert home.body["ok"] is True
 
 
 def test_unconfirmed_observer_is_not_phone_ready(tmp_path: Path):

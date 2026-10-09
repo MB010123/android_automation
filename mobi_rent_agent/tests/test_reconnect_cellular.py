@@ -172,9 +172,9 @@ def test_stream_setup_mode_and_phone_ready_unchanged(tmp_path: Path):
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT1_SERIAL
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
-    assert home.http_status == 403
+    assert home.http_status == 200
     inspects_after = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
-    assert len(inspects_after) >= len(inspects_before)
+    assert inspects_after == inspects_before
     session = store.get(rental)
     store.upsert(
         replace(

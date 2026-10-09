@@ -271,7 +271,7 @@ def test_imei2_phone_ready_setup_mode_troubleshoot_reconnect_unchanged(tmp_path:
     assert status.body["session_active"] is True
     assert tenant.slots[1]["imei2"] == "353456789012345"
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
-    assert home.http_status == 403
+    assert home.http_status == 200
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.body.get("ui_state") != "phone_ready"
     assert got.body.get("setup_complete") is not True

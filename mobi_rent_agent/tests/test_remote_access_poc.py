@@ -98,6 +98,8 @@ class FakePlatform:
         self.fail_grant: str | None = None
         self.fail_revoke = False
         self.device_workspace: dict[str, str] = {}
+        self.gads_nav_available = True
+        self.gads_rotation_available = True
 
     def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int, workspace_id: str = "") -> PlatformAccessGrant:
         self.calls.append(("grant", {"device_id": device_id, "rental_id": rental_id, "ttl": ttl_minutes, "workspace_id": workspace_id}))
@@ -179,19 +181,48 @@ class FakePlatform:
         self.calls.append(("back", {"device_id": device_id}))
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
-        return True
+        return bool(self.gads_nav_available)
 
     def press_home(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
         self.calls.append(("home", {"device_id": device_id}))
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
-        return True
+        return bool(self.gads_nav_available)
 
     def press_recents(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
         self.calls.append(("recents", {"device_id": device_id}))
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
-        return True
+        return bool(self.gads_nav_available)
+
+    def press_notification_shade(
+        self, *, device_id: str, platform_username: str, platform_password: str
+    ) -> bool:
+        self.calls.append(("notification_shade", {"device_id": device_id}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return bool(self.gads_nav_available)
+
+    def press_quick_settings(
+        self, *, device_id: str, platform_username: str, platform_password: str
+    ) -> bool:
+        self.calls.append(("quick_settings", {"device_id": device_id}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return bool(self.gads_nav_available)
+
+    def set_rotation(
+        self,
+        *,
+        device_id: str,
+        platform_username: str,
+        platform_password: str,
+        orientation: str,
+    ) -> bool:
+        self.calls.append(("rotate", {"device_id": device_id, "orientation": orientation}))
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
+        return bool(self.gads_rotation_available)
 
     def open_mjpeg_stream(self, *, device_id: str, platform_username: str, platform_password: str):
         self.calls.append(("stream", {"device_id": device_id, "username": platform_username}))
@@ -212,6 +243,7 @@ class FakeFarm:
         self.display_height = 3120
         self.airplane_timeout = False
         self.reboot_timeout = False
+        self.input_timeout = False
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
@@ -225,6 +257,8 @@ class FakeFarm:
                 error="action_not_supported",
             )
         if task_type == "reboot" and self.reboot_timeout:
+            raise TimeoutError("farm_timeout")
+        if task_type == "setup_session_input" and self.input_timeout:
             raise TimeoutError("farm_timeout")
         if task_type in self.fail_types:
             return FarmTaskResponse(ok=False, http_status=422, body={"details": {"placed": False, "error_code": "reboot_failed"}}, error="reboot_failed")

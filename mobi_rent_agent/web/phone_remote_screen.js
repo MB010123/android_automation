@@ -5,7 +5,8 @@
  * the bitmap each frame cancels pointer capture. Paint frames onto a canvas
  * and capture pointers on a stable overlay instead.
  *
- * Browser → POST /rentals/{rental_id}/remote-access/control (tap|swipe|type|back)
+ * Browser → POST /rentals/{rental_id}/remote-access/control
+ * (tap|swipe|type|back|home|recents|notification_shade|quick_settings|rotate)
  */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) {
@@ -14,15 +15,24 @@
     root.PhoneRemoteScreen = factory();
   }
 })(typeof self !== "undefined" ? self : this, function () {
-  var ALLOWED = { tap: 1, swipe: 1, type: 1, back: 1 };
-  var FORBIDDEN = {
+  var ALLOWED = {
+    tap: 1,
+    swipe: 1,
+    type: 1,
+    back: 1,
     home: 1,
     recents: 1,
-    notification: 1,
+    notification_shade: 1,
+    quick_settings: 1,
+    rotate: 1,
+  };
+  var FORBIDDEN = {
     keyevent: 1,
     adb: 1,
     shell: 1,
+    keycode: 1,
   };
+  var NAV = { back: 1, home: 1, recents: 1, notification_shade: 1, quick_settings: 1 };
   var SWIPE_THRESHOLD_PX = 12;
 
   function mapDisplayToDevice(clientX, clientY, rect, deviceW, deviceH) {
@@ -56,6 +66,7 @@
     this.deviceWidth = 0;
     this.deviceHeight = 0;
     this.indicator = null;
+    this.lastError = null;
     this._press = null;
   }
 
@@ -114,6 +125,7 @@
       payload = { action: "swipe", x: press.device.x, y: press.device.y, x2: end.x, y2: end.y };
     }
     if (!ALLOWED[payload.action] || FORBIDDEN[payload.action]) return null;
+    this.lastError = null;
     this._send(payload);
     return payload;
   };
@@ -123,9 +135,40 @@
     this.indicator = null;
   };
 
+  PhoneRemoteController.prototype._sendNamed = function (action) {
+    if (!this.ready() || !NAV[action]) return null;
+    var payload = { action: action };
+    this.lastError = null;
+    this._send(payload);
+    return payload;
+  };
+
   PhoneRemoteController.prototype.sendBack = function () {
+    return this._sendNamed("back");
+  };
+
+  PhoneRemoteController.prototype.sendHome = function () {
+    return this._sendNamed("home");
+  };
+
+  PhoneRemoteController.prototype.sendRecents = function () {
+    return this._sendNamed("recents");
+  };
+
+  PhoneRemoteController.prototype.sendNotificationShade = function () {
+    return this._sendNamed("notification_shade");
+  };
+
+  PhoneRemoteController.prototype.sendQuickSettings = function () {
+    return this._sendNamed("quick_settings");
+  };
+
+  PhoneRemoteController.prototype.sendRotate = function (orientation) {
     if (!this.ready()) return null;
-    var payload = { action: "back" };
+    var value = String(orientation || "").toLowerCase();
+    if (value !== "portrait" && value !== "landscape") return null;
+    var payload = { action: "rotate", orientation: value };
+    this.lastError = null;
     this._send(payload);
     return payload;
   };
@@ -135,8 +178,13 @@
     var value = String(text || "").slice(0, 64);
     if (!value) return null;
     var payload = { action: "type", text: value };
+    this.lastError = null;
     this._send(payload);
     return payload;
+  };
+
+  PhoneRemoteController.prototype.recordResult = function (ok, error) {
+    this.lastError = ok ? null : error || "control_failed";
   };
 
   function attach(root, options) {
@@ -222,6 +270,33 @@
       },
       { passive: false }
     );
+
+    var toolbar = root.querySelector(".phone-remote-toolbar");
+    if (toolbar) {
+      toolbar.addEventListener("click", function (ev) {
+        var btn = ev.target && ev.target.closest ? ev.target.closest("[data-action]") : null;
+        if (!btn) return;
+        var action = String(btn.getAttribute("data-action") || "");
+        var result = null;
+        if (action === "rotate") {
+          result = controller.sendRotate(btn.getAttribute("data-orientation") || "portrait");
+        } else if (action === "home") {
+          result = controller.sendHome();
+        } else if (action === "recents") {
+          result = controller.sendRecents();
+        } else if (action === "notification_shade") {
+          result = controller.sendNotificationShade();
+        } else if (action === "quick_settings") {
+          result = controller.sendQuickSettings();
+        } else if (action === "back") {
+          result = controller.sendBack();
+        }
+        var status = root.querySelector(".phone-remote-status");
+        if (status) {
+          status.textContent = result ? "" : controller.lastError || "Control is not ready";
+        }
+      });
+    }
 
     return {
       controller: controller,
