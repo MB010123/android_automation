@@ -21,6 +21,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "farm_unreachable": "Farm Agent is unreachable or not configured",
     "provisioning_failed": "Provisioning did not complete on the Farm Agent",
     "action_not_supported": "Farm Agent does not support this operation",
+    "timeout": "The operation timed out",
     "unauthorized": "Missing or invalid credentials",
     "idempotency_conflict": "Idempotency key reused with different payload",
     "missing_idempotency_key": "idempotency_key is required",
@@ -190,3 +191,11 @@ def error_body(code: str, *, message: str | None = None) -> dict[str, Any]:
         "error": code,
         "message": message or ERROR_MESSAGES.get(code, code),
     }
+
+
+def customer_eid_fields(eid: str | None) -> dict[str, Any]:
+    """IMEI2-style known/unknown for a stored EID. Never invents a placeholder."""
+    text = str(eid).strip() if eid is not None else ""
+    if not text:
+        return {"eid": None, "eid_status": "unknown"}
+    return {"eid": text, "eid_status": "known"}

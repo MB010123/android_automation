@@ -384,9 +384,12 @@ eSIM confirmation is **not** required to hang up the remote screen.
 }
 ```
 
-If eSIM observation was already `confirmed` and default-SMS verification
-succeeded, `setup_complete` may be `true` and `ui_state` may be `phone_ready`.
-Either way the remote session is closed.
+`ui_state=phone_ready` / `setup_complete=true` only after the existing
+read-only Farm observer returns `verdict=ACTIVATION_CONFIRMED` (persisted as
+`activation_observed=confirmed`, `activation_state=ACTIVE`). QR upload, a live
+GADS session, phone-online, or `requires_manual_action=false` is not Phone Ready.
+Hanging up without confirmation still returns `ui_state=session_closed`.
+Either way the remote session is closed without deleting the eSIM.
 
 Also acceptable: `POST .../remote-access/revoke` (session only) and
 `POST /rentals/{rental_id}/cancel` (rental lifecycle + phone-service release).
@@ -415,7 +418,9 @@ caller's own stream as busy.
   "available": true,
   "slot_id": 1,
   "coordinate_space": "native_device_pixels",
-  "native_resolution": { "width": 1440, "height": 3120 }
+  "native_resolution": { "width": 1440, "height": 3120 },
+  "eid": null,
+  "eid_status": "unknown"
 }
 ```
 
@@ -426,6 +431,16 @@ caller's own stream as busy.
 | `remote_access_available` | Phone online and no other rental holds the lease |
 | `remote_access_busy` | Another rental owns the lease |
 | `native_resolution` | Optional; otherwise use JPEG frame size |
+| `eid` | Assigned phone eUICC EID when already stored on the tenant slot/rental row; otherwise `null` |
+| `eid_status` | `known` \| `unknown` (same convention as IMEI2). Never a placeholder |
+
+EID is **not** read live from the Pixel. There is no allowlisted Farm Agent
+task, companion identity field, or `device_registry` field that collects it
+(IMEI2 already comes from `public.slots.imei2`). Inventing `adb shell`
+`dumpsys` / `service call` / `getprop` for the customer API is forbidden, so
+missing inventory is reported honestly as `eid=null` / `eid_status=unknown`.
+If Lovable later stores `eid` on the owned slot row from a prior approved
+read, this endpoint returns that value for the assigned rental only.
 
 ---
 
@@ -449,6 +464,52 @@ Workflow:
 3. Customer opens Android Settings → SIMs → Add eSIM and scans the gallery QR.
 4. Backend observes activation (`POST .../activation-status`).
 5. `activation_state` becomes `ACTIVE` only after confirmed observation.
+
+---
+
+## Troubleshoot Phone
+
+`POST /rentals/{rental_id}/remote-access/troubleshoot`
+
+Customer JWT. Assigned rental phone only. Body is `{}` or `{ "action": "diagnose" }`
+for a read-only snapshot, or `{ "action": "reboot" }` for the existing Farm reboot
+task. No slot, serial, ADB, or shell fields.
+
+Diagnostics use existing device-status and stored activation/setup state.
+`cellular_status` is `unknown` (Farm health does not expose radio). Reboot does
+not wait for GADS to return and does not change eSIM, VoidFix, or setup-mode.
+
+| HTTP | Meaning |
+| --- | --- |
+| 200 | diagnostics snapshot |
+| 202 | `recovery=reboot_requested` (Farm reboot accepted) |
+| 429 | cooldown |
+| 409 | another troubleshoot/reconnect in flight on this bay |
+| 503 | Farm unreachable (reboot) |
+| 504 | Farm timeout (reboot) |
+
+---
+
+## Reconnect Cellular
+
+`POST /rentals/{rental_id}/remote-access/reconnect-cellular`
+
+Customer JWT. Targets only the rental's assigned bay. Empty JSON body.
+Does not accept slot, serial, ADB, or shell fields.
+
+The backend calls the existing Farm `airplane_cycle` task. Farm Agent currently
+returns `501 action_not_supported` because there is no approved airplane-mode
+command on `mobi_rent.network` (VPN status/start/stop only) and raw
+`adb shell settings` is not exposed. This endpoint does **not** fake success.
+
+| HTTP | `error` |
+| --- | --- |
+| 501 | `action_not_supported` |
+| 429 | `rate_limited` (cooldown) |
+| 409 | `remote_access_busy` (in-flight on this bay) |
+| 504 | `timeout` |
+| 403 | `rental_not_owned` / `forbidden_control` |
+| 404 | `rental_not_found` |
 
 ---
 
@@ -479,5 +540,7 @@ GET  /rentals/{id}/remote-access/device-status
 GET  /rentals/{id}/remote-access/stream          // canvas
 POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents
 POST /rentals/{id}/esim/upload                   // optional, multipart qr_image
+POST /rentals/{id}/remote-access/troubleshoot        // diagnose | reboot
+POST /rentals/{id}/remote-access/reconnect-cellular  // 501 action_not_supported today
 POST /rentals/{id}/remote-access/complete
 ```

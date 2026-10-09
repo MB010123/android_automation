@@ -210,9 +210,22 @@ class FakeFarm:
         self.inspect_unknown = False
         self.display_width = 1440
         self.display_height = 3120
+        self.airplane_timeout = False
+        self.reboot_timeout = False
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
+        if task_type == "airplane_cycle":
+            if self.airplane_timeout:
+                raise TimeoutError("farm_timeout")
+            return FarmTaskResponse(
+                ok=False,
+                http_status=501,
+                body={"error": "action_not_supported"},
+                error="action_not_supported",
+            )
+        if task_type == "reboot" and self.reboot_timeout:
+            raise TimeoutError("farm_timeout")
         if task_type in self.fail_types:
             return FarmTaskResponse(ok=False, http_status=422, body={"details": {"placed": False, "error_code": "reboot_failed"}}, error="reboot_failed")
         body: dict[str, Any] = {"ok": True}
@@ -1070,6 +1083,8 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route(f"/rentals/{slot}/end").kind == "rental_end"
     assert parse_route(f"/rentals/{slot}/end").rental_id == slot
     assert parse_route(f"/rentals/{slot}/remote-access/control").action == "control"
+    assert parse_route(f"/rentals/{slot}/remote-access/reconnect-cellular").action == "reconnect-cellular"
+    assert parse_route(f"/rentals/{slot}/remote-access/troubleshoot").action == "troubleshoot"
     assert parse_route(f"/rentals/{slot}/remote-access/stream").action == "stream"
     assert parse_route(f"/rentals/{slot}/cancel").kind == "rental_cancel"
     assert parse_route("/farm/slots/1/cleanup-verified").kind == "cleanup_verified"

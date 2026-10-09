@@ -409,6 +409,14 @@ class Handler(BaseHTTPRequestHandler):
                         result = service.release_device(slot, rental_id)
         elif action == "reboot":
             result = service.reboot_for_customer(customer_id or "", rental_id)
+        elif action == "reconnect-cellular":
+            result = service.reconnect_cellular_for_customer(
+                customer_id or "", rental_id, payload or {}
+            )
+        elif action == "troubleshoot":
+            result = service.troubleshoot_for_customer(
+                customer_id or "", rental_id, payload or {}
+            )
         elif action == "prepare-esim":
             result = service.prepare_esim(customer_id or "", rental_id)
         elif action == "activation-status":

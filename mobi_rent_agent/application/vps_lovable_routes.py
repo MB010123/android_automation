@@ -32,7 +32,7 @@ RE_AUTH_RESEND = re.compile(r"^/auth/resend-verification$")
 RE_REMOTE_ACCESS = re.compile(rf"^/rentals/({_UUID})/remote-access$")
 RE_REMOTE_ACCESS_ACTION = re.compile(
     rf"^/rentals/({_UUID})/remote-access/"
-    r"(revoke|release|device-status|reboot|prepare-esim|activation-status|control|complete|stream)$"
+    r"(revoke|release|device-status|reboot|prepare-esim|activation-status|control|complete|stream|reconnect-cellular|troubleshoot)$"
 )
 RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")

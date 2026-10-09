@@ -459,6 +459,7 @@ def _schemas() -> dict[str, Any]:
                 "Lovable `public.slots`-shaped view of one farm bay. "
                 "`user_id` is the authenticated owner when the slot is claimed. "
                 "`carrier_name` and `imei2` are read from Supabase `slots` only. "
+                "EID is not a slots column today and is not returned here. "
                 "proxy_auth and gateway_api_key are never returned."
             ),
             "properties": {
@@ -482,6 +483,42 @@ def _schemas() -> dict[str, Any]:
                 "heartbeat": {"type": "string"},
                 "adb_online": {"type": "boolean", "nullable": True},
                 "checked_at": {"type": "string", "format": "date-time"},
+            },
+        },
+        "DeviceStatusResponse": {
+            "type": "object",
+            "description": (
+                "Customer GET/POST `/rentals/{rental_id}/remote-access/device-status`. "
+                "Rental ownership is resolved server-side. `eid` is passed through only when "
+                "the assigned tenant slot/rental row already stores it. There is no allowlisted "
+                "Farm task or companion identity field that reads EID live, so missing inventory "
+                "is `eid=null` / `eid_status=unknown` (never a placeholder). IMEI2 remains on "
+                "`GET /slots`. No GADS URLs, tokens, serials, or workspace IDs."
+            ),
+            "properties": {
+                "ok": {"type": "boolean"},
+                "state": {"type": "string", "enum": ["online", "offline", "unavailable"]},
+                "online": {"type": "boolean"},
+                "adb_online": {"type": "boolean", "nullable": True},
+                "remote_access_available": {"type": "boolean"},
+                "remote_access_busy": {"type": "boolean"},
+                "requires_manual_action": {"type": "boolean"},
+                "session_active": {"type": "boolean"},
+                "busy": {"type": "boolean"},
+                "available": {"type": "boolean"},
+                "slot_id": {"type": "integer"},
+                "coordinate_space": {"type": "string", "enum": ["native_device_pixels"]},
+                "native_resolution": {
+                    "type": "object",
+                    "nullable": True,
+                    "properties": {
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                },
+                "native_resolution_unavailable": {"type": "string"},
+                "eid": {"type": "string", "nullable": True},
+                "eid_status": {"type": "string", "enum": ["unknown", "known"]},
             },
         },
         "EsimAssignRequest": {
@@ -873,7 +910,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "`GET .../stream` proxies MJPEG (`multipart/x-mixed-replace; boundary=frame` unless GADS "
                     "supplies another boundary) through the VPS. `GET .../device-status` returns customer-facing "
-                    "online/offline/unavailable state. The customer's own stream is never `remote_access_busy`. "
+                    "online/offline/unavailable state plus read-only `eid` / `eid_status` from tenant inventory "
+                    "when present (otherwise `null` / `unknown`; no live ADB EID probe). "
+                    "The customer's own stream is never `remote_access_busy`. "
                     "Never returns GADS URLs, tokens, serials, or workspace IDs."
                 ),
                 "security": user_bearer,
@@ -887,7 +926,14 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     },
                 ],
                 "responses": {
-                    "200": {"description": "MJPEG stream or JSON device-status"},
+                    "200": {
+                        "description": "MJPEG stream or JSON device-status",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceStatusResponse"},
+                            }
+                        },
+                    },
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "rental_not_owned | session_expired"},
                     "404": {"description": "rental_not_found"},
@@ -897,7 +943,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             },
             "post": {
                 "tags": ["Remote access (in-app setup)"],
-                "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status | control | complete",
+                "summary": "revoke | release | device-status | reboot | prepare-esim | activation-status | control | complete | reconnect-cellular | troubleshoot",
                 "description": (
                     "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
                     "return the device to the pool when the rental ends. `device-status`: also accepted as POST. "
@@ -907,6 +953,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "rejected (`forbidden_control`); leaving allowed SIM/eSIM screens returns `setup_state_blocked`. "
                     "Notification shade, keys, ADB, and device identity are rejected. "
                     "`complete`: closes the remote session and runs safe QR cleanup; does not delete eSIM or factory-reset. "
+                    "`reconnect-cellular`: customer JWT, owned rental only; Farm `airplane_cycle` is currently "
+                    "`501 action_not_supported` (no approved airplane companion command). "
+                    "`troubleshoot`: diagnostics from existing device/activation status; optional `action=reboot` "
+                    "uses the allowlisted Farm reboot task only. "
                     "`requires_manual_action` never blocks remote access. No `provision_esim`, no EuiccManager."
                 ),
                 "security": user_or_farm,
@@ -927,6 +977,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                                 "activation-status",
                                 "control",
                                 "complete",
+                                "reconnect-cellular",
+                                "troubleshoot",
                             ],
                         },
                     },
@@ -937,7 +989,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
                     "404": {"description": "remote_access_not_found"},
+                    "429": {"description": "rate_limited (reconnect-cellular cooldown)"},
+                    "501": {"description": "action_not_supported (reconnect-cellular / airplane_cycle)"},
                     "503": {"description": "farm_unreachable | esim_ref_unavailable | remote_access_not_configured"},
+                    "504": {"description": "timeout"},
                 },
             }
         },

@@ -107,6 +107,7 @@ def test_schemas_present():
         "FarmServiceSessionResponse",
         "SlotListResponse",
         "SlotRecordResponse",
+        "DeviceStatusResponse",
         "EsimAssignRequest",
     ):
         assert name in schemas
@@ -124,6 +125,8 @@ def test_schemas_present():
     assert status_props["imei2_status"]["enum"] == ["unknown", "known"]
     assert "carrier_name" in status_props
     assert schemas["SlotRecordResponse"]["properties"]["imei2_status"]["enum"] == ["unknown", "known"]
+    assert schemas["DeviceStatusResponse"]["properties"]["eid_status"]["enum"] == ["unknown", "known"]
+    assert schemas["DeviceStatusResponse"]["properties"]["eid"]["nullable"] is True
 
 
 def test_unsupported_actions_documented():

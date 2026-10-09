@@ -48,6 +48,7 @@ def _slot2_service(tmp_path: Path, *, farm: FakeFarm | None = None, platform: Fa
 
 
 def _mark_ready(store, rental: str) -> None:
+    store.set_activation_observed(rental, "confirmed")
     session = store.get(rental)
     store.upsert(replace(session, setup_phase="complete", setup_complete=True))
 

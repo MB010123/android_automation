@@ -103,6 +103,8 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
     assert swipe.http_status == 200 and typed.http_status == 200 and back.http_status == 200
     assert home.http_status == 403 and recents.http_status == 403 and edge.http_status == 200
     session = store.get(rental)
+    store.set_activation_observed(rental, "confirmed")
+    session = store.get(rental)
     store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
     recents = service.control_session(CUSTOMER_A, rental, {"action": "recents"})
@@ -400,10 +402,10 @@ def test_http_stream_auth_and_get_device_status(tmp_path: Path):
         )
         assert status == 403, recents
         assert recents["error"] == "forbidden_control"
-        session = Handler.remote_access_service._store.get(rental)
-        Handler.remote_access_service._store.upsert(
-            replace(session, setup_phase="complete", setup_complete=True)
-        )
+        store = Handler.remote_access_service._store
+        store.set_activation_observed(rental, "confirmed")
+        session = store.get(rental)
+        store.upsert(replace(session, setup_phase="complete", setup_complete=True))
         status, home, _ = _http(
             "POST",
             f"{base}/rentals/{rental}/remote-access/control",

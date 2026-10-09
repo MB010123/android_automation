@@ -90,6 +90,8 @@ def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 403
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 403
     session = store.get(rental)
+    store.set_activation_observed(rental, "confirmed")
+    session = store.get(rental)
     store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 200
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 200

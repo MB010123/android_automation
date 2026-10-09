@@ -27,12 +27,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 
-from application.vps_api_contract import error_body
+from application.vps_api_contract import customer_eid_fields, error_body
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
-from application.in_app_control_policy import decide_control
+from application.in_app_control_policy import FORBIDDEN_PAYLOAD_KEYS, decide_control
 from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
 from domain.remote_access import (
     ACTIVATION_CUSTOMER_REQUIRED,
@@ -209,6 +209,10 @@ class RemoteAccessService:
         self._slot_locks: dict[int, threading.RLock] = {}
         self._slot_locks_guard = threading.Lock()
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
+        self._reconnect_cooldown = 30.0
+        self._reconnect_last: dict[int, float] = {}
+        self._troubleshoot_cooldown = 10.0
+        self._troubleshoot_last: dict[int, float] = {}
         reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
         if callable(reconcile):
             interrupted = reconcile()
@@ -452,7 +456,7 @@ class RemoteAccessService:
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
             self._launch_esim_setup_if_needed(auth, existing)
-            body = {"ok": True, **existing.to_public_dict(now), "ui_state": "live_phone_screen"}
+            body = {"ok": True, **existing.to_public_dict(now)}
             return ApiResult(200, body)
 
         readiness = self._phone_readiness(auth, platform)
@@ -504,7 +508,7 @@ class RemoteAccessService:
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
         self._launch_esim_setup_if_needed(auth, session)
-        body = {"ok": True, **session.to_public_dict(now), "ui_state": "live_phone_screen"}
+        body = {"ok": True, **session.to_public_dict(now)}
         return ApiResult(201, body)
 
     def get_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
@@ -598,6 +602,7 @@ class RemoteAccessService:
 
         Does not delete eSIM, factory-reset, or change phone security state.
         eSIM confirmation is not required to end the session.
+        ``ui_state=phone_ready`` requires Farm ``ACTIVATION_CONFIRMED`` only.
         """
         auth = self._authorize(customer_id, rental_id, None)
         if isinstance(auth, ApiResult):
@@ -616,13 +621,14 @@ class RemoteAccessService:
             self._observe_activation(auth, force=True)
             session = self._store.get(auth.rental_id) or session
             activation_observed = session.activation_observed
-            if str(activation_observed or "") == "confirmed":
+        if str(activation_observed or "") == "confirmed":
+            if session.is_active(now):
                 voidfix = self._try_voidfix_complete(auth, session)
                 voidfix_observed = voidfix.get("voidfix_observed")
-                if voidfix.get("setup_complete"):
-                    setup_complete = True
-                    ui_state = "phone_ready"
-                    session = self._store.get(auth.rental_id) or session
+                session = self._store.get(auth.rental_id) or session
+            self._mark_phone_ready(session)
+            setup_complete = True
+            ui_state = "phone_ready"
         self._safe_qr_cleanup(auth.slot_id)
         ended = self._end_session(auth.rental_id, auth.slot_id, status=STATUS_REVOKED)
         body = {
@@ -777,7 +783,211 @@ class RemoteAccessService:
             body["native_resolution"] = native_resolution_body(native[0], native[1])
         else:
             body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
+        body.update(customer_eid_fields(self._eid_for_authorized_rental(auth)))
         return ApiResult(200, body)
+
+    def reconnect_cellular_for_customer(
+        self,
+        customer_id: str,
+        rental_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ApiResult:
+        """Semantic Reconnect Cellular for the owned rental Pixel only.
+
+        Wires to the existing Farm ``airplane_cycle`` task. That task is a
+        documented stub (no ``mobi_rent.network`` airplane command, no raw
+        ``settings`` API). This method never reports success.
+        """
+        auth = self._authorize(customer_id, rental_id)
+        if isinstance(auth, ApiResult):
+            return auth
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return ApiResult(422, error_body("invalid_request"))
+        for key in payload:
+            if str(key) in FORBIDDEN_PAYLOAD_KEYS:
+                return ApiResult(403, error_body("forbidden_control"))
+        lock = self._slot_lock(auth.slot_id)
+        if not lock.acquire(blocking=False):
+            return ApiResult(409, error_body("remote_access_busy"))
+        try:
+            now = float(self._clock())
+            last = self._reconnect_last.get(auth.slot_id)
+            if last is not None and (now - last) < self._reconnect_cooldown:
+                retry_after = max(1, int(self._reconnect_cooldown - (now - last) + 0.999))
+                body = error_body("rate_limited")
+                body["retry_after"] = retry_after
+                return ApiResult(429, body)
+            if self._farm is None:
+                return ApiResult(503, error_body("farm_unreachable"))
+            job_id = str(uuid.uuid4())
+            try:
+                response = self._farm.run_task(
+                    task_type="airplane_cycle",
+                    farm_slot_id=auth.slot_id,
+                    payload={},
+                    job_id=job_id,
+                )
+            except Exception:  # noqa: BLE001
+                logger.warning("reconnect_cellular_timeout slot=%s", auth.slot_id)
+                self._reconnect_last[auth.slot_id] = now
+                return ApiResult(504, error_body("timeout"))
+            self._reconnect_last[auth.slot_id] = now
+            err = str(response.error or "").lower()
+            if response.http_status in {0, 504} or "timeout" in err:
+                return ApiResult(504, error_body("timeout"))
+            if (
+                not response.ok
+                and response.http_status != 501
+                and response.error != "action_not_supported"
+            ):
+                return ApiResult(503, error_body("farm_unreachable"))
+            # Farm Agent airplane_cycle is unsupported. Do not remap ok=True
+            # into a customer success — that would fake the capability.
+            logger.info("reconnect_cellular_unsupported slot=%s", auth.slot_id)
+            return ApiResult(501, error_body("action_not_supported"))
+        finally:
+            lock.release()
+
+    def troubleshoot_for_customer(
+        self,
+        customer_id: str,
+        rental_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ApiResult:
+        """Diagnostics-first Troubleshoot Phone for the owned rental Pixel.
+
+        Reads existing device/activation status. Optional ``action=reboot`` uses
+        the allowlisted Farm ``reboot`` task only. Never airplane-cycle, shell,
+        eSIM, or VoidFix.
+        """
+        auth = self._authorize(customer_id, rental_id)
+        if isinstance(auth, ApiResult):
+            return auth
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return ApiResult(422, error_body("invalid_request"))
+        for key in payload:
+            if str(key) in FORBIDDEN_PAYLOAD_KEYS:
+                return ApiResult(403, error_body("forbidden_control"))
+        extra = {str(k) for k in payload if str(k) != "action"}
+        if extra:
+            return ApiResult(422, error_body("invalid_request"))
+        action = str(payload.get("action") or "diagnose").strip().lower()
+        if action in {"", "diagnose", "diagnostics", "status"}:
+            action = "diagnose"
+        if action not in {"diagnose", "reboot"}:
+            if action in {"airplane", "airplane_cycle", "reconnect", "reconnect-cellular", "shell", "adb"}:
+                return ApiResult(403, error_body("forbidden_control"))
+            return ApiResult(422, error_body("invalid_request"))
+        lock = self._slot_lock(auth.slot_id)
+        if not lock.acquire(blocking=False):
+            return ApiResult(409, error_body("remote_access_busy"))
+        try:
+            now = float(self._clock())
+            last = self._troubleshoot_last.get(auth.slot_id)
+            if last is not None and (now - last) < self._troubleshoot_cooldown:
+                retry_after = max(1, int(self._troubleshoot_cooldown - (now - last) + 0.999))
+                body = error_body("rate_limited")
+                body["retry_after"] = retry_after
+                return ApiResult(429, body)
+            if action == "reboot":
+                if self._farm is None:
+                    return ApiResult(503, error_body("farm_unreachable"))
+                try:
+                    reboot = self.reboot_device(auth.slot_id, wait=False)
+                except Exception:  # noqa: BLE001
+                    logger.warning("troubleshoot_reboot_timeout slot=%s", auth.slot_id)
+                    self._troubleshoot_last[auth.slot_id] = now
+                    return ApiResult(504, error_body("timeout"))
+                self._troubleshoot_last[auth.slot_id] = now
+                err = ""
+                if isinstance(reboot.body, dict):
+                    err = str(reboot.body.get("error") or "").lower()
+                if reboot.http_status in {0, 504} or err == "timeout":
+                    return ApiResult(504, error_body("timeout"))
+                if reboot.http_status != 200:
+                    code = "farm_unreachable"
+                    if isinstance(reboot.body, dict) and reboot.body.get("error"):
+                        code = str(reboot.body.get("error"))
+                    if code not in {"farm_unreachable", "action_not_supported", "timeout"}:
+                        code = "farm_unreachable"
+                    return ApiResult(
+                        reboot.http_status if reboot.http_status >= 400 else 502,
+                        error_body(code),
+                    )
+                snapshot = self._troubleshoot_snapshot(auth)
+                snapshot["recovery"] = "reboot_requested"
+                snapshot["ok"] = True
+                return ApiResult(202, snapshot)
+            self._troubleshoot_last[auth.slot_id] = now
+            return ApiResult(200, self._troubleshoot_snapshot(auth))
+        finally:
+            lock.release()
+
+    def _troubleshoot_snapshot(self, auth: AuthorizedRental) -> dict[str, Any]:
+        phone = self.device_status_for_customer(auth.customer_id, auth.rental_id)
+        phone_body = dict(phone.body) if isinstance(phone.body, dict) else {}
+        session = self._store.get(auth.rental_id)
+        now = self._clock()
+        if session is not None:
+            public = session.to_public_dict(now)
+        else:
+            public = {
+                "setup_phase": "esim",
+                "setup_complete": False,
+                "ui_state": "session_closed",
+                **public_activation_view(prepare_state=None, activation_observed=None),
+            }
+        farm_ok = True
+        if self._farm_status is not None:
+            try:
+                farm = self._farm_status()
+                farm_ok = bool(isinstance(farm, dict) and farm.get("ok") is not False)
+            except Exception:  # noqa: BLE001
+                farm_ok = False
+        adb_online = phone_body.get("adb_online") if phone.http_status == 200 else None
+        if phone.http_status == 200:
+            phone_state = {
+                "state": phone_body.get("state"),
+                "online": phone_body.get("online"),
+                "adb_online": adb_online,
+                "session_active": phone_body.get("session_active"),
+                "remote_access_busy": phone_body.get("remote_access_busy"),
+            }
+        else:
+            phone_state = {
+                "state": "unavailable",
+                "online": False,
+                "adb_online": self._adb_online(auth.slot_id),
+                "session_active": False,
+                "remote_access_busy": False,
+                "error": phone_body.get("error") or "gads_unavailable",
+            }
+        return {
+            "ok": True,
+            "rental_id": auth.rental_id,
+            "slot_id": auth.slot_id,
+            "mode": "diagnostics",
+            "phone": phone_state,
+            "activation_state": public.get("activation_state"),
+            "setup_phase": public.get("setup_phase"),
+            "setup_complete": public.get("setup_complete"),
+            "ui_state": public.get("ui_state"),
+            "cellular_status": "unknown",
+            "farm_reachable": farm_ok and self._farm is not None,
+            "supported_recovery": ["reboot"],
+            "unsupported": [
+                "airplane_cycle",
+                "reconnect_cellular",
+                "factory_reset",
+                "esim_delete",
+                "voidfix_repair",
+                "adb_shell",
+            ],
+        }
 
     def reboot_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         auth = self._authorize(customer_id, rental_id)
@@ -984,8 +1194,12 @@ class RemoteAccessService:
                 observed_at=now,
                 evidence=evidence,
             )
-            if observed == "confirmed" and previous != "confirmed":
-                logger.info("activation_state_changed slot=%s state=ACTIVE", auth.slot_id)
+            if observed == "confirmed":
+                confirmed = self._store.get(auth.rental_id) or session
+                if confirmed is not None:
+                    self._mark_phone_ready(confirmed)
+                if previous != "confirmed":
+                    logger.info("activation_state_changed slot=%s state=ACTIVE", auth.slot_id)
         return evidence
 
     def sweep_stale_sessions(self) -> None:
@@ -1016,10 +1230,20 @@ class RemoteAccessService:
     # ------------------------------------------------------------------
 
     def _in_esim_setup_mode(self, session: RemoteAccessSession) -> bool:
-        if bool(session.setup_complete):
+        """eSIM setup restrictions stay on until ACTIVATION_CONFIRMED."""
+        if str(session.activation_observed or "").strip().lower() == "confirmed":
             return False
         phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
-        return phase == PHASE_ESIM
+        if phase == PHASE_VOIDFIX:
+            return False
+        return True
+
+    def _mark_phone_ready(self, session: RemoteAccessSession) -> None:
+        """Persist PHONE_READY from confirmed observation. Does not touch eSIM or VoidFix."""
+        phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
+        if phase != PHASE_VOIDFIX:
+            phase = "complete"
+        self._store.upsert(replace(session, setup_complete=True, setup_phase=phase))
 
     def _launch_esim_setup_if_needed(self, auth: AuthorizedRental, session: RemoteAccessSession) -> None:
         """Best-effort SIM-profiles launch. Never fails session create/stream."""
@@ -1084,6 +1308,36 @@ class RemoteAccessService:
         if not response.ok:
             return ApiResult(502, error_body("farm_unreachable"))
         return details if isinstance(details, dict) else {}
+
+    def _eid_for_authorized_rental(self, auth: AuthorizedRental) -> str | None:
+        """Read-only EID from tenant inventory for the owned assigned slot.
+
+        IMEI2 already lives on the Lovable/Supabase ``slots`` row. EID does not:
+        there is no Farm Agent task, companion ``get_identity`` field,
+        ``device_registry`` field, or ``SLOT_SAFE_FIELDS`` column that collects
+        it, and live ADB eUICC or EuiccManager reads are not allowlisted. If the
+        tenant slot/rental row already stores ``eid`` from a prior approved
+        write, return that value; otherwise unknown. Never invents a
+        placeholder and never asks the customer for a slot/serial/UDID.
+        """
+        for row in (self._rental_row(auth.rental_id), self._tenant_slot_row(auth.slot_id)):
+            if not isinstance(row, dict):
+                continue
+            text = str(row.get("eid") or "").strip()
+            if text:
+                return text
+        return None
+
+    def _tenant_slot_row(self, slot_id: int) -> dict[str, Any] | None:
+        getter = getattr(self._tenant, "get_slot_row", None)
+        if not callable(getter):
+            return None
+        try:
+            row = getter(int(slot_id))
+        except Exception:  # noqa: BLE001 - tenant transport errors stay unknown, not guessed
+            logger.warning("remote_access_tenant_slot_lookup_failed slot=%s", slot_id)
+            return None
+        return row if isinstance(row, dict) and row else None
 
     def _native_resolution_for_slot(self, slot_id: int) -> tuple[tuple[int, int] | None, str | None]:
         """Physical panel size from Farm ``wm size``. Never uses the MJPEG frame size."""

@@ -80,6 +80,13 @@ class RemoteAccessSession:
         status = self.status
         if status == STATUS_ACTIVE and not active:
             status = STATUS_EXPIRED
+        confirmed = str(self.activation_observed or "").strip().lower() == "confirmed"
+        if confirmed:
+            ui_state = "phone_ready"
+        elif active:
+            ui_state = "live_phone_screen"
+        else:
+            ui_state = "session_closed"
         body = {
             "rental_id": self.rental_id,
             "slot_id": self.slot_id,
@@ -92,11 +99,12 @@ class RemoteAccessSession:
             "activation_observed_at": _iso_utc(self.activation_observed_at),
             "session_mode": "in_app",
             "setup_phase": self.setup_phase or "esim",
-            "setup_complete": bool(self.setup_complete),
+            "setup_complete": bool(self.setup_complete) or confirmed,
             "voidfix_observed": self.voidfix_observed,
             "stream_path": f"/rentals/{self.rental_id}/remote-access/stream",
             "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents"],
             "coordinate_space": "native_device_pixels",
+            "ui_state": ui_state,
         }
         body.update(
             public_activation_view(

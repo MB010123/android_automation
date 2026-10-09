@@ -134,6 +134,8 @@ def test_allowed_tap_swipe_and_blocked_controls(tmp_path: Path):
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 403
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 403
     session = store.get(rental)
+    store.set_activation_observed(rental, "confirmed")
+    session = store.get(rental)
     store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 200
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 200
@@ -183,7 +185,7 @@ def test_complete_requires_esim_and_voidfix_then_revokes(tmp_path: Path):
     assert SLOT1_SERIAL not in platform.leases
 
 
-def test_complete_without_voidfix_package_does_not_report_ready(tmp_path: Path):
+def test_complete_without_voidfix_package_still_reports_ready_when_esim_confirmed(tmp_path: Path):
     tenant = _tenant()
     service, store, _ = _service(
         tmp_path, tenant=tenant, platform=FakePlatform(), farm=FakeFarm()
@@ -194,9 +196,11 @@ def test_complete_without_voidfix_package_does_not_report_ready(tmp_path: Path):
     result = service.complete_setup(CUSTOMER_A, rental)
     assert result.http_status == 200, result.body
     assert result.body["voidfix_observed"] == "package_unconfigured"
-    assert result.body["setup_complete"] is False
-    assert result.body.get("ui_state") != "phone_ready"
+    assert result.body["setup_complete"] is True
+    assert result.body.get("ui_state") == "phone_ready"
     assert result.body["remote_session"] == "closed"
+    assert result.body["esim_deleted"] is False
+    assert result.body["factory_reset"] is False
 
 
 def _tenant():
