@@ -127,6 +127,15 @@ def test_schemas_present():
     assert schemas["SlotRecordResponse"]["properties"]["imei2_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid"]["nullable"] is True
+    ds_props = schemas["DeviceStatusResponse"]["properties"]
+    assert ds_props["imei2"]["nullable"] is True
+    assert ds_props["imei2_status"]["enum"] == ["unknown", "known"]
+    assert ds_props["carrier"]["nullable"] is True
+    assert ds_props["carrier_status"]["enum"] == ["unknown", "known"]
+    assert ds_props["phone_number"]["nullable"] is True
+    assert ds_props["phone_number_status"]["enum"] == ["unknown", "known"]
+    assert ds_props["cellular_status"]["enum"] == ["unknown"]
+    assert "imei1" not in ds_props
 
 
 def test_unsupported_actions_documented():

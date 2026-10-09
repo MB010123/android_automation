@@ -193,9 +193,31 @@ def error_body(code: str, *, message: str | None = None) -> dict[str, Any]:
     }
 
 
+def customer_known_unknown_field(value: Any, field: str) -> dict[str, Any]:
+    """Passthrough known/unknown pair. Empty or whitespace is null + unknown."""
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return {field: None, f"{field}_status": "unknown"}
+    return {field: text, f"{field}_status": "known"}
+
+
 def customer_eid_fields(eid: str | None) -> dict[str, Any]:
     """IMEI2-style known/unknown for a stored EID. Never invents a placeholder."""
-    text = str(eid).strip() if eid is not None else ""
-    if not text:
-        return {"eid": None, "eid_status": "unknown"}
-    return {"eid": text, "eid_status": "known"}
+    return customer_known_unknown_field(eid, "eid")
+
+
+def customer_inventory_identity_fields(
+    *,
+    eid: str | None = None,
+    imei2: str | None = None,
+    carrier: str | None = None,
+    phone_number: str | None = None,
+) -> dict[str, Any]:
+    """Owned-slot inventory for customer device-status. Never fabricates radio."""
+    return {
+        **customer_known_unknown_field(imei2, "imei2"),
+        **customer_eid_fields(eid),
+        **customer_known_unknown_field(carrier, "carrier"),
+        **customer_known_unknown_field(phone_number, "phone_number"),
+        "cellular_status": "unknown",
+    }

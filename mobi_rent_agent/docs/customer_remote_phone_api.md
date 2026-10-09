@@ -419,8 +419,15 @@ caller's own stream as busy.
   "slot_id": 1,
   "coordinate_space": "native_device_pixels",
   "native_resolution": { "width": 1440, "height": 3120 },
+  "imei2": "353456789012345",
+  "imei2_status": "known",
   "eid": null,
-  "eid_status": "unknown"
+  "eid_status": "unknown",
+  "carrier": "T-Mobile",
+  "carrier_status": "known",
+  "phone_number": null,
+  "phone_number_status": "unknown",
+  "cellular_status": "unknown"
 }
 ```
 
@@ -431,16 +438,31 @@ caller's own stream as busy.
 | `remote_access_available` | Phone online and no other rental holds the lease |
 | `remote_access_busy` | Another rental owns the lease |
 | `native_resolution` | Optional; otherwise use JPEG frame size |
+| `imei2` | Assigned phone IMEI2 from `public.slots.imei2`; otherwise `null` |
+| `imei2_status` | `known` \| `unknown`. Never a placeholder |
 | `eid` | Assigned phone eUICC EID when already stored on the tenant slot/rental row; otherwise `null` |
-| `eid_status` | `known` \| `unknown` (same convention as IMEI2). Never a placeholder |
+| `eid_status` | `known` \| `unknown`. Never a placeholder |
+| `carrier` | Assigned slot carrier from `public.slots.carrier_name`; otherwise `null` |
+| `carrier_status` | `known` \| `unknown`. Never a placeholder |
+| `phone_number` | Assigned slot number from `public.slots.phone_number`; otherwise `null` |
+| `phone_number_status` | `known` \| `unknown`. Never a placeholder |
+| `cellular_status` | Always `unknown`. There is no approved live radio reader |
+
+These identity fields are **read-only inventory passthrough** for the owned
+assigned rental only. Empty or whitespace inventory is `null` / `unknown`.
+Values are never inferred from Wi-Fi, ADB online, or GADS session state.
+IMEI1 is not returned (US Mobile uses IMEI2). Farm SMS `slot_msisdn_map`
+is not used.
 
 EID is **not** read live from the Pixel. There is no allowlisted Farm Agent
-task, companion identity field, or `device_registry` field that collects it
-(IMEI2 already comes from `public.slots.imei2`). Inventing `adb shell`
+task, companion identity field, `SLOT_SAFE_FIELDS` column, or
+`device_registry` field that collects it. Inventing `adb shell`
 `dumpsys` / `service call` / `getprop` for the customer API is forbidden, so
-missing inventory is reported honestly as `eid=null` / `eid_status=unknown`.
+missing EID inventory is reported honestly as `eid=null` / `eid_status=unknown`.
 If Lovable later stores `eid` on the owned slot row from a prior approved
 read, this endpoint returns that value for the assigned rental only.
+Live Pixel IMEI is also not collected here: IMEI2 is returned only when
+already stored on `public.slots.imei2`.
 
 ---
 

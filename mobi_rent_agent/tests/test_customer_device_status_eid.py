@@ -1,4 +1,4 @@
-"""Customer device-status EID is read-only inventory, never live ADB."""
+"""Customer device-status inventory is read-only owned-slot passthrough, never live ADB."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.farm_task_types import SUPPORTED_TASK_TYPES
-from application.vps_api_contract import customer_eid_fields
+from application.vps_api_contract import customer_eid_fields, customer_inventory_identity_fields
 from tests.fakes_supabase import MemoryTenant
 from tests.test_remote_access_poc import (
     CUSTOMER_A,
@@ -28,7 +28,40 @@ from tests.test_remote_access_poc import (
 
 STORED_EID_A = "89049032012345678901234567890123"
 STORED_EID_B = "89049032012345678901234567890124"
+STORED_IMEI2_A = "353456789012345"
+STORED_IMEI2_B = "353456789012346"
+STORED_CARRIER_A = "T-Mobile"
+STORED_CARRIER_B = "US Mobile"
+STORED_PHONE_A = "+15555550123"
+STORED_PHONE_B = "+15555550124"
 FAKE_PLACEHOLDER = "00000000000000000000000000000000"
+FAKE_IMEI = "000000000000000"
+FAKE_PHONE = "+10000000000"
+INVENTORY_KEYS = (
+    "imei2",
+    "imei2_status",
+    "eid",
+    "eid_status",
+    "carrier",
+    "carrier_status",
+    "phone_number",
+    "phone_number_status",
+    "cellular_status",
+)
+STABLE_DEVICE_STATUS_KEYS = (
+    "ok",
+    "state",
+    "online",
+    "adb_online",
+    "remote_access_available",
+    "remote_access_busy",
+    "requires_manual_action",
+    "session_active",
+    "busy",
+    "available",
+    "slot_id",
+    "coordinate_space",
+)
 MUTATING_FARM_TYPES = {
     "assign",
     "reboot",
@@ -52,6 +85,51 @@ def test_customer_eid_fields_never_invent_placeholder():
     assert FAKE_PLACEHOLDER not in json.dumps(customer_eid_fields(None))
 
 
+def test_customer_inventory_identity_fields_known_unknown_and_cellular():
+    unknown = customer_inventory_identity_fields()
+    assert unknown == {
+        "imei2": None,
+        "imei2_status": "unknown",
+        "eid": None,
+        "eid_status": "unknown",
+        "carrier": None,
+        "carrier_status": "unknown",
+        "phone_number": None,
+        "phone_number_status": "unknown",
+        "cellular_status": "unknown",
+    }
+    known = customer_inventory_identity_fields(
+        eid=STORED_EID_A,
+        imei2=STORED_IMEI2_A,
+        carrier=STORED_CARRIER_A,
+        phone_number=STORED_PHONE_A,
+    )
+    assert known["imei2"] == STORED_IMEI2_A
+    assert known["imei2_status"] == "known"
+    assert known["eid"] == STORED_EID_A
+    assert known["eid_status"] == "known"
+    assert known["carrier"] == STORED_CARRIER_A
+    assert known["carrier_status"] == "known"
+    assert known["phone_number"] == STORED_PHONE_A
+    assert known["phone_number_status"] == "known"
+    assert known["cellular_status"] == "unknown"
+    whitespace = customer_inventory_identity_fields(eid="  ", imei2="\t", carrier=" ", phone_number="")
+    assert whitespace["imei2"] is None and whitespace["imei2_status"] == "unknown"
+    assert whitespace["eid"] is None and whitespace["eid_status"] == "unknown"
+    assert whitespace["carrier"] is None and whitespace["carrier_status"] == "unknown"
+    assert whitespace["phone_number"] is None and whitespace["phone_number_status"] == "unknown"
+    assert whitespace["cellular_status"] == "unknown"
+    blob = json.dumps(unknown)
+    assert FAKE_PLACEHOLDER not in blob
+    assert FAKE_IMEI not in blob
+
+
+def _clear_radio_inventory(tenant: MemoryTenant, bay: int) -> None:
+    row = tenant.slots[bay]
+    for key in ("imei2", "carrier_name", "carrier", "phone_number", "eid"):
+        row.pop(key, None)
+
+
 def test_assigned_rental_reads_stored_eid_only(tmp_path: Path):
     tenant = MemoryTenant()
     farm = FakeFarm()
@@ -64,11 +142,19 @@ def test_assigned_rental_reads_stored_eid_only(tmp_path: Path):
     assert status.body["eid"] == STORED_EID_A
     assert status.body["eid_status"] == "known"
     assert status.body["eid"] != FAKE_PLACEHOLDER
+    assert status.body["imei2"] == STORED_IMEI2_A
+    assert status.body["imei2_status"] == "known"
+    assert status.body["carrier"] == STORED_CARRIER_A
+    assert status.body["carrier_status"] == "known"
+    assert status.body["phone_number"] is None
+    assert status.body["phone_number_status"] == "unknown"
+    assert status.body["cellular_status"] == "unknown"
+    assert "imei1" not in status.body
     assert SLOT1_SERIAL not in json.dumps(status.body)
     assert _farm_types(farm) == ["device_display_size"]
     assert not any(t in MUTATING_FARM_TYPES for t in _farm_types(farm))
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
-    assert tenant.slots[1]["imei2"] == "353456789012345"
+    assert tenant.slots[1]["imei2"] == STORED_IMEI2_A
 
 
 def test_missing_eid_is_unknown_not_fake(tmp_path: Path):
@@ -193,6 +279,7 @@ def test_imei2_phone_ready_setup_mode_troubleshoot_reconnect_unchanged(tmp_path:
     assert diag.http_status == 200
     assert diag.body["mode"] == "diagnostics"
     assert diag.body["ui_state"] != "phone_ready"
+    assert diag.body["cellular_status"] == "unknown"
     assert "reboot" in diag.body["supported_recovery"]
     assert "voidfix_repair" in diag.body["unsupported"]
     assert "esim_delete" in diag.body["unsupported"]
@@ -229,14 +316,34 @@ def test_http_device_status_eid_ownership(tmp_path: Path):
         assert status == 200, body
         assert body["eid"] == STORED_EID_A
         assert body["eid_status"] == "known"
+        assert body["imei2"] == STORED_IMEI2_A
+        assert body["imei2_status"] == "known"
+        assert body["carrier"] == STORED_CARRIER_A
+        assert body["cellular_status"] == "unknown"
         stolen = _http("GET", url, token=token_b)
         assert stolen[0] == 403
         assert stolen[1]["error"] == "rental_not_owned"
         assert stolen[1].get("eid") != STORED_EID_A
-        status, posted, _ = _http("POST", url, token=token_a, body={"eid": FAKE_PLACEHOLDER, "slot_id": 2})
+        assert stolen[1].get("imei2") != STORED_IMEI2_A
+        status, posted, _ = _http(
+            "POST",
+            url,
+            token=token_a,
+            body={
+                "eid": FAKE_PLACEHOLDER,
+                "imei2": FAKE_IMEI,
+                "carrier": "FakeCarrier",
+                "phone_number": FAKE_PHONE,
+                "slot_id": 2,
+            },
+        )
         assert status == 200
         assert posted["eid"] == STORED_EID_A
         assert posted["eid"] != FAKE_PLACEHOLDER
+        assert posted["imei2"] == STORED_IMEI2_A
+        assert posted["imei2"] != FAKE_IMEI
+        assert posted["carrier"] == STORED_CARRIER_A
+        assert posted["cellular_status"] == "unknown"
         missing_rental = _rental(tenant, bay=1, user_id=user_a)
         tenant.slots[1].pop("eid", None)
         tenant.slots[1]["id"] = missing_rental
@@ -249,3 +356,253 @@ def test_http_device_status_eid_ownership(tmp_path: Path):
         assert FAKE_PLACEHOLDER not in json.dumps(unknown)
     finally:
         server.shutdown()
+
+
+def test_imei2_carrier_phone_known_from_owned_slot(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(
+        tenant,
+        bay=1,
+        user_id=CUSTOMER_A,
+        eid=STORED_EID_A,
+        imei2=STORED_IMEI2_A,
+        carrier_name=STORED_CARRIER_A,
+        phone_number=STORED_PHONE_A,
+    )
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["imei2"] == STORED_IMEI2_A
+    assert status.body["imei2_status"] == "known"
+    assert status.body["eid"] == STORED_EID_A
+    assert status.body["eid_status"] == "known"
+    assert status.body["carrier"] == STORED_CARRIER_A
+    assert status.body["carrier_status"] == "known"
+    assert status.body["phone_number"] == STORED_PHONE_A
+    assert status.body["phone_number_status"] == "known"
+    assert status.body["cellular_status"] == "unknown"
+    assert "imei1" not in status.body
+    assert "carrier_name" not in status.body
+    blob = json.dumps(status.body)
+    assert SLOT1_SERIAL not in blob
+    assert FAKE_IMEI not in blob
+    assert FAKE_PLACEHOLDER not in blob
+    assert _farm_types(farm) == ["device_display_size"]
+
+
+def test_missing_and_whitespace_inventory_is_unknown_not_fabricated(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    _clear_radio_inventory(tenant, 1)
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    for key in ("imei2", "eid", "carrier", "phone_number"):
+        assert status.body[key] is None
+        assert status.body[f"{key}_status"] == "unknown"
+    assert status.body["cellular_status"] == "unknown"
+    blob = json.dumps(status.body)
+    assert FAKE_PLACEHOLDER not in blob
+    assert FAKE_IMEI not in blob
+    assert STORED_IMEI2_A not in blob
+    assert STORED_EID_A not in blob
+    assert STORED_PHONE_A not in blob
+    assert "dumpsys" not in blob
+    whitespace = _rental(
+        tenant,
+        bay=1,
+        user_id=CUSTOMER_A,
+        eid="   ",
+        imei2="\t",
+        carrier_name=" ",
+        phone_number="",
+    )
+    blank = service.device_status_for_customer(CUSTOMER_A, whitespace)
+    assert blank.http_status == 200
+    assert blank.body["imei2"] is None and blank.body["imei2_status"] == "unknown"
+    assert blank.body["eid"] is None and blank.body["eid_status"] == "unknown"
+    assert blank.body["carrier"] is None and blank.body["carrier_status"] == "unknown"
+    assert blank.body["phone_number"] is None and blank.body["phone_number_status"] == "unknown"
+    assert blank.body["cellular_status"] == "unknown"
+
+
+def test_inventory_cross_rental_and_unassigned_slot_protection(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        farm=farm,
+        allowed=(1, 2),
+        workspace_map={1: "ws-1", 2: "ws-2"},
+    )
+    rental_a = _rental(
+        tenant,
+        bay=1,
+        user_id=CUSTOMER_A,
+        eid=STORED_EID_A,
+        imei2=STORED_IMEI2_A,
+        carrier_name=STORED_CARRIER_A,
+        phone_number=STORED_PHONE_A,
+    )
+    rental_b = _rental(
+        tenant,
+        bay=2,
+        user_id=CUSTOMER_B,
+        eid=STORED_EID_B,
+        imei2=STORED_IMEI2_B,
+        carrier_name=STORED_CARRIER_B,
+        phone_number=STORED_PHONE_B,
+    )
+    stolen = service.device_status_for_customer(CUSTOMER_B, rental_a)
+    assert stolen.http_status == 403
+    assert stolen.body["error"] == "rental_not_owned"
+    for key in INVENTORY_KEYS:
+        assert stolen.body.get(key) not in {
+            STORED_EID_A,
+            STORED_IMEI2_A,
+            STORED_CARRIER_A,
+            STORED_PHONE_A,
+        }
+    missing = service.device_status_for_customer(
+        CUSTOMER_A, "00000000-0000-4000-8000-000000000001"
+    )
+    assert missing.http_status == 404
+    unowned = MemoryTenant()
+    unowned.slots[1] = {
+        "id": "00000000-0000-4000-8000-000000000010",
+        "user_id": None,
+        "rental_id": None,
+        "motherboard_slot_num": 1,
+        "eid": STORED_EID_A,
+        "imei2": STORED_IMEI2_A,
+        "carrier_name": STORED_CARRIER_A,
+        "phone_number": STORED_PHONE_A,
+    }
+    empty, _, _ = _service(tmp_path, tenant=unowned, platform=FakePlatform(), farm=FakeFarm())
+    denied = empty.device_status_for_customer(CUSTOMER_A, unowned.slots[1]["id"])
+    assert denied.http_status in {403, 404}
+    assert denied.body.get("imei2") != STORED_IMEI2_A
+    assert denied.body.get("eid") != STORED_EID_A
+    assert denied.body.get("carrier") != STORED_CARRIER_A
+    assert denied.body.get("phone_number") != STORED_PHONE_A
+    owned_a = service.device_status_for_customer(CUSTOMER_A, rental_a)
+    owned_b = service.device_status_for_customer(CUSTOMER_B, rental_b)
+    assert owned_a.body["imei2"] == STORED_IMEI2_A
+    assert owned_b.body["imei2"] == STORED_IMEI2_B
+    assert owned_a.body["carrier"] == STORED_CARRIER_A
+    assert owned_b.body["carrier"] == STORED_CARRIER_B
+    assert owned_a.body["phone_number"] == STORED_PHONE_A
+    assert owned_b.body["phone_number"] == STORED_PHONE_B
+    assert owned_a.body["imei2"] != owned_b.body["imei2"]
+
+
+def test_cellular_status_unknown_even_when_adb_and_session_online(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    platform = FakePlatform()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
+    rental = _rental(
+        tenant,
+        bay=1,
+        user_id=CUSTOMER_A,
+        eid=STORED_EID_A,
+        imei2=STORED_IMEI2_A,
+        carrier_name=STORED_CARRIER_A,
+        phone_number=STORED_PHONE_A,
+    )
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["imei2_status"] == "known"
+    assert status.body["carrier_status"] == "known"
+    assert status.body["phone_number_status"] == "known"
+    assert status.body["adb_online"] is True
+    assert status.body["online"] is True
+    assert status.body["state"] == "online"
+    assert status.body["session_active"] is True
+    assert status.body["cellular_status"] == "unknown"
+    assert status.body["cellular_status"] != "registered"
+    assert status.body["cellular_status"] != "connected"
+
+
+def test_device_status_keeps_existing_phone_fields(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A, eid=STORED_EID_A)
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    for key in STABLE_DEVICE_STATUS_KEYS:
+        assert key in status.body
+    assert status.body["ok"] is True
+    assert status.body["state"] == "online"
+    assert status.body["online"] is True
+    assert status.body["adb_online"] is True
+    assert status.body["session_active"] is True
+    assert status.body["remote_access_busy"] is False
+    assert status.body["busy"] is False
+    assert status.body["available"] is True
+    assert status.body["slot_id"] == 1
+    assert status.body["coordinate_space"] == "native_device_pixels"
+    assert status.body["native_resolution"] == {"width": 1440, "height": 3120}
+    assert "native_resolution_unavailable" not in status.body
+    assert isinstance(status.body["requires_manual_action"], bool)
+    assert "imei1" not in status.body
+    assert "serial" not in status.body
+    assert "udid" not in status.body
+    assert "workspace_id" not in status.body
+    assert "device_id" not in status.body
+
+
+def test_device_status_inventory_path_does_not_probe_adb_or_mutate(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    platform = FakePlatform()
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
+    rental = _rental(
+        tenant,
+        bay=1,
+        user_id=CUSTOMER_A,
+        eid=STORED_EID_A,
+        imei2=STORED_IMEI2_A,
+        carrier_name=STORED_CARRIER_A,
+        phone_number=STORED_PHONE_A,
+    )
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    before = store.get(rental)
+    grants_before = [c for c in platform.calls if c[0] == "grant"]
+    mutating_before = [t for t in _farm_types(farm) if t in MUTATING_FARM_TYPES]
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    after = store.get(rental)
+    assert after.activation_observed == before.activation_observed
+    assert after.setup_complete == before.setup_complete
+    assert after.prepare_state == before.prepare_state
+    assert after.setup_phase == before.setup_phase
+    assert [c for c in platform.calls if c[0] == "grant"] == grants_before
+    assert [t for t in _farm_types(farm) if t in MUTATING_FARM_TYPES] == mutating_before
+    assert _farm_types(farm).count("airplane_cycle") == 0
+    assert "get_eid" not in SUPPORTED_TASK_TYPES
+    assert "get_imei" not in SUPPORTED_TASK_TYPES
+    assert "device_eid" not in SUPPORTED_TASK_TYPES
+    source = (ROOT / "application" / "remote_access_service.py").read_text(encoding="utf-8")
+    eid_fn = source[source.find("def _inventory_identity_for_authorized_rental") : source.find("def _tenant_slot_row")]
+    assert "EuiccManager(" not in eid_fn
+    assert "adb shell" not in eid_fn
+    assert "getprop" not in eid_fn
+    assert "dumpsys" not in eid_fn
+    assert "slot_msisdn_map" not in eid_fn
+    assert "load_slot_msisdn_map" not in source
+    assert "HEALTH_MONITOR" not in source
+    reconnect = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
+    assert reconnect.http_status == 501
+    assert reconnect.body["error"] == "action_not_supported"

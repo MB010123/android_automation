@@ -27,7 +27,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 
-from application.vps_api_contract import customer_eid_fields, error_body
+from application.vps_api_contract import customer_inventory_identity_fields, error_body
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
@@ -783,7 +783,7 @@ class RemoteAccessService:
             body["native_resolution"] = native_resolution_body(native[0], native[1])
         else:
             body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
-        body.update(customer_eid_fields(self._eid_for_authorized_rental(auth)))
+        body.update(self._inventory_identity_for_authorized_rental(auth))
         return ApiResult(200, body)
 
     def reconnect_cellular_for_customer(
@@ -1309,24 +1309,41 @@ class RemoteAccessService:
             return ApiResult(502, error_body("farm_unreachable"))
         return details if isinstance(details, dict) else {}
 
+    def _inventory_identity_for_authorized_rental(self, auth: AuthorizedRental) -> dict[str, Any]:
+        """Read-only IMEI2/EID/carrier/phone from owned assigned-slot inventory.
+
+        Uses the same rental → assigned slot mapping as EID. IMEI2, carrier,
+        and phone number come from ``public.slots`` (``imei2``, ``carrier_name``,
+        ``phone_number``). EID is still only the rental/slot row key ``eid`` when
+        present — there is no ``SLOT_SAFE_FIELDS`` EID column or live reader.
+        ``cellular_status`` is always ``unknown`` (no approved radio probe).
+        Empty or whitespace values stay null/unknown. Never invents placeholders,
+        never infers cellular from Wi-Fi/ADB, and never asks the customer for a
+        slot/serial/UDID.
+        """
+        rows = (self._rental_row(auth.rental_id), self._tenant_slot_row(auth.slot_id))
+        return customer_inventory_identity_fields(
+            imei2=_first_inventory_text(rows, "imei2"),
+            eid=self._eid_for_authorized_rental(auth),
+            carrier=_first_inventory_text(rows, "carrier_name", "carrier"),
+            phone_number=_first_inventory_text(rows, "phone_number"),
+        )
+
     def _eid_for_authorized_rental(self, auth: AuthorizedRental) -> str | None:
         """Read-only EID from tenant inventory for the owned assigned slot.
 
-        IMEI2 already lives on the Lovable/Supabase ``slots`` row. EID does not:
-        there is no Farm Agent task, companion ``get_identity`` field,
-        ``device_registry`` field, or ``SLOT_SAFE_FIELDS`` column that collects
-        it, and live ADB eUICC or EuiccManager reads are not allowlisted. If the
-        tenant slot/rental row already stores ``eid`` from a prior approved
-        write, return that value; otherwise unknown. Never invents a
-        placeholder and never asks the customer for a slot/serial/UDID.
+        IMEI2, carrier_name, and phone_number already live on the Lovable/Supabase
+        ``slots`` row. EID does not: there is no Farm Agent task, companion
+        ``get_identity`` field, ``device_registry`` field, or ``SLOT_SAFE_FIELDS``
+        column that collects it, and live ADB eUICC or EuiccManager reads are not
+        allowlisted. If the tenant slot/rental row already stores ``eid`` from a
+        prior approved write, return that value; otherwise unknown. Never invents
+        a placeholder and never asks the customer for a slot/serial/UDID.
         """
-        for row in (self._rental_row(auth.rental_id), self._tenant_slot_row(auth.slot_id)):
-            if not isinstance(row, dict):
-                continue
-            text = str(row.get("eid") or "").strip()
-            if text:
-                return text
-        return None
+        return _first_inventory_text(
+            (self._rental_row(auth.rental_id), self._tenant_slot_row(auth.slot_id)),
+            "eid",
+        )
 
     def _tenant_slot_row(self, slot_id: int) -> dict[str, Any] | None:
         getter = getattr(self._tenant, "get_slot_row", None)
@@ -1629,6 +1646,18 @@ def _public_activation_evidence(raw: Any) -> dict[str, Any]:
         "observation_complete",
     )
     return {key: raw[key] for key in allowed if key in raw and raw[key] is not None}
+
+
+def _first_inventory_text(rows: tuple[Any, ...], *keys: str) -> str | None:
+    """First non-empty stripped inventory value from owned rental/slot rows."""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for key in keys:
+            text = str(row.get(key) or "").strip()
+            if text:
+                return text
+    return None
 
 
 def _slot_from_row(row: dict[str, Any]) -> int | None:

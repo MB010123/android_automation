@@ -489,11 +489,13 @@ def _schemas() -> dict[str, Any]:
             "type": "object",
             "description": (
                 "Customer GET/POST `/rentals/{rental_id}/remote-access/device-status`. "
-                "Rental ownership is resolved server-side. `eid` is passed through only when "
-                "the assigned tenant slot/rental row already stores it. There is no allowlisted "
-                "Farm task or companion identity field that reads EID live, so missing inventory "
-                "is `eid=null` / `eid_status=unknown` (never a placeholder). IMEI2 remains on "
-                "`GET /slots`. No GADS URLs, tokens, serials, or workspace IDs."
+                "Rental ownership is resolved server-side. Inventory fields are passed through "
+                "only from the owned assigned slot: `imei2` (`public.slots.imei2`), `carrier` "
+                "(`public.slots.carrier_name`), `phone_number` (`public.slots.phone_number`), "
+                "and `eid` when the rental/slot row already stores it. Empty inventory is "
+                "`null` / `unknown` (never a placeholder). `cellular_status` is always "
+                "`unknown` (no approved live radio reader; not inferred from Wi-Fi/ADB). "
+                "IMEI1 is not returned. No GADS URLs, tokens, serials, or workspace IDs."
             ),
             "properties": {
                 "ok": {"type": "boolean"},
@@ -517,8 +519,15 @@ def _schemas() -> dict[str, Any]:
                     },
                 },
                 "native_resolution_unavailable": {"type": "string"},
+                "imei2": {"type": "string", "nullable": True},
+                "imei2_status": {"type": "string", "enum": ["unknown", "known"]},
                 "eid": {"type": "string", "nullable": True},
                 "eid_status": {"type": "string", "enum": ["unknown", "known"]},
+                "carrier": {"type": "string", "nullable": True},
+                "carrier_status": {"type": "string", "enum": ["unknown", "known"]},
+                "phone_number": {"type": "string", "nullable": True},
+                "phone_number_status": {"type": "string", "enum": ["unknown", "known"]},
+                "cellular_status": {"type": "string", "enum": ["unknown"]},
             },
         },
         "EsimAssignRequest": {
@@ -910,9 +919,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "`GET .../stream` proxies MJPEG (`multipart/x-mixed-replace; boundary=frame` unless GADS "
                     "supplies another boundary) through the VPS. `GET .../device-status` returns customer-facing "
-                    "online/offline/unavailable state plus read-only `eid` / `eid_status` from tenant inventory "
-                    "when present (otherwise `null` / `unknown`; no live ADB EID probe). "
-                    "The customer's own stream is never `remote_access_busy`. "
+                    "online/offline/unavailable state plus read-only inventory from the owned assigned slot: "
+                    "`imei2`, `carrier`, `phone_number`, and `eid` with matching `*_status` (`known`/`unknown`). "
+                    "Missing inventory is `null` / `unknown` (no live ADB/eUICC probe). `cellular_status` is "
+                    "always `unknown`. The customer's own stream is never `remote_access_busy`. "
                     "Never returns GADS URLs, tokens, serials, or workspace IDs."
                 ),
                 "security": user_bearer,
