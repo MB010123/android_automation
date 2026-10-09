@@ -6,6 +6,7 @@ import sys
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +80,7 @@ def test_duplicate_create_does_not_duplicate_gads_session(tmp_path: Path):
 def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
-    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform)
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     grants_before = [c for c in platform.calls if c[0] == "grant"]
@@ -100,7 +101,12 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
         CUSTOMER_A, rental, {"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000}
     )
     assert swipe.http_status == 200 and typed.http_status == 200 and back.http_status == 200
-    assert home.http_status == 200 and recents.http_status == 200 and edge.http_status == 200
+    assert home.http_status == 403 and recents.http_status == 403 and edge.http_status == 200
+    session = store.get(rental)
+    store.upsert(replace(session, setup_phase="complete", setup_complete=True))
+    home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
+    recents = service.control_session(CUSTOMER_A, rental, {"action": "recents"})
+    assert home.http_status == 200 and recents.http_status == 200
     assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type", "back", "home", "recents"}
     assert store.get(rental).is_active(1_000_000.0)
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
@@ -112,7 +118,7 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
 def test_stream_and_control_concurrently(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
-    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     errors: list[str] = []
@@ -333,7 +339,7 @@ def test_qr_upload_places_image_without_gads_session(tmp_path: Path):
 
 
 def test_http_stream_auth_and_get_device_status(tmp_path: Path):
-    server, port, tenant, platform, _ = _start_http(tmp_path)
+    server, port, tenant, platform, Handler = _start_http(tmp_path)
     base = f"http://127.0.0.1:{port}"
     try:
         token_a, user_a = _signup(base, "ra-a@example.com")
@@ -378,6 +384,26 @@ def test_http_stream_auth_and_get_device_status(tmp_path: Path):
         )
         assert status == 200, tap
         assert any(c[0] == "tap" for c in platform.calls)
+        status, home, _ = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "home"},
+        )
+        assert status == 403, home
+        assert home["error"] == "forbidden_control"
+        status, recents, _ = _http(
+            "POST",
+            f"{base}/rentals/{rental}/remote-access/control",
+            token=token_a,
+            body={"action": "recents"},
+        )
+        assert status == 403, recents
+        assert recents["error"] == "forbidden_control"
+        session = Handler.remote_access_service._store.get(rental)
+        Handler.remote_access_service._store.upsert(
+            replace(session, setup_phase="complete", setup_complete=True)
+        )
         status, home, _ = _http(
             "POST",
             f"{base}/rentals/{rental}/remote-access/control",

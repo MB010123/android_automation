@@ -122,7 +122,7 @@ def test_allowed_tap_swipe_and_blocked_controls(tmp_path: Path):
     tenant = _tenant()
     platform = FakePlatform()
     farm = FakeFarm()
-    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     tap = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 120, "y": 400})
@@ -131,6 +131,10 @@ def test_allowed_tap_swipe_and_blocked_controls(tmp_path: Path):
         CUSTOMER_A, rental, {"action": "swipe", "x": 100, "y": 900, "x2": 100, "y2": 500}
     )
     assert swipe.http_status == 200, swipe.body
+    assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 403
+    assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 403
+    session = store.get(rental)
+    store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 200
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 200
     shade = service.control_session(

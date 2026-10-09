@@ -903,8 +903,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "return the device to the pool when the rental ends. `device-status`: also accepted as POST. "
                     "`control`: tap/swipe/type/back/home/recents in native device pixels "
                     "(swipe accepts `start_x`/`start_y`/`end_x`/`end_y` or `x`/`y`/`x2`/`y2`, optional `duration_ms`). "
-                    "Home and Recents are semantic actions with no keycodes. Notification shade, keys, ADB, "
-                    "and device identity are rejected. "
+                    "Home and Recents are semantic actions with no keycodes. During eSIM setup they are "
+                    "rejected (`forbidden_control`); leaving allowed SIM/eSIM screens returns `setup_state_blocked`. "
+                    "Notification shade, keys, ADB, and device identity are rejected. "
                     "`complete`: closes the remote session and runs safe QR cleanup; does not delete eSIM or factory-reset. "
                     "`requires_manual_action` never blocks remote access. No `provision_esim`, no EuiccManager."
                 ),

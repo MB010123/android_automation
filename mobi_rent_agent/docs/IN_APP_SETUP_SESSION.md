@@ -30,9 +30,9 @@ or name a bay/serial/UDID/workspace.
 Never send: `slot_id`, `farm_slot_id`, `serial`, `udid`, `workspace_id`, `home`, `recents`, ADB, GADS URLs.
 
 `403 forbidden` for wrong user / wrong rental / expired / cancelled.
-`403 forbidden_control` for blocked gestures.
+`403 forbidden_control` for blocked gestures (including Home/Recents while `setup_phase=esim`).
 `409 setup_incomplete` if complete is called too early (`ui_state` tells which step).
-`409 setup_state_blocked` if the Pixel left the allowed setup activities.
+`403 setup_state_blocked` if the Pixel left the allowed eSIM setup activities.
 
 ## Admin (Farm service token)
 

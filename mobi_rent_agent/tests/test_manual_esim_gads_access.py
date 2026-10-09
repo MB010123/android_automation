@@ -68,7 +68,6 @@ def test_requires_manual_action_is_not_phone_busy():
 def test_online_phone_in_manual_action_can_use_gads(tmp_path: Path):
     tenant = MemoryTenant()
     farm = FakeFarm()
-    farm.inspect_allowed = False
     platform = FakePlatform()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
@@ -86,7 +85,7 @@ def test_online_phone_in_manual_action_can_use_gads(tmp_path: Path):
     assert tap.http_status == 200 and swipe.http_status == 200
     assert typed.http_status == 200 and back.http_status == 200
     inspects = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
-    assert inspects == []
+    assert inspects
     assert "phone_operation_busy" not in str(tap.body)
     status = service.device_status_for_customer(CUSTOMER_A, rental)
     assert status.http_status == 200
@@ -101,8 +100,8 @@ def test_restricted_controls_and_cross_rental_stay_blocked(tmp_path: Path):
     rental_b = _rental(tenant, bay=9, user_id=CUSTOMER_B)
     assert service.create_remote_access(CUSTOMER_A, None, rental_a).http_status == 201
     assert service.create_remote_access(CUSTOMER_B, None, rental_b).http_status == 201
-    assert service.control_session(CUSTOMER_A, rental_a, {"action": "home"}).http_status == 200
-    assert service.control_session(CUSTOMER_A, rental_a, {"action": "recents"}).http_status == 200
+    assert service.control_session(CUSTOMER_A, rental_a, {"action": "home"}).http_status == 403
+    assert service.control_session(CUSTOMER_A, rental_a, {"action": "recents"}).http_status == 403
     shade = service.control_session(
         CUSTOMER_A, rental_a, {"action": "swipe", "x": 10, "y": 5, "x2": 10, "y2": 400}
     )

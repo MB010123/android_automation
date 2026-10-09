@@ -40,6 +40,17 @@ def test_type_back_home_and_recents_allowed():
     assert PUBLIC_CONTROL_ACTIONS == ("tap", "swipe", "type", "back", "home", "recents")
 
 
+def test_setup_mode_rejects_home_and_recents_only():
+    assert decide_control({"action": "home"}, setup_mode=True).allowed is False
+    assert decide_control({"action": "home"}, setup_mode=True).reason == "forbidden_control"
+    assert decide_control({"action": "recents"}, setup_mode=True).allowed is False
+    assert decide_control({"action": "back"}, setup_mode=True).allowed is True
+    tap = decide_control({"action": "tap", "x": 10, "y": 20}, setup_mode=True)
+    assert tap.allowed is True
+    assert decide_control({"action": "home"}).allowed is True
+    assert decide_control({"action": "recents"}).allowed is True
+
+
 def test_bottom_edge_upward_swipe_is_normal_navigation():
     gesture = decide_control({"action": "swipe", "x": 720, "y": 2900, "x2": 720, "y2": 2000})
     assert gesture.allowed and gesture.command is not None

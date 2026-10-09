@@ -256,6 +256,12 @@ status-bar band and pulls down (notification shade); that returns 403
 `forbidden_control`. Explicit Home/Recents use semantic `{ "action": "home" }`
 / `{ "action": "recents" }` — never Android keycodes.
 
+While `setup_phase` is `esim` and `setup_complete` is false, the VPS inspects
+the foreground Android activity before forwarding tap/swipe/type/back. Home
+and Recents return 403 `forbidden_control`. Leaving the allowed eSIM Settings
+screens returns 403 `setup_state_blocked` and does not forward the control.
+After setup is complete, Home/Recents keep the normal customer policy.
+
 ---
 
 ## 8. Type
@@ -295,7 +301,8 @@ Forbidden (do not send): notification shade, `keycode`, `keyevent`, `adb`,
 | HTTP | `error` |
 | --- | --- |
 | 422 | `invalid_control` (bad/missing numbers, unknown action, extra fields) |
-| 403 | `forbidden_control` (shade/ADB/identity spoof/raw keys) |
+| 403 | `forbidden_control` (shade/ADB/identity spoof/raw keys; Home/Recents during eSIM setup) |
+| 403 | `setup_state_blocked` (foreground activity left the eSIM setup allowlist) |
 | 409 | `remote_access_not_ready` |
 | 403 | `session_expired` / `rental_not_owned` |
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +72,7 @@ def test_reconnect_does_not_grant_or_lock_again(tmp_path: Path):
 def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
-    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     stream = service.open_stream(CUSTOMER_A, rental)
@@ -86,6 +87,10 @@ def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):
     assert tap.http_status == 200 and swipe.http_status == 200
     assert typed.http_status == 200 and back.http_status == 200
     assert {c[0] for c in platform.calls} >= {"grant", "stream", "tap", "swipe", "type", "back"}
+    assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 403
+    assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 403
+    session = store.get(rental)
+    store.upsert(replace(session, setup_phase="complete", setup_complete=True))
     assert service.control_session(CUSTOMER_A, rental, {"action": "home"}).http_status == 200
     assert service.control_session(CUSTOMER_A, rental, {"action": "recents"}).http_status == 200
 

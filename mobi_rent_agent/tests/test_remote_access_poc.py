@@ -206,6 +206,8 @@ class FakeFarm:
         self.fail_types: set[str] = set()
         self.activation_details: dict[str, Any] | None = None
         self.inspect_allowed = True
+        self.inspect_activity: str | None = None
+        self.inspect_unknown = False
         self.display_width = 1440
         self.display_height = 3120
 
@@ -236,15 +238,25 @@ class FakeFarm:
         if task_type == "remote_access_activation_status" and self.activation_details:
             body["details"] = self.activation_details
         if task_type == "setup_session_inspect":
+            allowed = bool(self.inspect_allowed) and not self.inspect_unknown
+            recovered = bool(payload.get("recover")) and not allowed
+            if self.inspect_unknown:
+                activity = None
+                reason = "activity_unknown"
+            else:
+                activity = self.inspect_activity
+                if not activity:
+                    activity = (
+                        "com.android.settings/.network.telephony.MobileNetworkActivity"
+                        if allowed
+                        else "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+                    )
+                reason = "ok" if allowed else "left_setup"
             body["details"] = {
-                "activity": (
-                    "com.android.settings/.network.telephony.MobileNetworkActivity"
-                    if self.inspect_allowed
-                    else "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
-                ),
-                "allowed": self.inspect_allowed,
-                "recovered": False,
-                "reason": "ok" if self.inspect_allowed else "left_setup",
+                "activity": activity,
+                "allowed": allowed,
+                "recovered": recovered,
+                "reason": reason,
                 "phase": payload.get("phase") or "esim",
                 "sms_role_holder": "com.voidfix.app",
                 "voidfix_is_default_sms": True,
@@ -676,7 +688,8 @@ def test_h_reboot_only_slot1_via_existing_farm_task(tmp_path: Path):
     accepted = service.reboot_for_customer(CUSTOMER_A, rental)
     assert accepted.http_status == 202
     assert store.get(rental).prepare_state == PREPARE_READY
-    assert all(task["slot"] == 1 and task["type"] == "reboot" for task in farm.tasks)
+    assert all(task["slot"] == 1 for task in farm.tasks)
+    assert [t["type"] for t in farm.tasks if t["type"] != "setup_session_inspect"] == ["reboot", "reboot"]
 
 
 def test_h_reboot_timeout_is_reported(tmp_path: Path):
@@ -1004,9 +1017,10 @@ def test_prepare_esim_flow_places_qr_then_reboots(tmp_path: Path):
     service.create_remote_access(CUSTOMER_A, None, rental)
     accepted = service.prepare_esim(CUSTOMER_A, rental)
     assert accepted.http_status == 202, accepted.body
-    assert [t["type"] for t in farm.tasks] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
-    assert farm.tasks[0]["slot"] == 1
-    assert farm.tasks[0]["payload"]["esim_qr_url"] == "https://example.test/private/qr"
+    action_tasks = [t for t in farm.tasks if t["type"] != "setup_session_inspect"]
+    assert [t["type"] for t in action_tasks] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
+    assert action_tasks[0]["slot"] == 1
+    assert action_tasks[0]["payload"]["esim_qr_url"] == "https://example.test/private/qr"
     assert "provision" not in json.dumps(farm.tasks)
     assert store.get(rental).prepare_state == PREPARE_READY
 
@@ -1018,7 +1032,8 @@ def test_prepare_esim_fails_closed_when_qr_ref_not_allowlisted(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A, qr_code_url="https://evil.example/qr.png")
     service.create_remote_access(CUSTOMER_A, None, rental)
     result = service.prepare_esim(CUSTOMER_A, rental)
-    assert result.http_status == 400 and farm.tasks == []
+    assert result.http_status == 400
+    assert all(t["type"] == "setup_session_inspect" for t in farm.tasks)
 
 
 def test_prepare_esim_records_failure_when_farm_rejects(tmp_path: Path):
@@ -1031,7 +1046,7 @@ def test_prepare_esim_records_failure_when_farm_rejects(tmp_path: Path):
     assert service.prepare_esim(CUSTOMER_A, rental).http_status == 202
     session = store.get(rental)
     assert session.prepare_state == PREPARE_FAILED and session.prepare_detail.startswith("place_qr:")
-    assert [t["type"] for t in farm.tasks] == [REMOTE_ACCESS_PLACE_QR_TASK]  # no reboot after failure
+    assert [t["type"] for t in farm.tasks if t["type"] != "setup_session_inspect"] == [REMOTE_ACCESS_PLACE_QR_TASK]  # no reboot after failure
 
 
 # ---------------------------------------------------------------------------
@@ -1288,7 +1303,7 @@ def test_prepare_esim_is_idempotent_while_ready(tmp_path: Path):
     second = service.prepare_esim(CUSTOMER_A, rental)
     assert second.http_status == 202
     assert second.body["prepare_state"] == PREPARE_READY
-    assert [t["type"] for t in farm.tasks] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
+    assert [t["type"] for t in farm.tasks if t["type"] != "setup_session_inspect"] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
 
 
 def test_prepare_esim_storage_key_without_https_url_fails_closed(tmp_path: Path):
@@ -1299,7 +1314,7 @@ def test_prepare_esim_storage_key_without_https_url_fails_closed(tmp_path: Path)
     service.create_remote_access(CUSTOMER_A, None, rental)
     result = service.prepare_esim(CUSTOMER_A, rental)
     assert result.http_status == 503
-    assert farm.tasks == []
+    assert all(t["type"] == "setup_session_inspect" for t in farm.tasks)
 
 
 def test_expired_rental_revokes_platform_lease(tmp_path: Path):
@@ -1535,7 +1550,8 @@ def test_http_prepare_esim_ignores_body_qr_url(tmp_path: Path):
         )
         assert status == 202, body
         farm = server.RequestHandlerClass.remote_access_service._farm
-        assert farm.tasks[0]["payload"]["esim_qr_url"] == "https://example.test/private/qr"
+        place = next(t for t in farm.tasks if t["type"] == "remote_access_place_qr")
+        assert place["payload"]["esim_qr_url"] == "https://example.test/private/qr"
         assert "evil.example" not in json.dumps(farm.tasks)
         status, denied, _ = _http(
             "POST",

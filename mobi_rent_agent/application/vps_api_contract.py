@@ -50,6 +50,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "remote_access_platform_error": "Remote-access platform rejected the request",
     "remote_access_busy": "Another rental currently holds remote access on this phone",
     "forbidden_control": "This remote-control action is not allowed",
+    "setup_state_blocked": "Stay on the Android eSIM setup screens",
     "setup_incomplete": "Phone setup is not complete yet",
     "remote_access_not_found": "No remote-access session exists for this rental",
     "qr_upload_missing": "Request must be multipart/form-data with a qr_image file",

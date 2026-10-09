@@ -451,6 +451,7 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
+            self._launch_esim_setup_if_needed(auth, existing)
             body = {"ok": True, **existing.to_public_dict(now), "ui_state": "live_phone_screen"}
             return ApiResult(200, body)
 
@@ -502,6 +503,7 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
+        self._launch_esim_setup_if_needed(auth, session)
         body = {"ok": True, **session.to_public_dict(now), "ui_state": "live_phone_screen"}
         return ApiResult(201, body)
 
@@ -537,14 +539,18 @@ class RemoteAccessService:
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
-        decision = decide_control(payload)
+        setup_mode = self._in_esim_setup_mode(session)
+        decision = decide_control(payload, setup_mode=setup_mode)
         if not decision.allowed or decision.command is None:
             code = decision.reason if decision.reason in {"invalid_control", "forbidden_control"} else "invalid_control"
             status = 422 if code == "invalid_control" else 403
+            if setup_mode:
+                self._run_setup_guard(auth, session, recover=True)
             return ApiResult(status, error_body(code))
-        # Do not gate tap/swipe/type/back/home/recents on setup-activity whitelist
-        # or slot requires_manual_action. The customer must navigate Android
-        # Settings/LPA themselves. Restricted actions stay forbidden via decide_control.
+        if setup_mode:
+            blocked = self._block_if_esim_setup_disallowed(auth, session)
+            if blocked is not None:
+                return blocked
         secret = session.platform_secret
         if not secret:
             return ApiResult(503, error_body("gads_unavailable"))
@@ -1008,6 +1014,28 @@ class RemoteAccessService:
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
+
+    def _in_esim_setup_mode(self, session: RemoteAccessSession) -> bool:
+        if bool(session.setup_complete):
+            return False
+        phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
+        return phase == PHASE_ESIM
+
+    def _launch_esim_setup_if_needed(self, auth: AuthorizedRental, session: RemoteAccessSession) -> None:
+        """Best-effort SIM-profiles launch. Never fails session create/stream."""
+        if not self._in_esim_setup_mode(session):
+            return
+        self._run_setup_guard(auth, session, recover=True)
+
+    def _block_if_esim_setup_disallowed(
+        self,
+        auth: AuthorizedRental,
+        session: RemoteAccessSession,
+    ) -> ApiResult | None:
+        details = self._run_setup_guard(auth, session, recover=True)
+        if isinstance(details, ApiResult) or not details.get("allowed"):
+            return ApiResult(403, error_body("setup_state_blocked"))
+        return None
 
     def _run_setup_guard(
         self,

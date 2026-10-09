@@ -95,8 +95,12 @@ class ControlDecision:
     reason: str = ""
 
 
-def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
-    """Validate a customer control body. Fail closed on anything unknown."""
+def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = False) -> ControlDecision:
+    """Validate a customer control body. Fail closed on anything unknown.
+
+    ``setup_mode`` keeps the public payload contract but rejects Home/Recents
+    during eSIM setup. Normal/ready mode still allows those actions.
+    """
     if not isinstance(payload, Mapping):
         return ControlDecision(False, reason="invalid_control")
     for key in payload:
@@ -109,6 +113,8 @@ def decide_control(payload: Mapping[str, Any] | None) -> ControlDecision:
         return ControlDecision(False, reason="forbidden_control")
     if action not in ALLOWED_ACTIONS:
         return ControlDecision(False, reason="invalid_control")
+    if setup_mode and action in {"home", "recents"}:
+        return ControlDecision(False, reason="forbidden_control")
     if action in {"back", "home", "recents"}:
         extra = {k for k in payload if k not in _NAV_KEYS}
         if extra:
