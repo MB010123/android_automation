@@ -35,7 +35,19 @@ from application.esim_qr_upload import public_placement_success, qr_upload_error
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
-from application.in_app_control_policy import FORBIDDEN_PAYLOAD_KEYS, NAV_ACTIONS, decide_control
+from application.in_app_control_policy import (
+    FORBIDDEN_PAYLOAD_KEYS,
+    NAV_ACTIONS,
+    ControlCommand,
+    decide_control,
+)
+from application.session_restriction_policy import (
+    REASON_QR_NAVIGATE,
+    REASON_SETTINGS_REDIRECT,
+    add_esim_public_body,
+    decide_restriction,
+    public_restriction_body,
+)
 from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
 from domain.remote_access import (
     ACTIVATION_CUSTOMER_REQUIRED,
@@ -172,6 +184,7 @@ class RemoteAccessService:
         prepare_slot_ids: tuple[int, ...] | None = None,
         observe_slot_ids: tuple[int, ...] | None = None,
         voidfix_android_package: str | None = None,
+        session_restrictions: bool = True,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
@@ -193,6 +206,7 @@ class RemoteAccessService:
         self._prepare_slots = None if prepare_slot_ids is None else tuple(int(s) for s in prepare_slot_ids)
         self._observe_slots = None if observe_slot_ids is None else tuple(int(s) for s in observe_slot_ids)
         self._voidfix_package = str(voidfix_android_package or "").strip() or None
+        self._session_restrictions = bool(session_restrictions)
         self._platform = platform
         self._store = store
         self._tenant = tenant_store
@@ -560,9 +574,12 @@ class RemoteAccessService:
         if isinstance(platform, ApiResult):
             return platform
         command = decision.command
+        restriction: dict[str, str] = {}
         try:
             with self._lock_for(auth.rental_id):
-                forwarded = self._forward_control(platform, session, secret, command)
+                forwarded, restriction = self._forward_restricted_control(
+                    platform, session, secret, command
+                )
         except RemoteAccessPlatformError as exc:
             logger.warning("in_app_control_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
             return ApiResult(502, error_body("gads_unavailable"))
@@ -570,7 +587,9 @@ class RemoteAccessService:
             return forwarded
         if forwarded is False:
             return ApiResult(502, error_body("gads_unavailable"))
-        return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
+        body = {"ok": True, "action": decision.command.action, "forwarded": True}
+        body.update(restriction)
+        return ApiResult(200, body)
 
     def open_stream(self, customer_id: str, rental_id: str) -> ApiResult | Any:
         """Return a live MJPEG response object, or an ApiResult error."""
@@ -1113,7 +1132,9 @@ class RemoteAccessService:
             if isinstance(raw_details, dict):
                 details = raw_details
         logger.info("esim_qr_uploaded slot=%s job_id=%s", auth.slot_id, job_id)
-        return ApiResult(200, public_placement_success(details, job_id=job_id))
+        body = public_placement_success(details, job_id=job_id)
+        body.update(self._navigate_rental_to_add_esim(auth))
+        return ApiResult(200, body)
 
     def _upload_error_from(self, result: ApiResult) -> ApiResult:
         code = "forbidden"
@@ -1345,6 +1366,118 @@ class RemoteAccessService:
         if isinstance(result, ApiResult):
             return result
         return True
+
+    def _inspect_session(self, slot_id: int, *, recover: bool) -> dict[str, Any] | ApiResult:
+        payload: dict[str, Any] = {"phase": PHASE_ESIM, "recover": bool(recover)}
+        if self._voidfix_package:
+            payload["voidfix_package"] = self._voidfix_package
+        return self._farm_setup_task("setup_session_inspect", slot_id, payload)
+
+    def _launch_add_esim(self, slot_id: int) -> dict[str, Any] | ApiResult:
+        """One-shot allowlisted SIM-profiles intent. Never a background recover loop."""
+        return self._inspect_session(int(slot_id), recover=True)
+
+    def _navigate_rental_to_add_esim(self, auth: AuthorizedRental) -> dict[str, str]:
+        """Open Add eSIM on the authorized rental bay only.
+
+        Used after QR placement. Flag off is a complete no-op. Farm inspect
+        failure does not fail the caller (QR is already placed). Never GADS
+        revoke/release, never another bay, never a recover loop.
+        """
+        if not self._session_restrictions:
+            return {}
+        launched = self._launch_add_esim(auth.slot_id)
+        if isinstance(launched, ApiResult):
+            logger.warning("add_esim_navigate_skipped slot=%s", auth.slot_id)
+            return {}
+        return add_esim_public_body(reason=REASON_QR_NAVIGATE)
+
+    def _send_restriction_home(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+    ) -> bool | ApiResult:
+        return self._forward_control(platform, session, secret, ControlCommand(action="home"))
+
+    def _forward_restricted_control(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+        command: ControlCommand,
+    ) -> tuple[bool | ApiResult, dict[str, str]]:
+        if not self._session_restrictions:
+            if command.action == "settings":
+                # No GADS/Farm settings endpoint. Rollback must not 502 or launch Add eSIM.
+                return True, {}
+            return self._forward_control(platform, session, secret, command), {}
+        if command.action == "settings":
+            launched = self._launch_add_esim(session.slot_id)
+            if isinstance(launched, ApiResult):
+                return launched, {}
+            return True, add_esim_public_body(reason=REASON_SETTINGS_REDIRECT)
+        if command.action == "back":
+            return self._forward_restricted_back(platform, session, secret, command)
+        forwarded = self._forward_control(platform, session, secret, command)
+        if forwarded is not True:
+            return forwarded, {}
+        if command.action not in {"tap", "swipe", "type", "quick_settings"}:
+            return True, {}
+        return True, self._enforce_foreground(platform, session, secret)
+
+    def _forward_restricted_back(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+        command: ControlCommand,
+    ) -> tuple[bool | ApiResult, dict[str, str]]:
+        details = self._inspect_session(session.slot_id, recover=False)
+        inspect_failed = isinstance(details, ApiResult)
+        activity = None if inspect_failed else (str(details.get("activity") or "").strip() or None)
+        decision = decide_restriction(
+            action="back",
+            activity=activity,
+            voidfix_package=self._voidfix_package,
+            inspect_failed=inspect_failed,
+        )
+        forward_command = (
+            ControlCommand(action="home") if decision.rewrite_action == "home" else command
+        )
+        forwarded = self._forward_control(platform, session, secret, forward_command)
+        if forwarded is not True:
+            return forwarded, public_restriction_body(decision)
+        extra = public_restriction_body(decision)
+        if inspect_failed or decision.rewrite_action == "home":
+            return True, extra
+        after = self._enforce_foreground(platform, session, secret)
+        return True, after or extra
+
+    def _enforce_foreground(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+    ) -> dict[str, str]:
+        details = self._inspect_session(session.slot_id, recover=False)
+        if isinstance(details, ApiResult):
+            return {}
+        decision = decide_restriction(
+            action="tap",
+            activity=str(details.get("activity") or "").strip() or None,
+            voidfix_package=self._voidfix_package,
+        )
+        if decision.launch_esim:
+            launched = self._launch_add_esim(session.slot_id)
+            if isinstance(launched, ApiResult):
+                return {}
+            return public_restriction_body(decision)
+        if decision.send_home:
+            home_sent = self._send_restriction_home(platform, session, secret)
+            if home_sent is True:
+                return public_restriction_body(decision)
+        return {}
 
     def _forward_control(
         self,

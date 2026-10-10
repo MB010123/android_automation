@@ -116,7 +116,6 @@ def _assert_full_nav_forwarded(service, platform, owner: str, rental: str) -> No
         "tap",
         "swipe",
         "type",
-        "back",
     }
 
 
@@ -144,7 +143,11 @@ def test_leaving_sim_settings_is_not_forced_back(tmp_path: Path):
     assert any(c[0] == "home" for c in platform.calls)
     assert any(c[0] == "tap" for c in platform.calls)
     assert _recover_inspects(farm) == []
-    assert not any(t["type"] == "setup_session_inspect" for t in farm.tasks)
+    assert all(
+        not t["payload"].get("recover")
+        for t in farm.tasks
+        if t["type"] == "setup_session_inspect"
+    )
 
 
 def test_customer_can_navigate_back_to_sim_settings(tmp_path: Path):
@@ -161,7 +164,9 @@ def test_customer_can_navigate_back_to_sim_settings(tmp_path: Path):
     back = service.control_session(CUSTOMER_A, rental, {"action": "back"})
     assert tap.http_status == 200 and swipe.http_status == 200
     assert typed.http_status == 200 and back.http_status == 200
-    assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type", "back"}
+    assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type", "home"}
+    assert back.body.get("restricted_destination") == "home"
+    assert not any(c[0] == "revoke" for c in platform.calls)
     assert _recover_inspects(farm) == []
 
 
@@ -176,6 +181,8 @@ def test_launcher_settings_apps_and_unknown_are_forwarded(tmp_path: Path):
     farm.inspect_activity = "com.android.settings/.Settings"
     settings = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 41, "y": 81})
     assert settings.http_status == 200
+    assert settings.body.get("restricted_destination") == "add_esim"
+    assert any(t["payload"].get("recover") for t in farm.tasks if t["type"] == "setup_session_inspect")
     farm.inspect_activity = "com.android.chrome/.MainActivity"
     app = service.control_session(
         CUSTOMER_A, rental, {"action": "swipe", "x": 10, "y": 400, "x2": 10, "y2": 200}
@@ -186,7 +193,9 @@ def test_launcher_settings_apps_and_unknown_are_forwarded(tmp_path: Path):
     assert unknown.http_status == 200
     _assert_no_internals(unknown.body)
     assert {c[0] for c in platform.calls} >= {"tap", "swipe", "type"}
-    assert _recover_inspects(farm) == []
+    assert _recover_inspects(farm)
+    assert "restricted_destination" not in app.body
+    assert "restricted_destination" not in unknown.body
 
 
 def test_farm_inspect_does_not_auto_recover_without_flag():
@@ -207,6 +216,39 @@ def test_farm_inspect_does_not_auto_recover_without_flag():
         deps=FarmTaskExecutorDeps(command_runner=runner),
     )
     assert result.ok is True
+    assert result.details["recovered"] is False
+    assert not any(
+        call[1][:4] == ["shell", "am", "start", "-a"] and call[1][4] == RECOVER_INTENT_ESIM
+        for call in runner.calls
+    )
+
+
+def test_farm_recover_noops_when_guard_already_treats_page_as_esim():
+    """Known limitation: Farm recover is a no-op on some Settings pages.
+
+    ``decide_setup_guard`` treats Network dashboard as eSIM-allowed, so
+    ``recover=true`` does not fire ``am start``. VPS still classifies that
+    page as unrelated Settings and sends a one-shot recover. Closing the
+    hole would require a Farm Agent change (and restart).
+    """
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 "
+        "com.android.settings/.Settings$NetworkDashboardActivity t1}"
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map={2: SLOT2_SERIAL},
+        request=FarmTaskRequest(
+            job_id="job-network-dashboard",
+            task_type="setup_session_inspect",
+            farm_slot_id=2,
+            payload={"phase": "esim", "recover": True},
+        ),
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    assert result.details["allowed"] is True
     assert result.details["recovered"] is False
     assert not any(
         call[1][:4] == ["shell", "am", "start", "-a"] and call[1][4] == RECOVER_INTENT_ESIM
@@ -256,7 +298,7 @@ def test_ready_mode_preserves_home_and_recents(tmp_path: Path):
     farm.inspect_allowed = False
     _assert_full_nav_forwarded(service, platform, CUSTOMER_A, rental)
     inspects_after_ready = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
-    assert inspects_after_ready == inspects_after_create
+    assert len(inspects_after_ready) >= len(inspects_after_create)
     assert _recover_inspects(farm) == []
 
 

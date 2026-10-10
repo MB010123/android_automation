@@ -72,7 +72,10 @@ def test_reconnect_does_not_grant_or_lock_again(tmp_path: Path):
 def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
-    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    farm.inspect_allowed = False
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     stream = service.open_stream(CUSTOMER_A, rental)

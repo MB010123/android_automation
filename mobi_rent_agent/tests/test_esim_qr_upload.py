@@ -278,12 +278,12 @@ def test_owned_slot2_qr_upload_succeeds(tmp_path: Path):
     assert result.body["placed"] is True
     assert "serial" not in result.body
     assert SLOT2_SERIAL not in json.dumps(result.body)
-    assert farm.tasks[-1]["type"] == REMOTE_ACCESS_PLACE_QR_TASK
-    assert farm.tasks[-1]["slot"] == 2
-    assert "serial" not in farm.tasks[-1]["payload"]
-    assert "udid" not in farm.tasks[-1]["payload"]
-    assert "image_base64" in farm.tasks[-1]["payload"]
-    assert farm.tasks[-1]["payload"]["rental_id"] == rental
+    place = [t for t in farm.tasks if t["type"] == REMOTE_ACCESS_PLACE_QR_TASK]
+    assert place and place[-1]["slot"] == 2
+    assert "serial" not in place[-1]["payload"]
+    assert "udid" not in place[-1]["payload"]
+    assert "image_base64" in place[-1]["payload"]
+    assert place[-1]["payload"]["rental_id"] == rental
     _assert_safe_body(result.body)
 
 
@@ -387,8 +387,9 @@ def test_http_authenticated_upload_and_isolation(tmp_path: Path):
         assert "serial" not in payload
         _assert_safe_body(payload)
         farm = handler.remote_access_service._farm
-        assert farm.tasks[-1]["slot"] == 1
-        assert "image_base64" in farm.tasks[-1]["payload"]
+        place = [t for t in farm.tasks if t["type"] == REMOTE_ACCESS_PLACE_QR_TASK]
+        assert place and place[-1]["slot"] == 1
+        assert "image_base64" in place[-1]["payload"]
 
         bad_body, bad_ctype = _multipart("qr.gif", "image/gif", _gif_bytes())
         status, payload, _ = _http_raw("POST", url, token=token_a, data=bad_body, content_type=bad_ctype)

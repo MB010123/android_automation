@@ -98,6 +98,8 @@ class AgentConfig:
     # Android package of the VoidFix SMS app on the Pixel. Observation only;
     # never assigned as default SMS without the customer confirming in Android.
     voidfix_android_package: str | None = None
+    # Customer rental Settings/Back/VoidFix session-layer redirects. Rollback: 0.
+    customer_session_restrictions: bool = True
 
     @property
     def sms_enabled(self) -> bool:
@@ -264,6 +266,7 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
                 os.getenv("REMOTE_ACCESS_QR_URL_PREFIXES") or os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES")
             ),
             voidfix_android_package=(os.getenv("VOIDFIX_ANDROID_PACKAGE") or "").strip() or None,
+            customer_session_restrictions=_read_bool("CUSTOMER_SESSION_RESTRICTIONS", True),
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

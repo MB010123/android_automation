@@ -62,6 +62,7 @@ def test_create_reuses_session_and_hides_internals(tmp_path: Path):
         "notification_shade",
         "quick_settings",
         "rotate",
+        "settings",
     ]
     assert first.body["setup_mode"] is True
     assert "denied_controls" not in first.body
@@ -92,7 +93,10 @@ def test_duplicate_create_does_not_duplicate_gads_session(tmp_path: Path):
 def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()
-    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    farm.inspect_allowed = False
+    service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     grants_before = [c for c in platform.calls if c[0] == "grant"]

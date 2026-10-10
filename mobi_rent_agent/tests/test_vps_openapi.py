@@ -138,6 +138,19 @@ def test_schemas_present():
     assert "imei1" not in ds_props
 
 
+def test_customer_session_restrictions_documented():
+    doc = build_vps_openapi_document()
+    control = doc["paths"]["/rentals/{rental_id}/remote-access/{action}"]["post"]["description"]
+    assert "settings" in control
+    assert "restricted_destination" in control
+    assert "CUSTOMER_SESSION_RESTRICTIONS" in control
+    assert "add_esim" in control
+    upload = doc["paths"]["/rentals/{rental_id}/esim/upload"]["post"]["description"]
+    assert "CUSTOMER_SESSION_RESTRICTIONS" in upload
+    assert "qr_navigated_to_add_esim" in upload
+    assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" in upload
+
+
 def test_unsupported_actions_documented():
     doc = build_vps_openapi_document()
     action = doc["paths"]["/slots/{slot_id}/actions/{action}"]["post"]

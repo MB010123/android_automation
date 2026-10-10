@@ -18,11 +18,11 @@ or name a bay/serial/UDID/workspace.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/rentals/{rental_id}/esim/upload` | unchanged QR multipart `qr_image` |
+| POST | `/rentals/{rental_id}/esim/upload` | QR multipart `qr_image`; when `CUSTOMER_SESSION_RESTRICTIONS` is on (default), one-shot navigates the assigned bay to Add eSIM |
 | POST | `/rentals/{rental_id}/remote-access` | 201 `{session_mode:in_app, stream_path, allowed_controls, ui_state}` — **no** `platform_login` |
 | GET | `/rentals/{rental_id}/remote-access` | poll `activation_state`, `setup_phase`, `setup_complete` |
 | GET | `/rentals/{rental_id}/remote-access/stream` | MJPEG proxy (`multipart/x-mixed-replace`) |
-| POST | `/rentals/{rental_id}/remote-access/control` | `{action:tap\|swipe\|type\|back\|home\|recents\|notification_shade\|quick_settings\|rotate}` |
+| POST | `/rentals/{rental_id}/remote-access/control` | `{action:tap\|swipe\|type\|back\|home\|recents\|notification_shade\|quick_settings\|rotate\|settings}` — `settings` opens Add eSIM; 200 may include `restricted_destination` |
 | POST | `/rentals/{rental_id}/remote-access/complete` | 200 ready **only** if eSIM `confirmed` and VoidFix verified |
 | POST | `/rentals/{rental_id}/remote-access/revoke` | close session without ending rental |
 | POST | `/rentals/{rental_id}/cancel` | revoke + CLEANUP REQUIRED |
@@ -31,7 +31,9 @@ Never send: `slot_id`, `farm_slot_id`, `serial`, `udid`, `workspace_id`, ADB, GA
 
 `403 forbidden` for wrong user / wrong rental / expired / cancelled.
 `403 forbidden_control` for ADB/keys/identity spoof.
-Home, Recents, shade, Quick Settings, rotate, Settings, apps, and gestures are allowed from session start — before and after eSIM activation. Leaving SIM Settings is not blocked and does not auto-recover to the eSIM screen.
+Home, Recents, shade, Quick Settings, rotate, apps, and gestures are allowed from session start — before and after eSIM activation. Settings (icon / QS gear / `{action:settings}`) redirects once to Add eSIM. Unrelated Settings redirect to Add eSIM. Back from the eSIM root goes Home. VoidFix and package installer are sent Home. QR upload one-shot navigates the assigned bay to Add eSIM. Leaving SIM Settings via Home does **not** auto-recover. Production default: `CUSTOMER_SESSION_RESTRICTIONS` is ON when unset. Rollback: `CUSTOMER_SESSION_RESTRICTIONS=0` (also disables QR navigate).
+
+Lovable (production UI, not in this repo) must POST `{action:home|recents|notification_shade|quick_settings|rotate}` in addition to tap/swipe/type/back. Do not hide those buttons when `setup_mode` is true. Unexplained control refusals persist until Lovable is wired, VPS is deployed with this contract, and Farm Agent is restarted (old Farm `setup_session_input` does not know the new nav kinds).
 `409 setup_incomplete` if complete is called too early (`ui_state` tells which step).
 
 ## Admin (Farm service token)

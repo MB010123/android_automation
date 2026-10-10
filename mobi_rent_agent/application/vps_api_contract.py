@@ -194,22 +194,6 @@ def error_body(code: str, *, message: str | None = None) -> dict[str, Any]:
     }
 
 
-def setup_control_blocked_body(action: str) -> dict[str, Any]:
-    """Explicit Phone-Ready gate for Home/Recents/shade/QS/rotation."""
-    from application.in_app_control_policy import SETUP_DENIED_ACTIONS
-
-    requested = str(action or "").strip().lower() or "unknown"
-    body = error_body(
-        "setup_state_blocked",
-        message=ERROR_MESSAGES["phone_not_ready"],
-    )
-    body["reason"] = "phone_not_ready"
-    body["denied_action"] = requested
-    body["denied_actions"] = list(SETUP_DENIED_ACTIONS)
-    body["setup_mode"] = True
-    return body
-
-
 def customer_known_unknown_field(value: Any, field: str) -> dict[str, Any]:
     """Passthrough known/unknown pair. Empty or whitespace is null + unknown."""
     text = str(value).strip() if value is not None else ""

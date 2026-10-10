@@ -238,6 +238,7 @@ class FakeFarm:
         self.activation_details: dict[str, Any] | None = None
         self.inspect_allowed = True
         self.inspect_activity: str | None = None
+        self.inspect_activities: list[str] = []
         self.inspect_unknown = False
         self.display_width = 1440
         self.display_height = 3120
@@ -291,7 +292,7 @@ class FakeFarm:
                 activity = None
                 reason = "activity_unknown"
             else:
-                activity = self.inspect_activity
+                activity = self.inspect_activities.pop(0) if self.inspect_activities else self.inspect_activity
                 if not activity:
                     activity = (
                         "com.android.settings/.network.telephony.MobileNetworkActivity"
@@ -299,6 +300,12 @@ class FakeFarm:
                         else "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
                     )
                 reason = "ok" if allowed else "left_setup"
+            if recovered:
+                activity = "com.android.settings/.network.telephony.MobileNetworkActivity"
+                allowed = True
+                reason = "ok"
+                self.inspect_activity = activity
+                self.inspect_allowed = True
             body["details"] = {
                 "activity": activity,
                 "allowed": allowed,
@@ -368,6 +375,7 @@ def _service(
     prepare_slot_ids: tuple[int, ...] | None = (1,),
     observe_slot_ids: tuple[int, ...] | None = (1,),
     voidfix_package: str | None = None,
+    session_restrictions: bool = True,
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
     store = RemoteAccessSessionStore(tmp_path / f"ra-{uuid.uuid4().hex}.sqlite")
@@ -400,6 +408,7 @@ def _service(
         prepare_slot_ids=prepare_slot_ids,
         observe_slot_ids=observe_slot_ids,
         voidfix_android_package=voidfix_package,
+        session_restrictions=session_restrictions,
     )
     return service, store, clock
 

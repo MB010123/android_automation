@@ -50,7 +50,10 @@ def test_type_back_home_and_recents_allowed():
         "notification_shade",
         "quick_settings",
         "rotate",
+        "settings",
     )
+    assert decide_control({"action": "settings"}).allowed is True
+    assert decide_control({"action": "android_settings"}).command.action == "settings"
 
 
 def test_setup_mode_does_not_restrict_system_nav():

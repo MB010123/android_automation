@@ -61,6 +61,7 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
         "WEBHOOK_FARM_DISPATCH_TIMEOUT_SECONDS",
         "FARM_MAX_CONCURRENT",
         "SMS_MAX_ATTEMPTS",
+        "CUSTOMER_SESSION_RESTRICTIONS",
     ):
         monkeypatch.delenv(optional, raising=False)
 
@@ -92,6 +93,15 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
     assert config.webhook_farm_dispatch_timeout_seconds == 180.0
     assert config.farm_max_concurrent == 4
     assert config.sms_max_attempts == 1
+    assert config.customer_session_restrictions is True
+
+
+@pytest.mark.parametrize("raw_value", ("0", "false", "no", "off"))
+def test_customer_session_restrictions_rollback_flag(monkeypatch, raw_value):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("CUSTOMER_SESSION_RESTRICTIONS", raw_value)
+    config = load_config(env_file=None)
+    assert config.customer_session_restrictions is False
 
 
 def test_voidfix_delivery_and_sim_slot_flags_load_true(monkeypatch):

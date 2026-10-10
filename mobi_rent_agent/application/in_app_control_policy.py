@@ -4,11 +4,14 @@ The browser may propose semantic actions only (tap/swipe/type/back/home/recents/
 notification_shade/quick_settings/rotate). Raw keys, ADB, shell, and device
 identity are rejected here — never only in JS.
 
-Assigned-customer control is always normal Android access: Home, Recents,
-notification shade, Quick Settings, rotate, Settings, apps, and gestures are
-allowed before, during, and after eSIM activation. ``setup_mode`` is telemetry
-only and does not gate this allowlist. Bottom-edge swipes and status-bar
-pull-downs are forwarded as normal navigation.
+Assigned-customer control keeps Home, Recents, notification shade, Quick
+Settings, rotate, apps, and gestures before, during, and after eSIM
+activation. ``setup_mode`` is telemetry only and does not gate this allowlist.
+A semantic ``settings`` action opens the allowlisted Add eSIM screen, not the
+Settings homepage. Bottom-edge swipes and status-bar pull-downs are forwarded
+as normal navigation. Session-layer redirects (Settings → Add eSIM, Back from
+eSIM root → Home, VoidFix/admin → Home) are applied in
+``session_restriction_policy`` after this allowlist.
 """
 from __future__ import annotations
 
@@ -22,11 +25,12 @@ READY_EXTRA_ACTIONS = (
     "notification_shade",
     "quick_settings",
     "rotate",
+    "settings",
 )
 PUBLIC_CONTROL_ACTIONS = SETUP_ALLOWED_ACTIONS + READY_EXTRA_ACTIONS
 ALLOWED_ACTIONS = frozenset(PUBLIC_CONTROL_ACTIONS)
-SETUP_DENIED_ACTIONS: tuple[str, ...] = ()
 NAV_ACTIONS = frozenset({"back", "home", "recents", "notification_shade", "quick_settings"})
+SETTINGS_ACTIONS = frozenset({"settings"})
 _ACTION_ALIASES = {
     "overview": "recents",
     "recent": "recents",
@@ -34,6 +38,7 @@ _ACTION_ALIASES = {
     "notification": "notification_shade",
     "qs": "quick_settings",
     "quicksettings": "quick_settings",
+    "android_settings": "settings",
 }
 FORBIDDEN_ACTIONS = frozenset(
     {
@@ -74,7 +79,6 @@ FORBIDDEN_PAYLOAD_KEYS = frozenset(
 
 _MAX_COORD = 8192
 _MAX_TEXT = 64
-_TOP_SHADE_Y = 80
 _MIN_DURATION_MS = 1
 _MAX_DURATION_MS = 5000
 _ALLOWED_ORIENTATIONS = frozenset({"portrait", "landscape"})
@@ -145,7 +149,7 @@ def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = Fals
         return ControlDecision(False, reason="forbidden_control")
     if action not in ALLOWED_ACTIONS:
         return ControlDecision(False, reason="invalid_control")
-    if action in NAV_ACTIONS:
+    if action in NAV_ACTIONS or action in SETTINGS_ACTIONS:
         extra = {k for k in payload if k not in _NAV_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
@@ -224,7 +228,3 @@ def _duration_ms(payload: Mapping[str, Any]) -> int | None | bool:
     if number < _MIN_DURATION_MS or number > _MAX_DURATION_MS:
         return False
     return number
-
-
-def _is_notification_shade(y1: int, y2: int) -> bool:
-    return y1 <= _TOP_SHADE_Y and (y2 - y1) >= 120

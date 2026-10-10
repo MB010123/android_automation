@@ -1,8 +1,39 @@
 # Customer remote-phone API (frontend integration spec)
 
 Status: backend contract for Lovable (external) plus the in-repo `web/` live-screen copy.
-The production customer UI is **Lovable-only and is not in this repo**; wire Home/Recents/shade/QS from this contract. `mobi_rent_agent/web/` is the in-repo control surface used as a copy target.
+The production customer UI is **Lovable-only and is not in this repo**; wire Home/Recents/shade/QS/rotate from this contract. `mobi_rent_agent/web/` is the in-repo control surface used as a copy target.
 Do **not** connect the browser to GADS, Farm Agent, ADB, or the Pixel.
+
+### Lovable must send these control actions
+
+`POST /rentals/{rental_id}/remote-access/control` with customer JWT. Exact bodies:
+
+```json
+{ "action": "tap", "x": 540, "y": 960 }
+{ "action": "swipe", "start_x": 540, "start_y": 1600, "end_x": 540, "end_y": 800, "duration_ms": 300 }
+{ "action": "type", "text": "Hello" }
+{ "action": "back" }
+{ "action": "home" }
+{ "action": "recents" }
+{ "action": "notification_shade" }
+{ "action": "quick_settings" }
+{ "action": "rotate", "orientation": "portrait" }
+{ "action": "settings" }
+```
+
+`orientation` is `portrait` or `landscape`. Aliases: `overview` → `recents`, `notifications` → `notification_shade`, `android_settings` → `settings`. Never send keycodes, ADB, shell, serial, UDID, or workspace ids.
+
+This repo's backend allows Home/Recents/shade/QS/rotate/tap/swipe/type/back from session start. **`setup_mode` is telemetry and must not hide buttons.** `{ "action": "settings" }` and opening the Android Settings icon/QS gear do **not** open the Settings homepage — they redirect once to Add eSIM (`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`). Back from that eSIM root goes Home. VoidFix and other admin surfaces are sent Home. This is a session-layer redirect, not the old setup-mode kiosk: leaving eSIM to Home does **not** auto-relaunch SIM Settings.
+
+Control 200 bodies may include `restricted_destination` (`add_esim` or `home`) and `restriction` (`settings_redirected`, `esim_back_to_home`, `sensitive_app_blocked`). Successful QR upload may include `restricted_destination=add_esim` and `restriction=qr_navigated_to_add_esim`. The live stream stays up. Do not treat those fields as a disconnect.
+
+Production default: `CUSTOMER_SESSION_RESTRICTIONS` is **ON when unset**. `0` / `false` / `no` / `off` disables Settings→Add eSIM, QR navigate-to-Add-eSIM, VoidFix/admin Home redirects, and Back-from-eSIM-root→Home. Flag off must not 502 `{ "action": "settings" }`.
+
+Unexplained rejections (`invalid_control`, `forbidden_control`, `phone_not_ready`, `setup_state_blocked`) persist until **all three** are updated:
+
+1. Lovable sends the semantic actions above (not only tap/swipe/type/back).
+2. VPS is deployed with this contract (production VPS was not deployed with 66dfc91).
+3. Farm Agent is restarted so `setup_session_input` kinds `home` / `recents` / `notification_shade` / `quick_settings` exist (needed when GADS has no matching nav endpoint). Settings → Add eSIM uses the existing inspect `recover` intent and does **not** need a Farm restart.
 
 Architecture:
 
@@ -51,7 +82,7 @@ take a GADS exclusive device lock.
   "expires_at": 1730000000,
   "session_mode": "in_app",
   "stream_path": "/rentals/00000000-0000-4000-8000-000000000099/remote-access/stream",
-  "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents", "notification_shade", "quick_settings", "rotate"],
+  "allowed_controls": ["tap", "swipe", "type", "back", "home", "recents", "notification_shade", "quick_settings", "rotate", "settings"],
   "setup_mode": true,
   "coordinate_space": "native_device_pixels",
   "ui_state": "live_phone_screen",
@@ -238,6 +269,10 @@ only coordinate swipes.
 { "ok": true, "action": "tap", "forwarded": true }
 ```
 
+When Settings or a blocked admin surface was redirected, the same 200 also
+includes `"restricted_destination": "add_esim"|"home"` and a `restriction`
+code. Ordinary taps omit those fields. The stream stays up.
+
 ---
 
 ## 7. Swipe
@@ -262,15 +297,24 @@ gestures from session start. Prefer semantic `{ "action": "home" }`,
 `{ "action": "recents" }`, `{ "action": "notification_shade" }`,
 `{ "action": "quick_settings" }` — never Android keycodes.
 
-Assigned customers have full normal Android access before, during, and after
-eSIM activation. `setup_mode` is telemetry (true until `ACTIVATION_CONFIRMED`
-and not VoidFix) and does **not** gate controls. Home, Recents, shade, Quick
-Settings, rotate, Settings, apps, and gestures are in `allowed_controls` from
-session start. Leaving SIM Settings is not blocked and does not auto-launch
-the eSIM screen. QR upload / eSIM activation remain a normal customer action,
-not a kiosk. Reconnect and page refresh reuse the session without re-applying
-setup restrictions. The live stream stays available while the session is
-active — do not hide it just because `ui_state=phone_ready`.
+Assigned customers keep Home, Recents, shade, Quick Settings, rotate, apps,
+and gestures before, during, and after eSIM activation. `setup_mode` is
+telemetry (true until `ACTIVATION_CONFIRMED` and not VoidFix) and does **not**
+gate that allowlist. Settings (icon, QS gear, or `{ "action": "settings" }`)
+is redirected once to Add eSIM. Back from the eSIM root returns Home, not the
+Settings homepage. Nested eSIM confirm dialogs still receive one Back.
+Leaving eSIM by Home/Recents does **not** auto-relaunch SIM Settings.
+VoidFix (`org.voidfix.smsgateway`) and the package installer are sent Home.
+Unrelated Settings (security, accounts, developer, Wi-Fi/network, apps,
+system) redirect once to Add eSIM. Delete eSIM on the same SIM-profiles
+screen is not intercepted.
+Enforcement uses GADS `home` or the existing Farm `am start -a
+android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`. It never restarts GADS,
+never uses Device Owner / lock-task, and never deletes eSIMs.
+QR upload / eSIM activation remain a customer action, not a kiosk. Reconnect
+and page refresh reuse the session. The live stream stays available while the
+session is active — do not hide it just because `ui_state=phone_ready` or
+because a restriction was reported.
 
 ---
 
@@ -314,11 +358,18 @@ No coordinates. This is Android Back only.
 { "action": "rotate", "orientation": "portrait" }
 ```
 
+```json
+{ "action": "settings" }
+```
+
 `orientation` is `portrait` or `landscape`. Recents also accepts alias `overview`.
-Shade also accepts `notifications`. No coordinates and no keycodes. The VPS maps
-these to GADS; Farm Agent fallback uses the matching Android nav / `cmd statusbar`
-event internally (not customer ADB). Rotate is GADS-only — if the hub has no
-rotation endpoint the control returns 502 `gads_unavailable` (no `wm` overscan).
+Shade also accepts `notifications`. `settings` opens Add eSIM, not the Settings
+homepage. No coordinates and no keycodes. The VPS maps these to GADS; Farm
+Agent fallback uses the matching Android nav / `cmd statusbar` event internally
+(not customer ADB). Rotate is GADS-only — if the hub has no rotation endpoint
+the control returns 502 `gads_unavailable` (no `wm` overscan). Settings
+redirect uses the existing Farm inspect `recover` intent
+`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS` (no Farm restart required).
 
 Forbidden (do not send): `keycode`, `keyevent`, `adb`, `shell`, `command`,
 serials, workspace ids.
@@ -514,9 +565,16 @@ eSIM, never calls EuiccManager, and never retries silent provisioning.
 
 Workflow:
 
-1. Upload QR.
+1. Upload QR. When `CUSTOMER_SESSION_RESTRICTIONS` is on (default), the
+   assigned rental bay is one-shot navigated to Add eSIM
+   (`MANAGE_ALL_SIM_PROFILES_SETTINGS`) using the Farm inspect `recover`
+   intent. This uses the rental→slot map only. It does not start or restart
+   GADS, does not expose serials, and is skipped when the flag is off.
+   Placement still succeeds if that navigate fails.
 2. Start remote access (allowed even when `requires_manual_action` is true).
-3. Customer opens Android Settings → SIMs → Add eSIM and scans the gallery QR.
+3. If the customer opens Settings (icon / QS gear / `{ "action": "settings" }`),
+   the session layer sends them to Add eSIM again (one-shot, not a loop).
+   They scan the gallery QR. They should not land on the Settings homepage.
 4. Backend observes activation (`POST .../activation-status`).
 5. `activation_state` becomes `ACTIVE` only after confirmed observation.
 
@@ -572,6 +630,50 @@ command on `mobi_rent.network` (VPN status/start/stop only) and raw
 
 ---
 
+## Customer session Settings restrictions
+
+Applies only while an authorized customer remote-access session is active.
+Admin / Farm / operator VoidFix paths are unchanged.
+
+**Inspected on Pixel 6 Slot 11 (read-only `setup_session_inspect`, recover=false):**
+Android 16 / SDK 36, unlocked Nexus Launcher, no live Settings tap performed.
+VoidFix package from the SMS-role dump: `org.voidfix.smsgateway`.
+Add eSIM entry point already allowlisted on Farm:
+`am start -a android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`
+(same intent the old recover path used). Permitted eSIM screens include
+`MobileNetworkActivity` and `com.google.android.euicc` / provision UI.
+
+**Implemented (session layer, GADS stays up, bays 1–20 via rental→slot):**
+- Settings icon / QS gear / `{ "action": "settings" }` → Add eSIM once
+- Unrelated Settings (security, accounts, developer, Wi-Fi/network, apps, system) → Add eSIM
+- Back from eSIM root → Home (not Settings homepage)
+- One Back still reaches nested eSIM confirm/cancel
+- VoidFix and package installer → Home
+- QR upload → one-shot Add eSIM navigate on the authorized rental bay
+- `restricted_destination` on the control/QR 200; stream is not blanked
+- Cancel / complete still revoke the session and do **not** delete eSIMs
+- `inspect recover=true` is used only for that Add eSIM one-shot, never a loop
+
+**Known Android / Farm limitation:**
+Farm `setup_session_inspect` recover is a no-op when the current page is already
+classified as eSIM-allowed by `setup_activity_guard` (for example Network
+dashboard: `networkdashboard` / some `telephony` surfaces). VPS still classifies
+those as unrelated Settings and sends recover once. Closing the no-op needs a
+Farm Agent change and restart; this VPS change does not restart Farm.
+
+**Not implemented (would drop GADS / MediaProjection or needs new shell):**
+- Device Owner / lock-task / hiding icons as enforcement
+- Hard-blocking the delete/remove control on the same SIM-profiles screen
+  (it is the Add eSIM surface; session layer cannot intercept that tap)
+- Background recover loop when the customer is on Home or Chrome
+- Customer-supplied package / component / ADB
+
+**Rollback:** set `CUSTOMER_SESSION_RESTRICTIONS=0` on the VPS and reload that
+process (unset remains ON). Do not factory-reset phones. Farm Agent
+does not need a restart for the existing recover intent. Do not restart GADS.
+
+---
+
 ## Cancel rental
 
 `POST /rentals/{rental_id}/cancel`
@@ -586,7 +688,7 @@ phone-service release path. Same ownership rules as remote access.
 - Slot 1 and Slot 2 are independent. Two customers can stream at once.
 - Calling start-session twice for the same rental reuses one GADS session.
 - Keep one stream reader; send controls on other requests.
-- Serialize tap/swipe/type/back/home/recents/notification_shade/quick_settings/rotate
+- Serialize tap/swipe/type/back/home/recents/notification_shade/quick_settings/rotate/settings
 on the client if you want strict ordering; the backend also serializes control per rental.
 
 ---
@@ -597,9 +699,10 @@ on the client if you want strict ordering; the backend also serializes control p
 POST /rentals/{id}/remote-access
 GET  /rentals/{id}/remote-access/device-status
 GET  /rentals/{id}/remote-access/stream          // canvas
-POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents | notification_shade | quick_settings | rotate
+POST /rentals/{id}/remote-access/control         // tap | swipe | type | back | home | recents | notification_shade | quick_settings | rotate | settings
 POST /rentals/{id}/esim/upload                   // optional, multipart qr_image
 POST /rentals/{id}/remote-access/troubleshoot        // diagnose | reboot
 POST /rentals/{id}/remote-access/reconnect-cellular  // 501 action_not_supported today
 POST /rentals/{id}/remote-access/complete
 ```
+

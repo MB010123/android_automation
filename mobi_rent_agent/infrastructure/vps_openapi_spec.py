@@ -957,14 +957,20 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "`revoke`: end the caller's platform access. `release` (user or FarmServiceBearer): revoke and "
                     "return the device to the pool when the rental ends. `device-status`: also accepted as POST. "
-                    "`control`: tap/swipe/type/back/home/recents/notification_shade/quick_settings/rotate "
+                    "`control`: tap/swipe/type/back/home/recents/notification_shade/quick_settings/rotate/settings "
                     "in native device pixels "
                     "(swipe accepts `start_x`/`start_y`/`end_x`/`end_y` or `x`/`y`/`x2`/`y2`, optional `duration_ms`). "
                     "Home, Recents, notification shade, Quick Settings, and rotate are semantic actions with no "
-                    "keycodes. Assigned customers have full normal Android access from session start — before, "
-                    "during, and after eSIM activation. Home/Recents/shade/QS/rotation, Settings, apps, and "
-                    "bottom-edge or status-bar swipes are allowed; leaving SIM Settings is not blocked and does "
+                    "keycodes. The semantic `settings` action opens Add eSIM "
+                    "(`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`), not the Settings homepage. "
+                    "Assigned customers have full normal Android access from session start — before, "
+                    "during, and after eSIM activation. Home/Recents/shade/QS/rotation, apps, and "
+                    "bottom-edge or status-bar swipes are allowed; leaving SIM Settings via Home is not blocked and does "
                     "not auto-recover to the eSIM screen. "
+                    "When `CUSTOMER_SESSION_RESTRICTIONS` is on (production default; unset is ON; "
+                    "`0`/`false`/`no`/`off` disables), control 200 may include `restricted_destination` "
+                    "(`add_esim` or `home`) and `restriction` (`settings_redirected`, `esim_back_to_home`, "
+                    "`sensitive_app_blocked`). Flag off does not 502 the settings action and does not launch Add eSIM. "
                     "Keys, ADB, shell, and device identity remain `forbidden_control`. "
                     "Rotate uses GADS orientation (portrait/landscape) only; no ADB wm/overscan. "
                     "`complete`: closes the remote session and runs safe QR cleanup; does not delete eSIM or factory-reset. "
@@ -1022,6 +1028,11 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "`/sdcard/DCIM/Camera/mobirent_esim_qr_*.{png|jpg|webp}`. "
                     "Does not require a remote-access session or `prepare-esim`. "
                     "Does not call `assign`, GADS, EuiccManager, or silent provisioning. "
+                    "When `CUSTOMER_SESSION_RESTRICTIONS` is on (production default), a successful "
+                    "placement also one-shot navigates the authorized rental bay to Add eSIM "
+                    "(`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`) and may return "
+                    "`restricted_destination=add_esim` / `restriction=qr_navigated_to_add_esim`. "
+                    "Flag off skips that navigate. Placement still succeeds if navigate fails. "
                     "Request body QR URLs are not used. ADB serial is not returned to the browser."
                 ),
                 "security": user_bearer,
@@ -1045,7 +1056,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     },
                 },
                 "responses": {
-                    "200": {"description": "placed; `ok`, `placed`, `job_id`, `destination`, sizes"},
+                    "200": {
+                        "description": (
+                            "placed; `ok`, `placed`, `job_id`, `destination`, sizes; "
+                            "optional `restricted_destination` / `restriction` when Add eSIM navigate ran"
+                        )
+                    },
                     "400": {"description": "qr_upload_missing | qr_not_an_image"},
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
