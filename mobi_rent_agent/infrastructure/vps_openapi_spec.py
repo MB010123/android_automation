@@ -491,11 +491,14 @@ def _schemas() -> dict[str, Any]:
                 "Customer GET/POST `/rentals/{rental_id}/remote-access/device-status`. "
                 "Rental ownership is resolved server-side. Inventory fields are passed through "
                 "only from the owned assigned slot: `imei2` (`public.slots.imei2`), `carrier` "
-                "(`public.slots.carrier_name`), `phone_number` (`public.slots.phone_number`), "
-                "and `eid` when the rental/slot row already stores it. Empty inventory is "
-                "`null` / `unknown` (never a placeholder). `cellular_status` is always "
-                "`unknown` (no approved live radio reader; not inferred from Wi-Fi/ADB). "
-                "IMEI1 is not returned. No GADS URLs, tokens, serials, or workspace IDs."
+                "(`public.slots.carrier_name`), and `eid` when the rental/slot row already "
+                "stores it. TEMPORARY: `phone_number` is the Farm `slot_msisdn_map` MSISDN "
+                "for that assigned slot when `SLOT_MSISDN_MAP_PATH` (or the map file) is "
+                "present on the VPS; if that slot has no mapping, fall back to "
+                "`public.slots.phone_number`. Empty inventory is `null` / `unknown` "
+                "(never a placeholder). `cellular_status` is always `unknown` (no approved "
+                "live radio reader; not inferred from Wi-Fi/ADB). IMEI1 is not returned. "
+                "No GADS URLs, tokens, serials, or workspace IDs."
             ),
             "properties": {
                 "ok": {"type": "boolean"},
@@ -921,9 +924,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "supplies another boundary) through the VPS. `GET .../device-status` returns customer-facing "
                     "online/offline/unavailable state plus read-only inventory from the owned assigned slot: "
                     "`imei2`, `carrier`, `phone_number`, and `eid` with matching `*_status` (`known`/`unknown`). "
-                    "Missing inventory is `null` / `unknown` (no live ADB/eUICC probe). `cellular_status` is "
-                    "always `unknown`. The customer's own stream is never `remote_access_busy`. "
-                    "Never returns GADS URLs, tokens, serials, or workspace IDs."
+                    "TEMPORARY: `phone_number` prefers Farm `slot_msisdn_map` for the assigned slot "
+                    "(`SLOT_MSISDN_MAP_PATH` must be set on the VPS to show numbers); else "
+                    "`public.slots.phone_number`. Missing inventory is `null` / `unknown` (no live "
+                    "ADB/eUICC probe). `cellular_status` is always `unknown`. The customer's own "
+                    "stream is never `remote_access_busy`. Never returns GADS URLs, tokens, serials, "
+                    "or workspace IDs."
                 ),
                 "security": user_bearer,
                 "parameters": [

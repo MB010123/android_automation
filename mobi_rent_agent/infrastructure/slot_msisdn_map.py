@@ -17,7 +17,7 @@ def load_slot_msisdn_map(path: str | Path | None) -> dict[int, str]:
     file_path = Path(path)
     if not file_path.exists():
         raise SlotMsisdnMapError(f"slot MSISDN map not found: {file_path}")
-    raw = json.loads(file_path.read_text(encoding="utf-8"))
+    raw = json.loads(file_path.read_text(encoding="utf-8-sig"))
     if not isinstance(raw, dict):
         raise SlotMsisdnMapError("slot MSISDN map must be a JSON object")
     mapping: dict[int, str] = {}

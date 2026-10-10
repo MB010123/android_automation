@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterator
 
 from application.vps_api_contract import (
     customer_inventory_identity_fields,
+    customer_phone_number_for_device_status,
     error_body,
 )
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
@@ -62,6 +63,7 @@ from infrastructure.esim_qr_security import (
     validate_authoritative_esim_ref,
 )
 from infrastructure.gads_workspaces import unique_workspace_map
+from infrastructure.slot_msisdn_map import SlotMsisdnMapError, load_slot_msisdn_map
 from infrastructure.remote_access_store import (
     STATUS_ACTIVE,
     STATUS_RELEASED,
@@ -185,6 +187,7 @@ class RemoteAccessService:
         observe_slot_ids: tuple[int, ...] | None = None,
         voidfix_android_package: str | None = None,
         session_restrictions: bool = True,
+        slot_msisdn_map_path: str | None = None,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
@@ -207,6 +210,7 @@ class RemoteAccessService:
         self._observe_slots = None if observe_slot_ids is None else tuple(int(s) for s in observe_slot_ids)
         self._voidfix_package = str(voidfix_android_package or "").strip() or None
         self._session_restrictions = bool(session_restrictions)
+        self._slot_msisdn_map_path = str(slot_msisdn_map_path or "").strip() or None
         self._platform = platform
         self._store = store
         self._tenant = tenant_store
@@ -1288,10 +1292,12 @@ class RemoteAccessService:
     def _inventory_identity_for_authorized_rental(self, auth: AuthorizedRental) -> dict[str, Any]:
         """Read-only IMEI2/EID/carrier/phone from owned assigned-slot inventory.
 
-        Uses the same rental → assigned slot mapping as EID. IMEI2, carrier,
-        and phone number come from ``public.slots`` (``imei2``, ``carrier_name``,
-        ``phone_number``). EID is still only the rental/slot row key ``eid`` when
-        present — there is no ``SLOT_SAFE_FIELDS`` EID column or live reader.
+        Uses the same rental → assigned slot mapping as EID. IMEI2 and carrier
+        come from ``public.slots`` (``imei2``, ``carrier_name``). TEMPORARY:
+        ``phone_number`` is the Farm ``slot_msisdn_map`` MSISDN for that
+        assigned slot when present; otherwise ``public.slots.phone_number``.
+        EID is still only the rental/slot row key ``eid`` when present — there
+        is no ``SLOT_SAFE_FIELDS`` EID column or live reader.
         ``cellular_status`` is always ``unknown`` (no approved radio probe).
         Empty or whitespace values stay null/unknown. Never invents placeholders,
         never infers cellular from Wi-Fi/ADB, and never asks the customer for a
@@ -1302,8 +1308,25 @@ class RemoteAccessService:
             imei2=_first_inventory_text(rows, "imei2"),
             eid=self._eid_for_authorized_rental(auth),
             carrier=_first_inventory_text(rows, "carrier_name", "carrier"),
-            phone_number=_first_inventory_text(rows, "phone_number"),
+            phone_number=customer_phone_number_for_device_status(
+                farm_msisdn=self._farm_msisdn_for_assigned_slot(auth.slot_id),
+                tenant_phone=_first_inventory_text(rows, "phone_number"),
+            ),
         )
+
+    def _farm_msisdn_for_assigned_slot(self, slot_id: int) -> str | None:
+        """TEMPORARY read-only Farm SMS map lookup for the authorized assigned slot."""
+        path = self._slot_msisdn_map_path
+        if not path:
+            return None
+        try:
+            mapping = load_slot_msisdn_map(path)
+        except (SlotMsisdnMapError, OSError, ValueError, TypeError):
+            logger.warning("remote_access_slot_msisdn_map_unavailable")
+            return None
+        value = mapping.get(int(slot_id))
+        text = str(value).strip() if value is not None else ""
+        return text or None
 
     def _eid_for_authorized_rental(self, auth: AuthorizedRental) -> str | None:
         """Read-only EID from tenant inventory for the owned assigned slot.

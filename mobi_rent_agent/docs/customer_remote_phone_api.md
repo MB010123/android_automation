@@ -527,7 +527,7 @@ caller's own stream as busy.
 | `eid_status`              | `known` | `unknown`. Never a placeholder                                                     |
 | `carrier`                 | Assigned slot carrier from `public.slots.carrier_name`; otherwise `null`                     |
 | `carrier_status`          | `known` | `unknown`. Never a placeholder                                                     |
-| `phone_number`            | Assigned slot number from `public.slots.phone_number`; otherwise `null`                      |
+| `phone_number`            | TEMPORARY Farm `slot_msisdn_map` number for the assigned slot; else `public.slots.phone_number`; otherwise `null` |
 | `phone_number_status`     | `known` | `unknown`. Never a placeholder                                                     |
 | `cellular_status`         | Always `unknown`. There is no approved live radio reader                                     |
 
@@ -535,8 +535,16 @@ caller's own stream as busy.
 These identity fields are **read-only inventory passthrough** for the owned
 assigned rental only. Empty or whitespace inventory is `null` / `unknown`.
 Values are never inferred from Wi-Fi, ADB online, or GADS session state.
-IMEI1 is not returned (US Mobile uses IMEI2). Farm SMS `slot_msisdn_map`
-is not used.
+IMEI1 is not returned (US Mobile uses IMEI2).
+
+**TEMPORARY `phone_number` source:** Farm VoidFix/SMS routing numbers from
+`slot_msisdn_map.json` (`load_slot_msisdn_map` / `SLOT_MSISDN_MAP_PATH`) for
+the authorized rental's assigned slot only. The customer cannot choose a
+slot, serial, or workspace. **Precedence:** Farm map for that assigned slot
+if present and non-empty; otherwise `public.slots.phone_number`. If both
+exist and differ, the Farm map wins. Never fabricate. Production VPS must
+have the map file (or `SLOT_MSISDN_MAP_PATH`) to show numbers; do not
+commit the live map JSON.
 
 EID is **not** read live from the Pixel. There is no allowlisted Farm Agent
 task, companion identity field, `SLOT_SAFE_FIELDS` column, or

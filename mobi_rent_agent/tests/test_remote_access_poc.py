@@ -376,6 +376,7 @@ def _service(
     observe_slot_ids: tuple[int, ...] | None = (1,),
     voidfix_package: str | None = None,
     session_restrictions: bool = True,
+    slot_msisdn_map_path: str | None = None,
 ) -> tuple[RemoteAccessService, RemoteAccessSessionStore, FakeClock]:
     clock = clock or FakeClock()
     store = RemoteAccessSessionStore(tmp_path / f"ra-{uuid.uuid4().hex}.sqlite")
@@ -409,6 +410,7 @@ def _service(
         observe_slot_ids=observe_slot_ids,
         voidfix_android_package=voidfix_package,
         session_restrictions=session_restrictions,
+        slot_msisdn_map_path=slot_msisdn_map_path,
     )
     return service, store, clock
 
@@ -1236,7 +1238,7 @@ def _signup(base: str, email: str) -> tuple[str, str]:
     return body["session"]["access_token"], body["user"]["id"]
 
 
-def _start_http(tmp_path: Path, *, with_service: bool = True):
+def _start_http(tmp_path: Path, *, with_service: bool = True, slot_msisdn_map_path: str | None = None):
     from application.vps_farm_management_service import VpsFarmManagementService
     from application.vps_job_worker import VpsJobWorker
     from infrastructure.auth_rate_limiter import AuthRateLimiter
@@ -1269,7 +1271,13 @@ def _start_http(tmp_path: Path, *, with_service: bool = True):
     )
     service = None
     if with_service:
-        service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=FakeFarm())
+        service, _, _ = _service(
+            tmp_path,
+            tenant=tenant,
+            platform=platform,
+            farm=FakeFarm(),
+            slot_msisdn_map_path=slot_msisdn_map_path,
+        )
         farm_svc.set_remote_access(service)
     Handler.farm_service_token = FARM_TOKEN
     Handler.auth_service = AuthService(supabase=gotrue, tenant=tenant)

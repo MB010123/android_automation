@@ -1252,6 +1252,7 @@ def _build_remote_access_service(
         reboot_timeout_seconds=float(getattr(config, "remote_access_reboot_timeout_seconds", 180.0)),
         voidfix_android_package=getattr(config, "voidfix_android_package", None),
         session_restrictions=bool(getattr(config, "customer_session_restrictions", True)),
+        slot_msisdn_map_path=getattr(config, "slot_msisdn_map_path", None),
     )
     prepare_ids = getattr(config, "remote_access_prepare_slot_ids", None)
     observe_ids = getattr(config, "remote_access_observe_slot_ids", None)

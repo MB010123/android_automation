@@ -10,7 +10,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.farm_task_types import SUPPORTED_TASK_TYPES
-from application.vps_api_contract import customer_eid_fields, customer_inventory_identity_fields
+from application.in_app_control_policy import FORBIDDEN_PAYLOAD_KEYS
+from application.vps_api_contract import (
+    customer_eid_fields,
+    customer_inventory_identity_fields,
+    customer_phone_number_for_device_status,
+)
+from infrastructure.slot_msisdn_map import load_slot_msisdn_map
 from tests.fakes_supabase import MemoryTenant
 from tests.test_remote_access_poc import (
     CUSTOMER_A,
@@ -24,6 +30,19 @@ from tests.test_remote_access_poc import (
     _service,
     _start_http,
     _signup,
+)
+
+FARM_MSISDN_FIXTURE = {slot: f"+1555123{slot:04d}" for slot in range(1, 21)}
+INTERNAL_LEAK_KEYS = (
+    "serial",
+    "adb_serial",
+    "device_serial",
+    "udid",
+    "device_id",
+    "workspace_id",
+    "workspace",
+    "farm_slot_id",
+    "slot_msisdn_map",
 )
 
 STORED_EID_A = "89049032012345678901234567890123"
@@ -128,6 +147,30 @@ def _clear_radio_inventory(tenant: MemoryTenant, bay: int) -> None:
     row = tenant.slots[bay]
     for key in ("imei2", "carrier_name", "carrier", "phone_number", "eid"):
         row.pop(key, None)
+
+
+def _write_msisdn_map(path: Path, mapping: dict[int, str]) -> Path:
+    path.write_text(json.dumps({str(slot): number for slot, number in mapping.items()}), encoding="utf-8")
+    return path
+
+
+def _mapped_farm_service(tmp_path: Path, tenant: MemoryTenant, mapping: dict[int, str], farm: FakeFarm | None = None):
+    allowed = tuple(range(1, 21))
+    slot_map = {bay: f"SERIAL-SLOT{bay}-TEST" for bay in allowed}
+    platform = FakePlatform(registered=set(slot_map.values()))
+    return _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        farm=farm or FakeFarm(),
+        allowed=allowed,
+        slot_map=slot_map,
+        workspace_map={bay: f"ws-{bay}" for bay in allowed},
+        gads_slot_ids=allowed,
+        prepare_slot_ids=allowed,
+        observe_slot_ids=allowed,
+        slot_msisdn_map_path=str(_write_msisdn_map(tmp_path / "slot_msisdn_map.json", mapping)),
+    )
 
 
 def test_assigned_rental_reads_stored_eid_only(tmp_path: Path):
@@ -600,9 +643,138 @@ def test_device_status_inventory_path_does_not_probe_adb_or_mutate(tmp_path: Pat
     assert "adb shell" not in eid_fn
     assert "getprop" not in eid_fn
     assert "dumpsys" not in eid_fn
-    assert "slot_msisdn_map" not in eid_fn
-    assert "load_slot_msisdn_map" not in source
+    assert "load_slot_msisdn_map" in eid_fn
+    assert "auth.slot_id" in eid_fn
     assert "HEALTH_MONITOR" not in source
     reconnect = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
     assert reconnect.http_status == 501
     assert reconnect.body["error"] == "action_not_supported"
+
+
+def test_customer_phone_number_farm_map_wins_else_tenant():
+    assert customer_phone_number_for_device_status(farm_msisdn="+15550001111", tenant_phone=STORED_PHONE_A) == "+15550001111"
+    assert customer_phone_number_for_device_status(farm_msisdn="  ", tenant_phone=STORED_PHONE_A) == STORED_PHONE_A
+    assert customer_phone_number_for_device_status(farm_msisdn=None, tenant_phone=STORED_PHONE_A) == STORED_PHONE_A
+    assert customer_phone_number_for_device_status(farm_msisdn=None, tenant_phone="  ") is None
+    assert customer_phone_number_for_device_status(farm_msisdn="", tenant_phone=None) is None
+
+
+def test_device_status_phone_from_farm_map_for_every_mapped_slot(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _mapped_farm_service(tmp_path, tenant, FARM_MSISDN_FIXTURE, farm=farm)
+    expected = load_slot_msisdn_map(tmp_path / "slot_msisdn_map.json")
+    rentals = {
+        bay: _rental(tenant, bay=bay, user_id=CUSTOMER_A if bay % 2 else CUSTOMER_B)
+        for bay in FARM_MSISDN_FIXTURE
+    }
+    for bay, rental in rentals.items():
+        owner = CUSTOMER_A if bay % 2 else CUSTOMER_B
+        status = service.device_status_for_customer(owner, rental)
+        assert status.http_status == 200, status.body
+        assert status.body["phone_number"] == expected[bay]
+        assert status.body["phone_number_status"] == "known"
+        assert status.body["imei2_status"] == "known"
+        assert status.body["carrier_status"] == "known"
+        assert status.body["cellular_status"] == "unknown"
+        assert status.body["adb_online"] is True
+        assert "native_resolution" in status.body or "native_resolution_unavailable" in status.body
+        blob = json.dumps(status.body)
+        assert SLOT1_SERIAL not in blob
+        assert f"SERIAL-SLOT{bay}-TEST" not in blob
+        assert f"ws-{bay}" not in blob
+        for key in INTERNAL_LEAK_KEYS:
+            assert key not in status.body
+    assert _farm_types(farm).count("device_display_size") == len(FARM_MSISDN_FIXTURE)
+    assert not any(t in MUTATING_FARM_TYPES for t in _farm_types(farm))
+
+
+def test_device_status_unmapped_farm_slot_is_unknown_unless_tenant_phone(tmp_path: Path):
+    tenant = MemoryTenant()
+    mapped = {bay: number for bay, number in FARM_MSISDN_FIXTURE.items() if bay != 20}
+    service, _, _ = _mapped_farm_service(tmp_path, tenant, mapped)
+    expected = load_slot_msisdn_map(tmp_path / "slot_msisdn_map.json")
+    unmapped = _rental(tenant, bay=20, user_id=CUSTOMER_A)
+    _clear_radio_inventory(tenant, 20)
+    status = service.device_status_for_customer(CUSTOMER_A, unmapped)
+    assert status.http_status == 200
+    assert status.body["phone_number"] is None
+    assert status.body["phone_number_status"] == "unknown"
+    assert expected.get(20) is None
+    fallback = _rental(tenant, bay=20, user_id=CUSTOMER_A, phone_number=STORED_PHONE_A)
+    known = service.device_status_for_customer(CUSTOMER_A, fallback)
+    assert known.body["phone_number"] == STORED_PHONE_A
+    assert known.body["phone_number_status"] == "known"
+    mapped_rental = _rental(tenant, bay=1, user_id=CUSTOMER_A, phone_number=STORED_PHONE_B)
+    farm_wins = service.device_status_for_customer(CUSTOMER_A, mapped_rental)
+    assert farm_wins.body["phone_number"] == expected[1]
+    assert farm_wins.body["phone_number"] != STORED_PHONE_B
+    assert farm_wins.body["phone_number_status"] == "known"
+
+
+def test_device_status_farm_phone_cannot_select_another_slot(tmp_path: Path):
+    tenant = MemoryTenant()
+    service, _, _ = _mapped_farm_service(tmp_path, tenant, FARM_MSISDN_FIXTURE)
+    expected = load_slot_msisdn_map(tmp_path / "slot_msisdn_map.json")
+    rental_a = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    rental_b = _rental(tenant, bay=2, user_id=CUSTOMER_B)
+    stolen = service.device_status_for_customer(CUSTOMER_B, rental_a)
+    assert stolen.http_status == 403
+    assert stolen.body["error"] == "rental_not_owned"
+    assert stolen.body.get("phone_number") != expected[1]
+    owned_a = service.device_status_for_customer(CUSTOMER_A, rental_a)
+    owned_b = service.device_status_for_customer(CUSTOMER_B, rental_b)
+    assert owned_a.body["phone_number"] == expected[1]
+    assert owned_b.body["phone_number"] == expected[2]
+    assert owned_a.body["phone_number"] != owned_b.body["phone_number"]
+    assert "slot_id" in FORBIDDEN_PAYLOAD_KEYS
+    assert "serial" in FORBIDDEN_PAYLOAD_KEYS
+    assert "adb_serial" in FORBIDDEN_PAYLOAD_KEYS
+    assert "workspace_id" in FORBIDDEN_PAYLOAD_KEYS
+
+
+def test_http_device_status_farm_phone_ignores_forbidden_payload(tmp_path: Path):
+    map_path = _write_msisdn_map(tmp_path / "slot_msisdn_map.json", {1: FARM_MSISDN_FIXTURE[1], 2: FARM_MSISDN_FIXTURE[2]})
+    expected = load_slot_msisdn_map(map_path)
+    server, port, tenant, _platform, _ = _start_http(tmp_path, slot_msisdn_map_path=str(map_path))
+    base = f"http://127.0.0.1:{port}"
+    try:
+        token_a, user_a = _signup(base, "farm-phone-a@example.com")
+        token_b, _user_b = _signup(base, "farm-phone-b@example.com")
+        rental = _rental(tenant, bay=1, user_id=user_a)
+        url = f"{base}/rentals/{rental}/remote-access/device-status"
+        status, body, _ = _http("GET", url, token=token_a)
+        assert status == 200, body
+        assert body["phone_number"] == expected[1]
+        assert body["phone_number_status"] == "known"
+        assert body["imei2_status"] == "known"
+        assert body["cellular_status"] == "unknown"
+        assert SLOT1_SERIAL not in json.dumps(body)
+        for key in INTERNAL_LEAK_KEYS:
+            assert key not in body
+        stolen = _http("GET", url, token=token_b)
+        assert stolen[0] == 403
+        assert stolen[1]["error"] == "rental_not_owned"
+        assert stolen[1].get("phone_number") != expected[1]
+        status, posted, _ = _http(
+            "POST",
+            url,
+            token=token_a,
+            body={
+                "slot_id": 2,
+                "farm_slot_id": 2,
+                "serial": SLOT2_SERIAL,
+                "adb_serial": SLOT2_SERIAL,
+                "device_id": SLOT2_SERIAL,
+                "workspace_id": "ws-2",
+                "phone_number": FAKE_PHONE,
+            },
+        )
+        assert status == 200
+        assert posted["phone_number"] == expected[1]
+        assert posted["phone_number"] != expected[2]
+        assert posted["phone_number"] != FAKE_PHONE
+        assert posted["slot_id"] == 1
+        assert SLOT2_SERIAL not in json.dumps(posted)
+    finally:
+        server.shutdown()

@@ -207,6 +207,23 @@ def customer_eid_fields(eid: str | None) -> dict[str, Any]:
     return customer_known_unknown_field(eid, "eid")
 
 
+def customer_phone_number_for_device_status(
+    *,
+    farm_msisdn: str | None,
+    tenant_phone: str | None,
+) -> str | None:
+    """TEMPORARY Farm slot_msisdn_map wins when present; else public.slots.phone_number.
+
+    Empty / whitespace Farm mapping falls through to the tenant slot value.
+    Never fabricates a number. Caller reports null / unknown when both are empty.
+    """
+    farm = str(farm_msisdn).strip() if farm_msisdn is not None else ""
+    if farm:
+        return farm
+    tenant = str(tenant_phone).strip() if tenant_phone is not None else ""
+    return tenant or None
+
+
 def customer_inventory_identity_fields(
     *,
     eid: str | None = None,

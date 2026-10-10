@@ -136,6 +136,11 @@ def test_schemas_present():
     assert ds_props["phone_number_status"]["enum"] == ["unknown", "known"]
     assert ds_props["cellular_status"]["enum"] == ["unknown"]
     assert "imei1" not in ds_props
+    ds_desc = schemas["DeviceStatusResponse"]["description"]
+    assert "slot_msisdn_map" in ds_desc
+    assert "SLOT_MSISDN_MAP_PATH" in ds_desc
+    stream_desc = doc["paths"]["/rentals/{rental_id}/remote-access/{action}"]["get"]["description"]
+    assert "slot_msisdn_map" in stream_desc
 
 
 def test_customer_session_restrictions_documented():

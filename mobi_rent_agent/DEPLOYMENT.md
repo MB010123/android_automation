@@ -156,13 +156,13 @@ Optional: `VOIDFIX_WEBHOOK_SECRET` on VPS for inbound POST verification.
 | `.env` | Yes (VPS keys + token) | Yes (farm keys + token + VoidFix) |
 | `voidfix_devices.json` | Yes (read-only copy) | Yes (canonical) |
 | `slot_map.json` | No | Yes |
-| `slot_msisdn_map.json` | No | Yes (only if `SLOT_MSISDN_MAP_PATH` is set) |
+| `slot_msisdn_map.json` | Yes (temporary customer `device-status` `phone_number`; set `SLOT_MSISDN_MAP_PATH`) | Yes (Farm SMS if `SLOT_MSISDN_MAP_PATH` is set) |
 | `logs/sms_outbox.sqlite` | No | Yes (do not delete) |
 | `logs/inbound_messages.sqlite` | Created on VPS | No |
 
 **Never commit:** `.env`, API keys, tokens, `slot_map.json`, `slot_msisdn_map.json`, `voidfix_devices.json`, sqlite logs.
 
-`slot_msisdn_map.example.json` (placeholder numbers only) is the tracked template. The real `slot_msisdn_map.json` is deployment/runtime configuration: create it on the farm host from the template, point `SLOT_MSISDN_MAP_PATH` at it, and preserve the existing production copy on every deployment. Selective deployments must never overwrite it. It is gitignored; do not force-add it.
+`slot_msisdn_map.example.json` (placeholder numbers only) is the tracked template. The real `slot_msisdn_map.json` is deployment/runtime configuration: create it from the template, point `SLOT_MSISDN_MAP_PATH` at it, and preserve the existing production copy on every deployment. Selective deployments must never overwrite it. It is gitignored; do not force-add it. The VPS backend also reads this map for the temporary customer `device-status` `phone_number` passthrough (Farm map wins over `public.slots.phone_number` when the assigned slot is mapped). Without the file on the VPS, that field stays unknown unless the tenant slot already has a number.
 
 ---
 
