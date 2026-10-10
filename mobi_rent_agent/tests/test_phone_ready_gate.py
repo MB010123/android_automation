@@ -77,6 +77,7 @@ def test_unconfirmed_observer_is_not_phone_ready(tmp_path: Path):
     farm.activation_details = {"verdict": "ACTIVATION_PARTIAL"}
     service, store, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES).http_status == 200
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     observed = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert observed.http_status == 200
@@ -94,6 +95,7 @@ def test_activation_confirmed_transitions_to_phone_ready(tmp_path: Path):
     farm.activation_details = {"verdict": "ACTIVATION_CONFIRMED"}
     service, store, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES).http_status == 200
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     observed = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert observed.http_status == 200
@@ -150,6 +152,7 @@ def test_phone_ready_does_not_change_voidfix_or_allow_cross_rental(tmp_path: Pat
         voidfix_package="com.voidfix.app",
     )
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES).http_status == 200
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     stolen = service.complete_setup(CUSTOMER_B, rental)
     assert stolen.http_status == 403

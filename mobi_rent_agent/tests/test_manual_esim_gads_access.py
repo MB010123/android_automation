@@ -17,6 +17,7 @@ from infrastructure.gads_remote_access import GadsHubClient, GadsRemoteAccessPla
 from infrastructure.vps_job_store import VpsJobRecord
 from tests.fakes_supabase import MemoryTenant
 from tests.test_farm_agent_tasks import FakeResolver, FakeRunner, _config
+from tests.test_esim_qr_upload import PNG_BYTES
 from tests.test_remote_access_poc import (
     CUSTOMER_A,
     CUSTOMER_B,
@@ -214,6 +215,7 @@ def test_esim_becomes_active_only_after_confirmed_observation(tmp_path: Path):
         voidfix_package="com.voidfix.app",
     )
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    assert service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES).http_status == 200
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     premature = service.complete_setup(CUSTOMER_A, rental)
     assert premature.http_status == 200, premature.body

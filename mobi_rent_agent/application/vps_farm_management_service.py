@@ -575,6 +575,7 @@ class VpsFarmManagementService:
         if self._jobs.is_replayable(existing_job):
             assert existing_job is not None
             logger.info("assign_idempotent_replay bay=%s job_id=%s", bay, existing_job.job_id)
+            self._initialize_assigned_rental(bay, rental_id)
             return ApiResult(
                 202,
                 assign_acceptance_body(job_id=existing_job.job_id, bay=bay, status=existing_job.status),
@@ -640,6 +641,7 @@ class VpsFarmManagementService:
         self._events.append(bay, "slot_assigned", f"rental_id={rental_id} job_id={record.job_id}")
         self._events.append(bay, "assignment_requested", f"job_id={record.job_id}")
         self._events.append(bay, "provisioning_started", f"job_id={record.job_id}")
+        self._initialize_assigned_rental(bay, rental_id, customer_id=owner)
         logger.info("assignment_created job_id=%s bay=%s", record.job_id, bay)
         self._worker.enqueue_process(record.job_id)
         return ApiResult(202, assign_acceptance_body(job_id=record.job_id, bay=bay))
@@ -943,6 +945,23 @@ class VpsFarmManagementService:
             return True
         ends = rental_end_from_row(row)
         return ends is not None and ends <= self._clock()
+
+    def _initialize_assigned_rental(
+        self,
+        bay: int,
+        rental_id: str,
+        *,
+        customer_id: str | None = None,
+    ) -> None:
+        """Start THIS rental in pre-activation. Never copies a previous rental."""
+        remote = self._remote_access
+        init = getattr(remote, "initialize_new_rental_state", None)
+        if not callable(init):
+            return
+        try:
+            init(rental_id=rental_id, slot_id=bay, customer_id=customer_id)
+        except Exception:
+            logger.warning("new_rental_state_init_failed bay=%s", bay)
 
     def _release_gads(self, bay: int, rental_id: str) -> ApiResult | None:
         remote = self._remote_access

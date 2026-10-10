@@ -879,7 +879,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "Includes `activation_state` (REMOTE_ACCESS_READY | DEVICE_REBOOTING | "
                     "CUSTOMER_ACTIVATION_REQUIRED | ACTIVATING | ACTIVE | FAILED), `qr_ready`, and `guidance`. "
                     "When the session is active and not mid-reboot, GET runs the same read-only Farm observation "
-                    "as `activation-status` and persists `confirmed`/`partial` so Refresh can return `ACTIVE`."
+                    "as `activation-status` and persists `confirmed`/`partial` for THIS rental only after this "
+                    "rental uploaded a QR or prepare-esim became ready. Leftover physical eSIM, a previous "
+                    "rental's confirmation, QR upload alone, GADS connect, or phone-online is not Phone Ready. "
+                    "eSIM activation is 100% manual by the customer."
                 ),
                 "security": user_bearer,
                 "parameters": [_RENTAL_PARAM],

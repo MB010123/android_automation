@@ -100,6 +100,9 @@ class FakePlatform:
         self.device_workspace: dict[str, str] = {}
         self.gads_nav_available = True
         self.gads_rotation_available = True
+        self.gads_tap_available = True
+        self.gads_swipe_available = True
+        self.tap_error: str | None = None
 
     def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int, workspace_id: str = "") -> PlatformAccessGrant:
         self.calls.append(("grant", {"device_id": device_id, "rental_id": rental_id, "ttl": ttl_minutes, "workspace_id": workspace_id}))
@@ -148,10 +151,13 @@ class FakePlatform:
             in_use_by=self.leases.get(device_id),
         )
 
-    def tap(self, *, device_id: str, platform_username: str, platform_password: str, x: int, y: int) -> None:
+    def tap(self, *, device_id: str, platform_username: str, platform_password: str, x: int, y: int) -> bool:
         self.calls.append(("tap", {"device_id": device_id, "x": x, "y": y, "username": platform_username}))
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
+        if self.tap_error:
+            raise RemoteAccessPlatformError(self.tap_error)
+        return bool(self.gads_tap_available)
 
     def swipe(
         self,
@@ -170,7 +176,7 @@ class FakePlatform:
         )
         if self.leases.get(device_id) != platform_username:
             raise RemoteAccessPlatformError("device_not_locked")
-        return True
+        return bool(self.gads_swipe_available)
 
     def type_text(self, *, device_id: str, platform_username: str, platform_password: str, text: str) -> None:
         self.calls.append(("type", {"device_id": device_id, "text": text}))

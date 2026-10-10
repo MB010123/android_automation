@@ -19,12 +19,14 @@ from typing import Any
 from application.in_app_control_policy import public_allowed_controls
 from domain.remote_access import public_activation_view
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 STATUS_ACTIVE = "active"
+STATUS_INITIALIZED = "initialized"
 STATUS_REVOKED = "revoked"
 STATUS_RELEASED = "released"
 STATUS_EXPIRED = "expired"
+NEW_RENTAL_SETUP_PHASE = "esim"
 
 PREPARE_IN_PROGRESS = frozenset({"placing_qr", "rebooting", "waiting_adb", "waiting_platform"})
 
@@ -71,6 +73,7 @@ class RemoteAccessSession:
     setup_phase: str | None = None
     setup_complete: bool = False
     voidfix_observed: str | None = None
+    qr_uploaded_at: float | None = None
 
     def is_active(self, now: float) -> bool:
         return self.status == STATUS_ACTIVE and now < self.expires_at
@@ -161,7 +164,8 @@ class RemoteAccessSessionStore:
                     platform_secret TEXT,
                     setup_phase TEXT,
                     setup_complete INTEGER,
-                    voidfix_observed TEXT
+                    voidfix_observed TEXT,
+                    qr_uploaded_at REAL
                 )
                 """
             )
@@ -195,6 +199,9 @@ class RemoteAccessSessionStore:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN setup_complete INTEGER")
             if "voidfix_observed" not in columns:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN voidfix_observed TEXT")
+        if version < 5 or "qr_uploaded_at" not in columns:
+            if "qr_uploaded_at" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN qr_uploaded_at REAL")
         self._conn.execute("UPDATE remote_access_schema_version SET version = ?", (SCHEMA_VERSION,))
         self._conn.commit()
 
@@ -202,7 +209,7 @@ class RemoteAccessSessionStore:
         "rental_id, customer_id, slot_id, device_id, platform_username, status, "
         "created_at, expires_at, ended_at, prepare_state, prepare_detail, prepare_job_id, "
         "activation_observed, activation_observed_at, activation_evidence, "
-        "platform_secret, setup_phase, setup_complete, voidfix_observed"
+        "platform_secret, setup_phase, setup_complete, voidfix_observed, qr_uploaded_at"
     )
 
     @staticmethod
@@ -234,6 +241,7 @@ class RemoteAccessSessionStore:
             setup_phase=str(row[16]) if len(row) > 16 and row[16] else None,
             setup_complete=bool(row[17]) if len(row) > 17 and row[17] else False,
             voidfix_observed=str(row[18]) if len(row) > 18 and row[18] else None,
+            qr_uploaded_at=float(row[19]) if len(row) > 19 and row[19] is not None else None,
         )
 
     def get(self, rental_id: str) -> RemoteAccessSession | None:
@@ -275,7 +283,7 @@ class RemoteAccessSessionStore:
             self._conn.execute(
                 f"""
                 INSERT OR REPLACE INTO remote_access_sessions ({self._COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.rental_id,
@@ -297,9 +305,47 @@ class RemoteAccessSessionStore:
                     session.setup_phase,
                     1 if session.setup_complete else 0,
                     session.voidfix_observed,
+                    session.qr_uploaded_at,
                 ),
             )
             self._conn.commit()
+
+    def initialize_new_rental(
+        self,
+        *,
+        rental_id: str,
+        customer_id: str,
+        slot_id: int,
+        device_id: str,
+        now: float | None = None,
+    ) -> RemoteAccessSession:
+        """Create THIS rental's pre-activation row. Never copies another rental."""
+        current = self.get(rental_id)
+        if current is not None:
+            return current
+        created = time.time() if now is None else float(now)
+        session = RemoteAccessSession(
+            rental_id=str(rental_id),
+            customer_id=str(customer_id or ""),
+            slot_id=int(slot_id),
+            device_id=str(device_id or ""),
+            platform_username="",
+            status=STATUS_INITIALIZED,
+            created_at=created,
+            expires_at=created,
+            setup_phase=NEW_RENTAL_SETUP_PHASE,
+            setup_complete=False,
+        )
+        self.upsert(session)
+        return session
+
+    def mark_qr_uploaded(self, rental_id: str, *, uploaded_at: float | None = None) -> None:
+        current = self.get(rental_id)
+        if current is None:
+            return
+        if current.qr_uploaded_at is not None:
+            return
+        self.upsert(replace(current, qr_uploaded_at=time.time() if uploaded_at is None else float(uploaded_at)))
 
     def end(self, rental_id: str, *, status: str, now: float | None = None) -> RemoteAccessSession | None:
         current = self.get(rental_id)

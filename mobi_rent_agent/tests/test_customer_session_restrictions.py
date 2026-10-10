@@ -395,7 +395,10 @@ def test_qr_upload_navigates_without_gads_session(tmp_path: Path):
     uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert uploaded.http_status == 200
     assert uploaded.body["restricted_destination"] == "add_esim"
-    assert store.get(rental) is None
+    session = store.get(rental)
+    assert session is not None
+    assert session.status != "active"
+    assert session.platform_secret is None
     assert _recover_inspects(farm)[-1]["slot"] == 11
     assert not any(c[0] in {"grant", "revoke", "release"} for c in platform.calls)
     assert "serial" not in uploaded.body

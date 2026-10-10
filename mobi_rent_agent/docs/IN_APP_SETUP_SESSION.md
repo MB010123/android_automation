@@ -11,7 +11,7 @@ or name a bay/serial/UDID/workspace.
 3. `live_phone_screen` — `<img>` / MJPEG from `GET {stream_path}` with customer JWT
 4. `esim_setup` — overlay copy: complete Android eSIM confirmation on the Pixel
 5. `voidfix_approval` — overlay copy: set VoidFix as default SMS app when Android asks
-6. `phone_ready` — existing observer reported `ACTIVATION_CONFIRMED`; `ui_state=phone_ready`; **keep the live stream**. Home/Recents/shade/QS are already enabled from session start; Phone Ready is observational only.
+6. `phone_ready` — Farm observer reported `ACTIVATION_CONFIRMED` for **this** rental after this rental's own QR/prepare; `ui_state=phone_ready`; **keep the live stream**. A new rental never starts here. Leftover eSIM, QR upload, GADS connect, or phone-online is not Phone Ready. Home/Recents/shade/QS are already enabled from session start; Phone Ready is observational only. Activation is 100% manual.
 7. `cancelled` — `POST /rentals/{rental_id}/cancel`
 
 ## APIs (customer JWT)

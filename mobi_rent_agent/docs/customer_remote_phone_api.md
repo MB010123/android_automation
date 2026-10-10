@@ -58,6 +58,18 @@ internal platform passwords from the browser.
 the rental row. Request bodies must not name `slot_id`, `device_id`, `udid`,
 `serial`, or `workspace_id`.
 
+**New rental / Phone Ready:** eSIM activation is 100% manual. A newly created
+or assigned rental always starts pre-activation (`setup_complete=false`,
+`setup_phase=esim`, `activation_state` not `ACTIVE`, `ui_state` not
+`phone_ready`). Previous rental activation/setup/QR/session/device-status is
+never inherited. QR upload stores/transfers the image only — it is not
+activation. A live GADS stream/control session, phone-online, a phone number,
+or SIM Settings being open is not Phone Ready. `ui_state=phone_ready` /
+`activation_state=ACTIVE` / `setup_complete=true` only after Farm
+`verdict=ACTIVATION_CONFIRMED` is persisted as `activation_observed=confirmed`
+on **this** rental (after this rental started its own QR/prepare flow). A
+delayed observation for an old rental_id cannot mark a new rental ready.
+
 ---
 
 ## 1. Start session

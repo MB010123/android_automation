@@ -147,6 +147,22 @@ ACTIVATION_GUIDANCE = {
 _PREPARE_REBOOTING_STATES = frozenset({"placing_qr", "rebooting", "waiting_adb", "waiting_platform"})
 
 
+def this_rental_activation_eligible(
+    *,
+    prepare_state: str | None,
+    qr_uploaded_at: float | None,
+) -> bool:
+    """True only after THIS rental started its own manual eSIM flow.
+
+    Leftover physical eSIM on the phone is not this rental's activation.
+    QR upload / prepare-ready make confirmation eligible; they are not
+    themselves confirmation.
+    """
+    if str(prepare_state or "").strip() == "ready":
+        return True
+    return qr_uploaded_at is not None
+
+
 def public_activation_view(
     *,
     prepare_state: str | None,

@@ -229,7 +229,11 @@ def test_upload_does_not_need_gads_session(tmp_path: Path):
     assert store.get(rental) is None
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert result.http_status == 200
-    assert store.get(rental) is None
+    session = store.get(rental)
+    assert session is not None
+    assert session.status != "active"
+    assert session.setup_complete is False
+    assert session.platform_secret is None
     assert farm.tasks[0]["type"] == REMOTE_ACCESS_PLACE_QR_TASK
 
 

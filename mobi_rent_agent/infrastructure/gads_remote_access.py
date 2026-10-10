@@ -404,7 +404,7 @@ class GadsRemoteAccessPlatform:
         platform_password: str,
         x: int,
         y: int,
-    ) -> None:
+    ) -> bool:
         token = self._user_token(platform_username, platform_password)
         result = self._client.device_control(
             "POST",
@@ -413,8 +413,11 @@ class GadsRemoteAccessPlatform:
             token=token,
             json_body={"x": int(x), "y": int(y)},
         )
+        if result.status == 404:
+            return False
         if not (200 <= result.status < 300):
             raise RemoteAccessPlatformError(f"gads_tap_failed status={result.status}")
+        return True
 
     def swipe(
         self,

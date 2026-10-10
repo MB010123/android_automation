@@ -56,6 +56,7 @@ from domain.remote_access import (
     RemoteAccessPlatformError,
     RemoteDeviceStatus,
     public_activation_view,
+    this_rental_activation_eligible,
 )
 from infrastructure.esim_qr_security import (
     esim_fetch_url_is_public_https,
@@ -65,6 +66,7 @@ from infrastructure.esim_qr_security import (
 from infrastructure.gads_workspaces import unique_workspace_map
 from infrastructure.slot_msisdn_map import SlotMsisdnMapError, load_slot_msisdn_map
 from infrastructure.remote_access_store import (
+    NEW_RENTAL_SETUP_PHASE,
     STATUS_ACTIVE,
     STATUS_RELEASED,
     STATUS_REVOKED,
@@ -460,6 +462,45 @@ class RemoteAccessService:
         with self._slot_op_lock(auth.slot_id):
             return self._create_remote_access_locked(auth, platform)
 
+    def initialize_new_rental_state(
+        self,
+        *,
+        rental_id: str,
+        slot_id: int | None = None,
+        customer_id: str | None = None,
+    ) -> RemoteAccessSession | None:
+        """Canonical pre-activation row for a NEW rental_id. Idempotent.
+
+        Never copies another rental's activation, setup, QR, or session state.
+        Does not touch the physical phone, eSIM, VoidFix, or GADS install.
+        """
+        rental = str(rental_id or "").strip()
+        if not rental:
+            return None
+        existing = self._store.get(rental)
+        if existing is not None:
+            return existing
+        slot = int(slot_id) if slot_id is not None else 0
+        owner = str(customer_id or "").strip()
+        if not owner or slot < 1:
+            row = self._rental_row(rental)
+            if isinstance(row, dict):
+                owner = owner or str(row.get("user_id") or "").strip()
+                if slot < 1:
+                    inferred = _slot_from_row(row)
+                    if inferred is not None:
+                        slot = inferred
+        if slot < 1:
+            return None
+        device_id = self._devices.get(slot) or ""
+        return self._store.initialize_new_rental(
+            rental_id=rental,
+            customer_id=owner,
+            slot_id=slot,
+            device_id=device_id,
+            now=self._clock(),
+        )
+
     def _create_remote_access_locked(self, auth: AuthorizedRental, platform: RemoteAccessPlatform) -> ApiResult:
         now = self._clock()
         other = self._store.active_for_slot(auth.slot_id, now=now)
@@ -478,6 +519,13 @@ class RemoteAccessService:
             logger.info("remote_access_reused slot=%s", auth.slot_id)
             body = {"ok": True, **existing.to_public_dict(now)}
             return ApiResult(200, body)
+
+        self.initialize_new_rental_state(
+            rental_id=auth.rental_id,
+            slot_id=auth.slot_id,
+            customer_id=auth.customer_id,
+        )
+        existing = self._store.get(auth.rental_id)
 
         readiness = self._phone_readiness(auth, platform)
         if isinstance(readiness, ApiResult):
@@ -504,6 +552,7 @@ class RemoteAccessService:
                 return ApiResult(503, error_body("gads_unavailable"))
             return ApiResult(502, error_body("gads_unavailable"))
 
+        same = existing if existing is not None and existing.rental_id == auth.rental_id else None
         session = RemoteAccessSession(
             rental_id=auth.rental_id,
             customer_id=auth.customer_id,
@@ -513,16 +562,17 @@ class RemoteAccessService:
             status=STATUS_ACTIVE,
             created_at=now,
             expires_at=min(grant.expires_at, now + ttl_minutes * 60),
-            prepare_state=existing.prepare_state if existing is not None else None,
-            prepare_detail=existing.prepare_detail if existing is not None else None,
-            prepare_job_id=existing.prepare_job_id if existing is not None else None,
-            activation_observed=existing.activation_observed if existing is not None else None,
-            activation_observed_at=existing.activation_observed_at if existing is not None else None,
-            activation_evidence=existing.activation_evidence if existing is not None else None,
+            prepare_state=same.prepare_state if same is not None else None,
+            prepare_detail=same.prepare_detail if same is not None else None,
+            prepare_job_id=same.prepare_job_id if same is not None else None,
+            activation_observed=same.activation_observed if same is not None else None,
+            activation_observed_at=same.activation_observed_at if same is not None else None,
+            activation_evidence=same.activation_evidence if same is not None else None,
             platform_secret=grant.platform_password,
-            setup_phase=existing.setup_phase if existing is not None else "esim",
-            setup_complete=existing.setup_complete if existing is not None else False,
-            voidfix_observed=existing.voidfix_observed if existing is not None else None,
+            setup_phase=same.setup_phase if same is not None else NEW_RENTAL_SETUP_PHASE,
+            setup_complete=same.setup_complete if same is not None else False,
+            voidfix_observed=same.voidfix_observed if same is not None else None,
+            qr_uploaded_at=same.qr_uploaded_at if same is not None else None,
         )
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
@@ -1136,6 +1186,12 @@ class RemoteAccessService:
             if isinstance(raw_details, dict):
                 details = raw_details
         logger.info("esim_qr_uploaded slot=%s job_id=%s", auth.slot_id, job_id)
+        self.initialize_new_rental_state(
+            rental_id=auth.rental_id,
+            slot_id=auth.slot_id,
+            customer_id=auth.customer_id,
+        )
+        self._store.mark_qr_uploaded(auth.rental_id, uploaded_at=self._clock())
         body = public_placement_success(details, job_id=job_id)
         body.update(self._navigate_rental_to_add_esim(auth))
         return ApiResult(200, body)
@@ -1174,16 +1230,20 @@ class RemoteAccessService:
     def _observe_activation_locked(self, auth: AuthorizedRental, *, force: bool) -> dict[str, Any]:
         session = self._store.get(auth.rental_id)
         now = self._clock()
+        if session is None or session.rental_id != auth.rental_id:
+            return {}
+        if session.customer_id != auth.customer_id or session.slot_id != auth.slot_id:
+            logger.warning("activation_observation_ignored_identity_mismatch slot=%s", auth.slot_id)
+            return {}
         if (
             not force
-            and session is not None
             and session.activation_observed_at is not None
             and (now - float(session.activation_observed_at)) < self._observe_cooldown
             and session.activation_evidence
         ):
             return dict(session.activation_evidence)
         if self._farm is None:
-            return dict(session.activation_evidence) if session and session.activation_evidence else {}
+            return dict(session.activation_evidence) if session.activation_evidence else {}
         logger.info("activation_observation_started slot=%s", auth.slot_id)
         job_id = str(uuid.uuid4())
         try:
@@ -1199,7 +1259,13 @@ class RemoteAccessService:
         if not response.ok or not isinstance(response.body, dict):
             logger.warning("activation_observation_failed slot=%s", auth.slot_id)
             return {}
-        evidence = _public_activation_evidence(response.body.get("details"))
+        raw_details = response.body.get("details")
+        if isinstance(raw_details, dict):
+            reported_rental = str(raw_details.get("rental_id") or "").strip()
+            if reported_rental and reported_rental != auth.rental_id:
+                logger.warning("activation_observation_ignored_foreign_rental slot=%s", auth.slot_id)
+                return {}
+        evidence = _public_activation_evidence(raw_details)
         verdict = str(evidence.get("verdict") or "")
         observed: str | None = None
         if verdict == "ACTIVATION_CONFIRMED":
@@ -1211,8 +1277,15 @@ class RemoteAccessService:
         elif verdict:
             observed = "missing"
             logger.info("activation_observation_missing slot=%s verdict=%s", auth.slot_id, verdict)
+        eligible = this_rental_activation_eligible(
+            prepare_state=session.prepare_state,
+            qr_uploaded_at=session.qr_uploaded_at,
+        )
+        if observed and not eligible:
+            logger.info("activation_observation_ignored_ineligible slot=%s", auth.slot_id)
+            return evidence
         if observed:
-            previous = session.activation_observed if session is not None else None
+            previous = session.activation_observed
             self._store.set_activation_observed(
                 auth.rental_id,
                 observed,
@@ -1221,7 +1294,7 @@ class RemoteAccessService:
             )
             if observed == "confirmed":
                 confirmed = self._store.get(auth.rental_id) or session
-                if confirmed is not None:
+                if confirmed is not None and confirmed.rental_id == auth.rental_id:
                     self._mark_phone_ready(confirmed)
                 if previous != "confirmed":
                     logger.info("activation_state_changed slot=%s state=ACTIVE", auth.slot_id)
@@ -1516,9 +1589,11 @@ class RemoteAccessService:
         }
         if command.action == "tap":
             tap = getattr(platform, "tap", None)
-            if not callable(tap):
+            forwarded = False
+            if callable(tap):
+                forwarded = bool(tap(**kwargs, x=int(command.x), y=int(command.y)))
+            if not forwarded:
                 return self._farm_input(session.slot_id, "tap", command)
-            tap(**kwargs, x=int(command.x), y=int(command.y))
             return True
         if command.action == "type":
             type_text = getattr(platform, "type_text", None)
