@@ -10,7 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.in_app_control_policy import public_allowed_controls
-from application.session_restriction_policy import COMPANION_PACKAGE, GADS_SETTINGS_PACKAGE
+from application.session_restriction_policy import (
+    CAMERA_PACKAGES,
+    COMPANION_PACKAGE,
+    GADS_SETTINGS_PACKAGE,
+)
 from application.setup_activity_guard import RECOVER_INTENT_ESIM
 from application.vps_farm_management_service import DEVICE_CLEANUP_DETAIL
 from tests.fakes_supabase import MemoryTenant
@@ -134,6 +138,13 @@ def test_gads_settings_and_companion_blocked_without_killing_remote_access(tmp_p
         homes = [c for c in platform.calls if c[0] == "home"]
         assert len(homes) == 1, activity
         assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+    farm.inspect_activity = "com.google.android.GoogleCamera/.CameraActivity"
+    platform.calls.clear()
+    camera = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 22, "y": 22})
+    assert camera.http_status == 200
+    assert camera.body["restricted_destination"] == "home"
+    assert camera.body["restriction"] == "sensitive_app_blocked"
+    assert len([c for c in platform.calls if c[0] == "home"]) == 1
     farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
     platform.calls.clear()
     allowed = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 21, "y": 21})
@@ -356,6 +367,10 @@ def test_restrictions_off_restores_open_settings(tmp_path: Path):
     companion = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 4, "y": 4})
     assert companion.http_status == 200
     assert "restricted_destination" not in companion.body
+    farm.inspect_activity = "com.google.android.GoogleCamera/.CameraActivity"
+    camera = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 5, "y": 5})
+    assert camera.http_status == 200
+    assert "restricted_destination" not in camera.body
     shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
     qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
     assert shade.http_status == 200 and qs.http_status == 200
@@ -383,8 +398,11 @@ def test_source_does_not_restart_gads_or_use_lock_task():
     policy = (ROOT / "application" / "session_restriction_policy.py").read_text(encoding="utf-8")
     assert GADS_SETTINGS_PACKAGE in policy
     assert COMPANION_PACKAGE in policy
+    assert "com.google.android.GoogleCamera" in CAMERA_PACKAGES
     assert "force-stop" not in policy
     assert "pm disable" not in policy
+    assert "pm hide" not in policy
+    assert "pm clear" not in policy
     guard = (ROOT / "application" / "setup_activity_guard.py").read_text(encoding="utf-8")
     assert RECOVER_INTENT_ESIM in guard
     farm_source = (ROOT / "application" / "setup_session_farm_task.py").read_text(encoding="utf-8")
@@ -735,4 +753,73 @@ def test_restrictions_can_be_toggled_without_touching_gads(tmp_path: Path):
     farm.inspect_activity = "com.android.settings/.Settings"
     restored = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 3})
     assert restored.body["restricted_destination"] == "add_esim"
+    assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+
+
+def test_camera_from_launcher_sent_home_like_voidfix(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    launcher = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 10, "y": 10})
+    assert launcher.http_status == 200
+    assert "restricted_destination" not in launcher.body
+    farm.inspect_activity = "com.google.android.GoogleCamera/.CameraActivity"
+    platform.calls.clear()
+    camera = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 20, "y": 20})
+    assert camera.http_status == 200
+    assert camera.body["restricted_destination"] == "home"
+    assert camera.body["restriction"] == "sensitive_app_blocked"
+    assert len([c for c in platform.calls if c[0] == "home"]) == 1
+    assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+    assert not any(
+        t["type"] == "setup_session_inspect" and t["payload"].get("recover") for t in farm.tasks
+    )
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
+def test_esim_invoked_camera_and_scan_from_image_remain_allowed(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.android.settings/.network.telephony.MobileNetworkActivity"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    esim = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 12, "y": 12})
+    assert esim.http_status == 200
+    assert "restricted_destination" not in esim.body
+    farm.inspect_activity = "com.google.android.GoogleCamera/.CameraActivity"
+    platform.calls.clear()
+    camera = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 13, "y": 13})
+    assert camera.http_status == 200
+    assert "restricted_destination" not in camera.body
+    assert any(c[0] == "tap" for c in platform.calls)
+    assert not any(c[0] == "home" for c in platform.calls)
+    farm.inspect_activity = "com.google.android.photospicker/.PhotoPickerActivity"
+    platform.calls.clear()
+    gallery = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 14, "y": 14})
+    assert gallery.http_status == 200
+    assert "restricted_destination" not in gallery.body
+    assert not any(c[0] == "home" for c in platform.calls)
+    farm.inspect_activity = "com.google.android.euicc/.ui.QrCodeScanActivity"
+    platform.calls.clear()
+    qr = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 15, "y": 15})
+    assert qr.http_status == 200
+    assert "restricted_destination" not in qr.body
+    assert not any(c[0] == "home" for c in platform.calls)
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
+def test_camera_home_is_one_shot_not_a_loop(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.GoogleCamera/.CameraActivity"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    first = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 8, "y": 8})
+    assert first.body["restricted_destination"] == "home"
+    assert len([c for c in platform.calls if c[0] == "home"]) == 1
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    platform.calls.clear()
+    after = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 9, "y": 9})
+    assert after.http_status == 200
+    assert "restricted_destination" not in after.body
+    assert not any(c[0] == "home" for c in platform.calls)
+    assert _recover_inspects(farm) == []
     assert not any(c[0] in {"revoke", "release"} for c in platform.calls)

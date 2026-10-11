@@ -23,11 +23,11 @@ Do **not** connect the browser to GADS, Farm Agent, ADB, or the Pixel.
 
 `orientation` is `portrait` or `landscape`. Aliases: `overview` → `recents`, `notifications` → `notification_shade`, `android_settings` → `settings`. Never send keycodes, ADB, shell, serial, UDID, or workspace ids.
 
-This repo's backend allows Home/Recents/rotate/tap/swipe/type/back from session start. **`setup_mode` is telemetry and must not hide buttons.** Notification shade / Quick Settings and top-edge pull-downs are blocked while `CUSTOMER_SESSION_RESTRICTIONS` is on. `{ "action": "settings" }` and opening the Android Settings icon/QS gear do **not** open the Settings homepage — they redirect once to Add eSIM (`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`). Back from that eSIM root goes Home. VoidFix, GADS Settings (`com.gads.settings` operator UI), Companion (`com.mobirent.companion` UI), and other admin surfaces are sent Home. GADS streaming / MediaProjection stay allowed. `{ "action": "airplane_mode", "state": "on"|"off" }` returns `501 action_not_supported` (no approved Android 16 airplane toggle). This is a session-layer redirect, not the old setup-mode kiosk: leaving eSIM to Home does **not** auto-relaunch SIM Settings.
+This repo's backend allows Home/Recents/rotate/tap/swipe/type/back from session start. **`setup_mode` is telemetry and must not hide buttons.** Notification shade / Quick Settings and top-edge pull-downs are blocked while `CUSTOMER_SESSION_RESTRICTIONS` is on. `{ "action": "settings" }` and opening the Android Settings icon/QS gear do **not** open the Settings homepage — they redirect once to Add eSIM (`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`). Back from that eSIM root goes Home. VoidFix, GADS Settings (`com.gads.settings` operator UI), Companion (`com.mobirent.companion` UI), Camera opened from the launcher/app menu, and other admin surfaces are sent Home. Camera stays allowed when the eSIM/SIM flow opens it for QR scan or Scan from image. GADS streaming / MediaProjection stay allowed. `{ "action": "airplane_mode", "state": "on"|"off" }` returns `501 action_not_supported` (no approved Android 16 airplane toggle). This is a session-layer redirect, not the old setup-mode kiosk: leaving eSIM to Home does **not** auto-relaunch SIM Settings.
 
 Control 200 bodies may include `restricted_destination` (`add_esim` or `home`) and `restriction` (`settings_redirected`, `esim_back_to_home`, `sensitive_app_blocked`). Successful QR upload may include `restricted_destination=add_esim` and `restriction=qr_navigated_to_add_esim`. The live stream stays up. Do not treat those fields as a disconnect.
 
-Production default: `CUSTOMER_SESSION_RESTRICTIONS` is **ON when unset**. `0` / `false` / `no` / `off` disables Settings→Add eSIM, QR navigate-to-Add-eSIM, VoidFix/admin Home redirects, and Back-from-eSIM-root→Home. Flag off must not 502 `{ "action": "settings" }`.
+Production default: `CUSTOMER_SESSION_RESTRICTIONS` is **ON when unset**. `0` / `false` / `no` / `off` disables Settings→Add eSIM, QR navigate-to-Add-eSIM, VoidFix/admin/Camera Home redirects, and Back-from-eSIM-root→Home. Flag off must not 502 `{ "action": "settings" }`.
 
 Unexplained rejections (`invalid_control`, `forbidden_control`, `phone_not_ready`, `setup_state_blocked`) persist until **all three** are updated:
 
@@ -317,7 +317,7 @@ are blocked while restrictions are on. Settings (icon, QS gear, or `{ "action": 
 is redirected once to Add eSIM. Back from the eSIM root returns Home, not the
 Settings homepage. Nested eSIM confirm dialogs still receive one Back.
 Leaving eSIM by Home/Recents does **not** auto-relaunch SIM Settings.
-VoidFix (`org.voidfix.smsgateway`), GADS Settings (`com.gads.settings` operator UI), Mobi-Rent Companion (`com.mobirent.companion` UI), and the package installer are sent Home. GADS MJPEG / MediaProjection / IME components in the same GADS package stay allowed.
+VoidFix (`org.voidfix.smsgateway`), GADS Settings (`com.gads.settings` operator UI), Mobi-Rent Companion (`com.mobirent.companion` UI), Camera (`com.google.android.GoogleCamera` from the launcher/app menu), and the package installer are sent Home. Camera remains available when eSIM/SIM Settings launches it for QR scan or Scan from image. GADS MJPEG / MediaProjection / IME components in the same GADS package stay allowed.
 Unrelated Settings (security, accounts, developer, Wi-Fi/network, apps,
 system) redirect once to Add eSIM. Delete eSIM on the same SIM-profiles
 screen is not intercepted.

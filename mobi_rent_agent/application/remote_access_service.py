@@ -43,6 +43,7 @@ from application.in_app_control_policy import (
     decide_control,
 )
 from application.session_restriction_policy import (
+    KIND_ESIM_ROOT,
     KIND_LAUNCHER,
     KIND_UNKNOWN,
     REASON_QR_NAVIGATE,
@@ -241,6 +242,7 @@ class RemoteAccessService:
         self._slot_locks: dict[int, threading.RLock] = {}
         self._slot_locks_guard = threading.Lock()
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
+        self._activity_kind_by_rental: dict[str, str] = {}
         self._reconnect_cooldown = 30.0
         self._reconnect_last: dict[int, float] = {}
         self._troubleshoot_cooldown = 10.0
@@ -1544,6 +1546,7 @@ class RemoteAccessService:
                 activity=None,
                 voidfix_package=self._voidfix_package,
                 inspect_failed=False,
+                previous_kind=self._previous_activity_kind(session),
                 x=command.x,
                 y=command.y,
                 x2=command.x2,
@@ -1557,6 +1560,10 @@ class RemoteAccessService:
         forwarded = self._forward_control(platform, session, secret, command)
         if forwarded is not True:
             return forwarded, {}
+        if command.action == "home":
+            self._remember_activity_kind(session, KIND_LAUNCHER)
+        elif command.action == "recents":
+            self._remember_activity_kind(session, KIND_LAUNCHER)
         if command.action not in {"tap", "swipe", "type"}:
             return True, {}
         return True, self._enforce_foreground(
@@ -1579,6 +1586,7 @@ class RemoteAccessService:
             activity=None,
             voidfix_package=self._voidfix_package,
             inspect_failed=False,
+            previous_kind=self._previous_activity_kind(session),
         )
         applied = self._apply_restriction_navigation(platform, session, secret, decision)
         if isinstance(applied, ApiResult):
@@ -1597,6 +1605,7 @@ class RemoteAccessService:
             activity=activity,
             voidfix_package=self._voidfix_package,
             inspect_failed=inspect_failed,
+            previous_kind=self._previous_activity_kind(session),
         )
         applied = self._apply_restriction_navigation(platform, session, secret, decision)
         if isinstance(applied, ApiResult):
@@ -1618,6 +1627,7 @@ class RemoteAccessService:
             activity=activity,
             voidfix_package=self._voidfix_package,
             inspect_failed=inspect_failed,
+            previous_kind=self._previous_activity_kind(session),
         )
         forward_command = (
             ControlCommand(action="home") if decision.rewrite_action == "home" else command
@@ -1644,7 +1654,9 @@ class RemoteAccessService:
         if not retry_unresolved:
             return activity, False
         kind = classify_foreground_activity(
-            activity, voidfix_package=self._voidfix_package
+            activity,
+            voidfix_package=self._voidfix_package,
+            previous_kind=self._previous_activity_kind(session),
         ).kind
         if kind not in {KIND_LAUNCHER, KIND_UNKNOWN}:
             return activity, False
@@ -1670,13 +1682,24 @@ class RemoteAccessService:
                 if not decision.allow_original:
                     return launched
                 return None
+            self._remember_activity_kind(session, KIND_ESIM_ROOT)
             return True
         if decision.send_home:
             home_sent = self._send_restriction_home(platform, session, secret)
             if home_sent is True:
+                self._remember_activity_kind(session, KIND_LAUNCHER)
                 return True
             return None
         return None
+
+    def _previous_activity_kind(self, session: RemoteAccessSession) -> str | None:
+        return self._activity_kind_by_rental.get(session.rental_id)
+
+    def _remember_activity_kind(self, session: RemoteAccessSession, kind: str | None) -> None:
+        rental = str(session.rental_id or "").strip()
+        if not rental or not kind:
+            return
+        self._activity_kind_by_rental[rental] = kind
 
     def _enforce_foreground(
         self,
@@ -1691,12 +1714,21 @@ class RemoteAccessService:
         )
         if inspect_failed:
             return {}
+        previous = self._previous_activity_kind(session)
+        classified = classify_foreground_activity(
+            activity,
+            voidfix_package=self._voidfix_package,
+            previous_kind=previous,
+        )
         decision = decide_restriction(
             action="tap",
             activity=activity,
             voidfix_package=self._voidfix_package,
             inspect_failed=False,
+            previous_kind=previous,
         )
+        if classified.kind not in {KIND_UNKNOWN}:
+            self._remember_activity_kind(session, classified.kind)
         applied = self._apply_restriction_navigation(platform, session, secret, decision)
         if applied is True:
             return public_restriction_body(decision)
@@ -1792,6 +1824,7 @@ class RemoteAccessService:
                 logger.warning("remote_access_revoke_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
                 revoked = False
         ended = self._store.end(rental_id, status=status, now=self._clock())
+        self._activity_kind_by_rental.pop(str(rental_id or "").strip(), None)
         if status == STATUS_REVOKED:
             logger.info("remote_access_revoked slot=%s", slot_id)
         self._record(slot_id, f"remote_access_{status}", f"rental_id={rental_id}")

@@ -4,11 +4,13 @@ Home, Recents, rotate, and normal apps stay allowed. Notification shade and
 Quick Settings are blocked (semantic actions and top-edge pull-downs). If
 shade/QS is already visible, send Home. Settings opens the allowlisted Add
 eSIM entry point. Back from the eSIM root goes Home. VoidFix, GADS Settings,
-Companion UI, and other admin surfaces are sent Home. GADS streaming /
-MediaProjection / IME components stay allowed. Enforcement is session-layer
-only: GADS home or Farm ``am start`` of
-``android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS``. Never restart GADS,
-never lock-task, never recover-loop when the customer is on Home.
+Companion UI, Camera (from the launcher/app menu), and other admin surfaces
+are sent Home. Camera stays allowed when the eSIM/SIM flow invoked it for
+QR scan or Scan from image. GADS streaming / MediaProjection / IME
+components stay allowed. Enforcement is session-layer only: GADS home or
+Farm ``am start`` of ``android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS``.
+Never restart GADS, never lock-task, never recover-loop when the customer
+is on Home.
 """
 from __future__ import annotations
 
@@ -51,6 +53,22 @@ KNOWN_VOIDFIX_PACKAGES = frozenset(
 GADS_SETTINGS_PACKAGE = "com.gads.settings"
 # android_companion AndroidManifest package.
 COMPANION_PACKAGE = "com.mobirent.companion"
+# Pixel 6 Camera plus AOSP Camera packages. Do not invent vendor aliases.
+CAMERA_PACKAGES = frozenset(
+    {
+        "com.google.android.GoogleCamera",
+        "com.android.camera2",
+        "com.android.camera",
+    }
+)
+_ESIM_CAMERA_MARKERS = (
+    "qrcode",
+    "barcode",
+    "scanqr",
+    "qrscan",
+    "qrcodescanner",
+    "scanfromimage",
+)
 
 # Components hosted in com.gads.settings that are required for remote access.
 # From GADS provider/devices/android.go — not the operator Settings UI.
@@ -231,10 +249,17 @@ def is_shade_pull_swipe(
     return dy >= abs(end_x - start_x)
 
 
+def _is_esim_invoked_camera(lowered: str, previous_kind: str | None) -> bool:
+    if previous_kind in {KIND_ESIM_ROOT, KIND_ESIM_NESTED}:
+        return True
+    return any(marker in lowered for marker in _ESIM_CAMERA_MARKERS)
+
+
 def classify_foreground_activity(
     activity: str | None,
     *,
     voidfix_package: str | None = None,
+    previous_kind: str | None = None,
 ) -> ActivityClass:
     if not activity or "/" not in str(activity):
         return ActivityClass(KIND_UNKNOWN, activity, "activity_unknown")
@@ -250,6 +275,10 @@ def classify_foreground_activity(
         return ActivityClass(KIND_BLOCKED_APP, component, "gads_settings")
     if package == COMPANION_PACKAGE:
         return ActivityClass(KIND_BLOCKED_APP, component, "companion")
+    if package in CAMERA_PACKAGES:
+        if _is_esim_invoked_camera(lowered, previous_kind):
+            return ActivityClass(KIND_ESIM_NESTED, component, "esim_camera")
+        return ActivityClass(KIND_BLOCKED_APP, component, "camera")
     if package in _SHADE_PACKAGES and any(marker in lowered for marker in _SHADE_MARKERS):
         return ActivityClass(KIND_SHADE, component, "shade")
     if any(marker in lowered for marker in _LAUNCHER_MARKERS):
@@ -278,6 +307,7 @@ def decide_restriction(
     activity: str | None,
     voidfix_package: str | None = None,
     inspect_failed: bool = False,
+    previous_kind: str | None = None,
     x: int | None = None,
     y: int | None = None,
     x2: int | None = None,
@@ -305,7 +335,9 @@ def decide_restriction(
         if shade_pull:
             return RestrictionDecision(None, REASON_SHADE_BLOCKED, allow_original=False)
         return RestrictionDecision(None, "inspect_unavailable")
-    classified = classify_foreground_activity(activity, voidfix_package=voidfix_package)
+    classified = classify_foreground_activity(
+        activity, voidfix_package=voidfix_package, previous_kind=previous_kind
+    )
     if current in SHADE_ACTIONS:
         return RestrictionDecision(
             DEST_HOME,

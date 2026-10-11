@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.session_restriction_policy import (
+    CAMERA_PACKAGES,
     COMPANION_PACKAGE,
     DEST_ADD_ESIM,
     DEST_HOME,
@@ -138,6 +139,35 @@ def test_classify_esim_settings_voidfix_and_apps():
     )
     assert classify_foreground_activity("com.android.chrome/.MainActivity").kind == KIND_OTHER
     assert (
+        classify_foreground_activity("com.google.android.GoogleCamera/.CameraActivity").kind
+        == KIND_BLOCKED_APP
+    )
+    assert (
+        classify_foreground_activity(
+            "com.google.android.GoogleCamera/.CameraActivity",
+            previous_kind=KIND_LAUNCHER,
+        ).kind
+        == KIND_BLOCKED_APP
+    )
+    assert (
+        classify_foreground_activity(
+            "com.google.android.GoogleCamera/.CameraActivity",
+            previous_kind=KIND_ESIM_ROOT,
+        ).kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity(
+            "com.google.android.GoogleCamera/.QrCodeScanActivity",
+        ).kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity("com.android.camera2/.CameraActivity").kind
+        == KIND_BLOCKED_APP
+    )
+    assert "com.google.android.GoogleCamera" in CAMERA_PACKAGES
+    assert (
         classify_foreground_activity("com.android.systemui/.shade.NotificationShadeWindow").kind
         == KIND_SHADE
     )
@@ -195,6 +225,27 @@ def test_settings_and_back_decisions():
     assert tap_gads_settings.send_home is True and tap_gads_settings.reason == REASON_SENSITIVE_BLOCKED
     tap_companion = decide_restriction(action="tap", activity=f"{COMPANION_PACKAGE}/.MainActivity")
     assert tap_companion.send_home is True and tap_companion.reason == REASON_SENSITIVE_BLOCKED
+    tap_camera = decide_restriction(
+        action="tap", activity="com.google.android.GoogleCamera/.CameraActivity"
+    )
+    assert tap_camera.send_home is True and tap_camera.reason == REASON_SENSITIVE_BLOCKED
+    tap_esim_camera = decide_restriction(
+        action="tap",
+        activity="com.google.android.GoogleCamera/.CameraActivity",
+        previous_kind=KIND_ESIM_ROOT,
+    )
+    assert tap_esim_camera.send_home is False and tap_esim_camera.destination is None
+    tap_esim_qr = decide_restriction(
+        action="tap",
+        activity="com.google.android.euicc/.ui.QrCodeScanActivity",
+    )
+    assert tap_esim_qr.send_home is False and tap_esim_qr.destination is None
+    tap_scan_image = decide_restriction(
+        action="tap",
+        activity="com.google.android.photospicker/.PhotoPickerActivity",
+        previous_kind=KIND_ESIM_NESTED,
+    )
+    assert tap_scan_image.send_home is False and tap_scan_image.destination is None
     tap_gads_stream = decide_restriction(
         action="tap",
         activity=f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.streaming.MjpegScreenCaptureActivity",
