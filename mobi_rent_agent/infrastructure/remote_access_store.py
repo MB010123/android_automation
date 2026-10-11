@@ -78,7 +78,7 @@ class RemoteAccessSession:
     def is_active(self, now: float) -> bool:
         return self.status == STATUS_ACTIVE and now < self.expires_at
 
-    def to_public_dict(self, now: float) -> dict:
+    def to_public_dict(self, now: float, *, session_restrictions: bool = True) -> dict:
         """Browser-safe view. Never includes platform credentials or device serial."""
         active = self.is_active(now)
         status = self.status
@@ -109,7 +109,9 @@ class RemoteAccessSession:
             "setup_mode": setup_mode,
             "voidfix_observed": self.voidfix_observed,
             "stream_path": f"/rentals/{self.rental_id}/remote-access/stream",
-            "allowed_controls": public_allowed_controls(setup_mode=False),
+            "allowed_controls": public_allowed_controls(
+                setup_mode=False, session_restrictions=session_restrictions
+            ),
             "coordinate_space": "native_device_pixels",
             "ui_state": ui_state,
         }

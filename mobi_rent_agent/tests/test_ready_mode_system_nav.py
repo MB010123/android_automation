@@ -27,8 +27,6 @@ from tests.test_remote_access_poc import (
 READY_ACTIONS = (
     ("home", None),
     ("recents", None),
-    ("notification_shade", None),
-    ("quick_settings", None),
     ("rotate", {"orientation": "portrait"}),
 )
 
@@ -65,14 +63,18 @@ def test_setup_mode_allows_home_recents_shade_and_unrelated_apps(tmp_path: Path)
         _assert_no_secrets(result.body)
     tap = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 40, "y": 80})
     assert tap.http_status == 200
+    shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
+    assert shade.body["restriction"] == "shade_blocked"
+    assert qs.body["restriction"] == "shade_blocked"
     assert {c[0] for c in platform.calls} >= {
         "home",
         "recents",
-        "notification_shade",
-        "quick_settings",
         "rotate",
         "tap",
     }
+    assert "notification_shade" not in {c[0] for c in platform.calls}
+    assert "quick_settings" not in {c[0] for c in platform.calls}
     assert not any(t["payload"].get("recover") for t in farm.tasks if t["type"] == "setup_session_inspect")
 
 
@@ -83,12 +85,12 @@ def test_phone_ready_allows_system_nav_commands(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     created = service.create_remote_access(CUSTOMER_A, None, rental)
     assert "home" in created.body["allowed_controls"]
-    assert "notification_shade" in created.body["allowed_controls"]
+    assert "notification_shade" not in created.body["allowed_controls"]
     assert "denied_controls" not in created.body
     _mark_ready(store, rental)
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.body["setup_mode"] is False
-    assert "notification_shade" in got.body["allowed_controls"]
+    assert "notification_shade" not in got.body["allowed_controls"]
     assert "denied_controls" not in got.body
     for action, extra in READY_ACTIONS:
         result = service.control_session(CUSTOMER_A, rental, _body(action, extra))
@@ -100,7 +102,9 @@ def test_phone_ready_allows_system_nav_commands(tmp_path: Path):
         CUSTOMER_A, rental, {"action": "swipe", "x": 12, "y": 8, "x2": 12, "y2": 400}
     )
     assert shade_swipe.http_status == 200
+    assert shade_swipe.body["restriction"] == "shade_blocked"
     assert {c[0] for c in platform.calls} >= {action for action, _ in READY_ACTIONS}
+    assert not any(c[0] == "swipe" and c[1].get("y") == 8 for c in platform.calls)
 
 
 def test_ownership_assigned_slot_and_cross_rental_rejected(tmp_path: Path):
@@ -155,9 +159,8 @@ def test_farm_timeout_is_not_fake_success(tmp_path: Path):
     farm.input_timeout = False
     farm.fail_types.add("setup_session_input")
     shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
-    assert shade.http_status == 502
-    assert shade.body["error"] == "farm_unreachable"
-    assert shade.body.get("ok") is False
+    assert shade.http_status == 200
+    assert shade.body["restriction"] == "shade_blocked"
     platform.gads_rotation_available = False
     rotated = service.control_session(
         CUSTOMER_A, rental, {"action": "rotate", "orientation": "landscape"}
@@ -183,7 +186,9 @@ def test_twenty_slots_ready_nav_with_fakes(tmp_path: Path):
         shade = service.control_session(owner, rental, {"action": "notification_shade"})
         qs = service.control_session(owner, rental, {"action": "quick_settings"})
         assert home.http_status == 200, (bay, home.body)
-        assert recents.http_status == 200 and shade.http_status == 200 and qs.http_status == 200
+        assert recents.http_status == 200
+        assert shade.body["restriction"] == "shade_blocked"
+        assert qs.body["restriction"] == "shade_blocked"
         other = CUSTOMER_B if owner == CUSTOMER_A else CUSTOMER_A
         stolen = service.control_session(other, rental, {"action": "home"})
         assert stolen.http_status == 403

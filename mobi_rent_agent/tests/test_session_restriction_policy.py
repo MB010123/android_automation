@@ -8,21 +8,27 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.session_restriction_policy import (
+    COMPANION_PACKAGE,
     DEST_ADD_ESIM,
     DEST_HOME,
+    GADS_SETTINGS_PACKAGE,
     KIND_BLOCKED_APP,
     KIND_ESIM_NESTED,
     KIND_ESIM_ROOT,
     KIND_LAUNCHER,
     KIND_OTHER,
     KIND_SETTINGS,
+    KIND_SHADE,
     REASON_ESIM_BACK_HOME,
     REASON_QR_NAVIGATE,
     REASON_SENSITIVE_BLOCKED,
     REASON_SETTINGS_REDIRECT,
+    REASON_SHADE_BLOCKED,
+    is_shade_pull_swipe,
     add_esim_public_body,
     classify_foreground_activity,
     decide_restriction,
+    operator_ui_packages,
     voidfix_packages,
 )
 
@@ -107,7 +113,47 @@ def test_classify_esim_settings_voidfix_and_apps():
         classify_foreground_activity("com.android.packageinstaller/.InstallStart").kind
         == KIND_BLOCKED_APP
     )
+    assert (
+        classify_foreground_activity(f"{GADS_SETTINGS_PACKAGE}/.MainActivity").kind
+        == KIND_BLOCKED_APP
+    )
+    assert (
+        classify_foreground_activity(f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.MainActivity").kind
+        == KIND_BLOCKED_APP
+    )
+    assert (
+        classify_foreground_activity(f"{COMPANION_PACKAGE}/.MainActivity").kind == KIND_BLOCKED_APP
+    )
+    assert (
+        classify_foreground_activity(
+            f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.streaming.MjpegScreenCaptureActivity"
+        ).kind
+        == KIND_OTHER
+    )
+    assert (
+        classify_foreground_activity(
+            f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.audio.AudioProjectionActivity"
+        ).kind
+        == KIND_OTHER
+    )
     assert classify_foreground_activity("com.android.chrome/.MainActivity").kind == KIND_OTHER
+    assert (
+        classify_foreground_activity("com.android.systemui/.shade.NotificationShadeWindow").kind
+        == KIND_SHADE
+    )
+    assert (
+        classify_foreground_activity("com.android.systemui/.qs.QSPanel").kind == KIND_SHADE
+    )
+    assert is_shade_pull_swipe(y=8, y2=400, x=100, x2=100) is True
+    assert is_shade_pull_swipe(y=2900, y2=2000, x=720, x2=720) is False
+    assert is_shade_pull_swipe(y=8, y2=10, x=100, x2=100) is False
+
+
+def test_operator_ui_packages_are_exact_system_identities():
+    packages = operator_ui_packages()
+    assert packages == frozenset({GADS_SETTINGS_PACKAGE, COMPANION_PACKAGE})
+    assert GADS_SETTINGS_PACKAGE == "com.gads.settings"
+    assert COMPANION_PACKAGE == "com.mobirent.companion"
 
 
 def test_settings_and_back_decisions():
@@ -143,6 +189,40 @@ def test_settings_and_back_decisions():
         action="tap", activity="org.voidfix.smsgateway/.SmsGatewayActivity"
     )
     assert tap_voidfix.send_home is True and tap_voidfix.reason == REASON_SENSITIVE_BLOCKED
+    tap_gads_settings = decide_restriction(
+        action="tap", activity=f"{GADS_SETTINGS_PACKAGE}/.MainActivity"
+    )
+    assert tap_gads_settings.send_home is True and tap_gads_settings.reason == REASON_SENSITIVE_BLOCKED
+    tap_companion = decide_restriction(action="tap", activity=f"{COMPANION_PACKAGE}/.MainActivity")
+    assert tap_companion.send_home is True and tap_companion.reason == REASON_SENSITIVE_BLOCKED
+    tap_gads_stream = decide_restriction(
+        action="tap",
+        activity=f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.streaming.MjpegScreenCaptureActivity",
+    )
+    assert tap_gads_stream.send_home is False and tap_gads_stream.destination is None
+    shade = decide_restriction(action="notification_shade", activity=None)
+    assert shade.send_home is True and shade.reason == REASON_SHADE_BLOCKED
+    qs = decide_restriction(action="quick_settings", activity=None)
+    assert qs.send_home is True and qs.reason == REASON_SHADE_BLOCKED
+    top_swipe = decide_restriction(
+        action="swipe", activity=None, x=100, y=8, x2=100, y2=400
+    )
+    assert top_swipe.allow_original is False and top_swipe.reason == REASON_SHADE_BLOCKED
+    assert top_swipe.send_home is False
+    bottom = decide_restriction(
+        action="swipe",
+        activity="com.android.chrome/.MainActivity",
+        x=720,
+        y=2900,
+        x2=720,
+        y2=2000,
+    )
+    assert bottom.allow_original is True and bottom.send_home is False
+    visible_shade = decide_restriction(
+        action="tap",
+        activity="com.android.systemui/.shade.NotificationShadeWindow",
+    )
+    assert visible_shade.send_home is True and visible_shade.reason == REASON_SHADE_BLOCKED
     tap_home = decide_restriction(
         action="tap",
         activity="com.google.android.apps.nexuslauncher/.NexusLauncherActivity",

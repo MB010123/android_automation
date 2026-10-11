@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS
+from application.in_app_control_policy import public_allowed_controls
+from application.session_restriction_policy import COMPANION_PACKAGE, GADS_SETTINGS_PACKAGE
 from application.setup_activity_guard import RECOVER_INTENT_ESIM
 from application.vps_farm_management_service import DEVICE_CLEANUP_DETAIL
 from tests.fakes_supabase import MemoryTenant
@@ -115,6 +116,102 @@ def test_voidfix_blocked_in_customer_session_without_killing_gads(tmp_path: Path
     assert getattr(stream, "device_id") == SLOT2_SERIAL
 
 
+def test_gads_settings_and_companion_blocked_without_killing_remote_access(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    for activity in (
+        f"{GADS_SETTINGS_PACKAGE}/.MainActivity",
+        f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.MainActivity",
+        f"{COMPANION_PACKAGE}/.MainActivity",
+        f"{COMPANION_PACKAGE}/com.mobirent.companion.MainActivity",
+    ):
+        farm.inspect_activity = activity
+        platform.calls.clear()
+        blocked = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 20, "y": 20})
+        assert blocked.http_status == 200, activity
+        assert blocked.body["restricted_destination"] == "home"
+        assert blocked.body["restriction"] == "sensitive_app_blocked"
+        homes = [c for c in platform.calls if c[0] == "home"]
+        assert len(homes) == 1, activity
+        assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    platform.calls.clear()
+    allowed = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 21, "y": 21})
+    assert allowed.http_status == 200
+    assert "restricted_destination" not in allowed.body
+    assert not any(c[0] == "home" for c in platform.calls)
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
+def test_gads_remote_access_surfaces_are_not_sent_home(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    for activity, action, body in (
+        (
+            f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.streaming.MjpegScreenCaptureActivity",
+            "tap",
+            {"action": "tap", "x": 5, "y": 5},
+        ),
+        (
+            f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.audio.AudioProjectionActivity",
+            "swipe",
+            {"action": "swipe", "x": 10, "y": 400, "x2": 10, "y2": 200},
+        ),
+        (
+            f"{GADS_SETTINGS_PACKAGE}/com.shamanec.settings.RemoteKeyboardIME",
+            "rotate",
+            {"action": "rotate", "orientation": "landscape"},
+        ),
+    ):
+        farm.inspect_activity = activity
+        platform.calls.clear()
+        result = service.control_session(CUSTOMER_A, rental, body)
+        assert result.http_status == 200, activity
+        assert "restricted_destination" not in result.body
+        assert any(c[0] == action for c in platform.calls), activity
+        assert not any(c[0] == "home" for c in platform.calls)
+        assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
+def test_shade_and_quick_settings_blocked_without_breaking_gads(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    farm.inspect_activity = "com.android.systemui/.shade.NotificationShadeWindow"
+    visible = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 20, "y": 20})
+    assert visible.body["restriction"] == "shade_blocked"
+    assert visible.body["restricted_destination"] == "home"
+    farm.inspect_activity = "com.android.systemui/.qs.QSPanel"
+    qs_ui = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 21, "y": 21})
+    assert qs_ui.body["restriction"] == "shade_blocked"
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+    assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+
+
+def test_normal_apps_and_esim_screens_unchanged_with_operator_ui_blocks(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    farm.inspect_activity = "com.android.chrome/.MainActivity"
+    chrome = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 15, "y": 15})
+    assert chrome.http_status == 200
+    assert "restricted_destination" not in chrome.body
+    assert any(c[0] == "tap" for c in platform.calls)
+    farm.inspect_activity = "com.android.settings/.network.telephony.MobileNetworkActivity"
+    farm.inspect_allowed = True
+    platform.calls.clear()
+    esim = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 16, "y": 16})
+    assert esim.http_status == 200
+    assert "restricted_destination" not in esim.body
+    assert any(c[0] == "tap" for c in platform.calls)
+    assert not any(c[0] == "home" for c in platform.calls)
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
 def test_package_installer_does_not_disconnect_stream(tmp_path: Path):
     farm = FakeFarm()
     farm.inspect_activity = "com.android.packageinstaller/.InstallStart"
@@ -186,11 +283,20 @@ def test_reconnect_still_501_phone_ready_observational_full_nav_allowed(tmp_path
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.body["setup_mode"] is False
     assert got.body["ui_state"] == "phone_ready"
-    assert got.body["allowed_controls"] == list(PUBLIC_CONTROL_ACTIONS)
-    for action in ("home", "recents", "notification_shade", "quick_settings"):
+    assert got.body["allowed_controls"] == public_allowed_controls(session_restrictions=True)
+    assert "notification_shade" not in got.body["allowed_controls"]
+    assert "quick_settings" not in got.body["allowed_controls"]
+    for action in ("home", "recents"):
         result = service.control_session(CUSTOMER_A, rental, {"action": action})
         assert result.http_status == 200, action
-    assert {c[0] for c in platform.calls} >= {"home", "recents", "notification_shade", "quick_settings"}
+    shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
+    assert shade.http_status == 200 and qs.http_status == 200
+    assert shade.body["restriction"] == "shade_blocked"
+    assert qs.body["restriction"] == "shade_blocked"
+    assert {c[0] for c in platform.calls} >= {"home", "recents"}
+    assert "notification_shade" not in {c[0] for c in platform.calls}
+    assert "quick_settings" not in {c[0] for c in platform.calls}
     _ = tenant
 
 
@@ -242,6 +348,19 @@ def test_restrictions_off_restores_open_settings(tmp_path: Path):
     voidfix = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 2, "y": 2})
     assert voidfix.http_status == 200
     assert "restricted_destination" not in voidfix.body
+    farm.inspect_activity = f"{GADS_SETTINGS_PACKAGE}/.MainActivity"
+    gads_settings = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 3})
+    assert gads_settings.http_status == 200
+    assert "restricted_destination" not in gads_settings.body
+    farm.inspect_activity = f"{COMPANION_PACKAGE}/.MainActivity"
+    companion = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 4, "y": 4})
+    assert companion.http_status == 200
+    assert "restricted_destination" not in companion.body
+    shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
+    assert shade.http_status == 200 and qs.http_status == 200
+    assert "restricted_destination" not in shade.body
+    assert "restricted_destination" not in qs.body
     uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert uploaded.http_status == 200
     assert uploaded.body["placed"] is True
@@ -255,9 +374,17 @@ def test_source_does_not_restart_gads_or_use_lock_task():
     assert "lock-task" not in source.lower()
     assert "device owner" not in source.lower()
     assert "force-stop" not in source
+    assert "pm disable" not in source
+    assert "pm hide" not in source
+    assert "pm uninstall" not in source
     assert "_launch_add_esim" in source
     assert "_navigate_rental_to_add_esim" in source
     assert "recover=True" in source
+    policy = (ROOT / "application" / "session_restriction_policy.py").read_text(encoding="utf-8")
+    assert GADS_SETTINGS_PACKAGE in policy
+    assert COMPANION_PACKAGE in policy
+    assert "force-stop" not in policy
+    assert "pm disable" not in policy
     guard = (ROOT / "application" / "setup_activity_guard.py").read_text(encoding="utf-8")
     assert RECOVER_INTENT_ESIM in guard
     farm_source = (ROOT / "application" / "setup_session_farm_task.py").read_text(encoding="utf-8")
@@ -321,27 +448,30 @@ def test_nested_esim_back_is_real_back_not_home(tmp_path: Path):
     assert _recover_inspects(farm) == []
 
 
-def test_home_recents_shade_qs_rotate_stay_allowed(tmp_path: Path):
+def test_home_recents_rotate_stay_allowed_shade_qs_blocked(tmp_path: Path):
     farm = FakeFarm()
     farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
     _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
     for action, body in (
         ("home", {"action": "home"}),
         ("recents", {"action": "recents"}),
-        ("notification_shade", {"action": "notification_shade"}),
-        ("quick_settings", {"action": "quick_settings"}),
         ("rotate", {"action": "rotate", "orientation": "landscape"}),
     ):
         result = service.control_session(CUSTOMER_A, rental, body)
         assert result.http_status == 200, action
         assert "restricted_destination" not in result.body
-    assert {c[0] for c in platform.calls} >= {
-        "home",
-        "recents",
-        "notification_shade",
-        "quick_settings",
-        "rotate",
-    }
+    shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    qs = service.control_session(CUSTOMER_A, rental, {"action": "quick_settings"})
+    top = service.control_session(
+        CUSTOMER_A, rental, {"action": "swipe", "x": 100, "y": 8, "x2": 100, "y2": 400}
+    )
+    assert shade.body["restriction"] == "shade_blocked"
+    assert qs.body["restriction"] == "shade_blocked"
+    assert top.body["restriction"] == "shade_blocked"
+    assert {c[0] for c in platform.calls} >= {"home", "recents", "rotate"}
+    assert "notification_shade" not in {c[0] for c in platform.calls}
+    assert "quick_settings" not in {c[0] for c in platform.calls}
+    assert not any(c[0] == "swipe" for c in platform.calls)
     assert _recover_inspects(farm) == []
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
@@ -498,6 +628,10 @@ def test_restriction_paths_never_revoke_or_force_stop_gads(tmp_path: Path):
     service.control_session(CUSTOMER_A, rental, {"action": "settings"})
     farm.inspect_activity = "org.voidfix.smsgateway/.SmsGatewayActivity"
     service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 3})
+    farm.inspect_activity = f"{GADS_SETTINGS_PACKAGE}/.MainActivity"
+    service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 4})
+    farm.inspect_activity = f"{COMPANION_PACKAGE}/.MainActivity"
+    service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 5})
     farm.inspect_activity = "com.android.packageinstaller/.InstallStart"
     service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 4, "y": 4})
     service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
@@ -558,20 +692,19 @@ def test_nested_esim_back_and_system_nav_stay_open(tmp_path: Path):
     for action, body in (
         ("home", {"action": "home"}),
         ("recents", {"action": "recents"}),
-        ("notification_shade", {"action": "notification_shade"}),
-        ("quick_settings", {"action": "quick_settings"}),
         ("rotate", {"action": "rotate", "orientation": "portrait"}),
     ):
         result = service.control_session(CUSTOMER_A, rental, body)
         assert result.http_status == 200, action
         assert "restricted_destination" not in result.body
+    shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
+    assert shade.body["restriction"] == "shade_blocked"
     assert {c[0] for c in platform.calls} >= {
         "home",
         "recents",
-        "notification_shade",
-        "quick_settings",
         "rotate",
     }
+    assert "notification_shade" not in {c[0] for c in platform.calls}
 
 
 def test_unknown_settings_activity_fails_open(tmp_path: Path):

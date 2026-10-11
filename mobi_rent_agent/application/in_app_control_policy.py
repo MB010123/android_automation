@@ -1,17 +1,14 @@
 """Server-side allowlist for customer in-app phone control.
 
 The browser may propose semantic actions only (tap/swipe/type/back/home/recents/
-notification_shade/quick_settings/rotate). Raw keys, ADB, shell, and device
-identity are rejected here — never only in JS.
+notification_shade/quick_settings/rotate/settings/airplane_mode). Raw keys,
+ADB, shell, and device identity are rejected here — never only in JS.
 
-Assigned-customer control keeps Home, Recents, notification shade, Quick
-Settings, rotate, apps, and gestures before, during, and after eSIM
-activation. ``setup_mode`` is telemetry only and does not gate this allowlist.
-A semantic ``settings`` action opens the allowlisted Add eSIM screen, not the
-Settings homepage. Bottom-edge swipes and status-bar pull-downs are forwarded
-as normal navigation. Session-layer redirects (Settings → Add eSIM, Back from
-eSIM root → Home, VoidFix/admin → Home) are applied in
-``session_restriction_policy`` after this allowlist.
+Assigned-customer control keeps Home, Recents, rotate, apps, and bottom-edge
+gestures. When session restrictions are on, notification shade / Quick
+Settings actions and top-edge pull-downs are accepted here then redirected
+by ``session_restriction_policy``. ``airplane_mode`` is a dedicated on/off
+request; it never opens Quick Settings. ``setup_mode`` is telemetry only.
 """
 from __future__ import annotations
 
@@ -26,11 +23,15 @@ READY_EXTRA_ACTIONS = (
     "quick_settings",
     "rotate",
     "settings",
+    "airplane_mode",
 )
 PUBLIC_CONTROL_ACTIONS = SETUP_ALLOWED_ACTIONS + READY_EXTRA_ACTIONS
 ALLOWED_ACTIONS = frozenset(PUBLIC_CONTROL_ACTIONS)
 NAV_ACTIONS = frozenset({"back", "home", "recents", "notification_shade", "quick_settings"})
 SETTINGS_ACTIONS = frozenset({"settings"})
+AIRPLANE_ACTIONS = frozenset({"airplane_mode"})
+RESTRICTED_HIDDEN_CONTROLS = frozenset({"notification_shade", "quick_settings"})
+AIRPLANE_STATES = frozenset({"on", "off"})
 _ACTION_ALIASES = {
     "overview": "recents",
     "recent": "recents",
@@ -87,6 +88,7 @@ _TAP_KEYS = frozenset({"action", "x", "y"})
 _TYPE_KEYS = frozenset({"action", "text"})
 _NAV_KEYS = frozenset({"action"})
 _ROTATE_KEYS = frozenset({"action", "orientation"})
+_AIRPLANE_KEYS = frozenset({"action", "state"})
 _SWIPE_KEYS = frozenset(
     {
         "action",
@@ -114,6 +116,7 @@ class ControlCommand:
     text: str | None = None
     duration_ms: int | None = None
     orientation: str | None = None
+    state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,17 +126,25 @@ class ControlDecision:
     reason: str = ""
 
 
-def public_allowed_controls(*, setup_mode: bool = False) -> list[str]:
-    """Full normal Android actions from session start. ``setup_mode`` is unused."""
+def public_allowed_controls(
+    *,
+    setup_mode: bool = False,
+    session_restrictions: bool = True,
+) -> list[str]:
+    """Customer-visible control names. Shade/QS are hidden while restrictions are on."""
     _ = setup_mode
-    return list(PUBLIC_CONTROL_ACTIONS)
+    actions = list(PUBLIC_CONTROL_ACTIONS)
+    if session_restrictions:
+        return [action for action in actions if action not in RESTRICTED_HIDDEN_CONTROLS]
+    return actions
 
 
 def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = False) -> ControlDecision:
     """Validate a customer control body. Fail closed on anything unknown.
 
     ``setup_mode`` is accepted for call-site compatibility and does not restrict
-    Home, Recents, shade, Quick Settings, rotate, or shade swipes.
+    Home, Recents, rotate, or bottom-edge swipes. Shade/QS stay parseable so
+    session restrictions can redirect them.
     """
     _ = setup_mode
     if not isinstance(payload, Mapping):
@@ -154,6 +165,14 @@ def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = Fals
         if extra:
             return ControlDecision(False, reason="invalid_control")
         return ControlDecision(True, ControlCommand(action=action))
+    if action in AIRPLANE_ACTIONS:
+        extra = {k for k in payload if k not in _AIRPLANE_KEYS}
+        if extra:
+            return ControlDecision(False, reason="invalid_control")
+        state = str(payload.get("state") or "").strip().lower()
+        if state not in AIRPLANE_STATES:
+            return ControlDecision(False, reason="invalid_control")
+        return ControlDecision(True, ControlCommand(action="airplane_mode", state=state))
     if action == "rotate":
         extra = {k for k in payload if k not in _ROTATE_KEYS}
         if extra:

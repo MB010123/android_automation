@@ -1,0 +1,85 @@
+"""Customer airplane_mode action: authorized 501, no Android bypass."""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from application.remote_access_service import AIRPLANE_MODE_UNSUPPORTED_MESSAGE
+from tests.fakes_supabase import MemoryTenant
+from tests.test_esim_setup_mode import _assert_no_internals, _slot2_service
+from tests.test_remote_access_poc import CUSTOMER_A, CUSTOMER_B, FakeFarm, _rental
+
+
+def test_authorized_airplane_mode_is_unsupported_without_bypass(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, platform, farm, service, _store, rental = _slot2_service(tmp_path, farm=farm)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    for state in ("on", "off"):
+        result = service.control_session(
+            CUSTOMER_A, rental, {"action": "airplane_mode", "state": state}
+        )
+        assert result.http_status == 501, state
+        assert result.body["ok"] is False
+        assert result.body["error"] == "action_not_supported"
+        assert result.body["message"] == AIRPLANE_MODE_UNSUPPORTED_MESSAGE
+        _assert_no_internals(result.body)
+        assert "serial" not in json.dumps(result.body)
+        assert "udid" not in json.dumps(result.body).lower()
+    assert not any(t["type"] == "airplane_cycle" for t in farm.tasks)
+    assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
+    source = (ROOT / "application" / "remote_access_service.py").read_text(encoding="utf-8")
+    airplane = source.split("def _airplane_mode_unsupported", 1)[1].split("def ", 1)[0]
+    assert "settings put" not in airplane
+    assert "cmd connectivity" not in airplane
+    assert "airplane_cycle" not in airplane
+    assert "WRITE_SECURE_SETTINGS" not in airplane
+
+
+def test_airplane_mode_rejects_other_rental_and_device_targeting(tmp_path: Path):
+    farm = FakeFarm()
+    tenant, _platform, farm, service, _store, rental = _slot2_service(tmp_path, farm=farm)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    stolen = service.control_session(
+        CUSTOMER_B, rental, {"action": "airplane_mode", "state": "on"}
+    )
+    assert stolen.http_status == 403
+    assert stolen.body["error"] == "rental_not_owned"
+    for key, value in (
+        ("slot_id", 2),
+        ("udid", "OTHER"),
+        ("serial", "OTHER"),
+        ("workspace_id", "ws-other"),
+    ):
+        denied = service.control_session(
+            CUSTOMER_A, rental, {"action": "airplane_mode", "state": "off", key: value}
+        )
+        assert denied.http_status == 403, key
+        assert denied.body["error"] == "forbidden_control"
+    other = _rental(tenant, bay=3, user_id=CUSTOMER_A)
+    unassigned = service.control_session(
+        CUSTOMER_A, other, {"action": "airplane_mode", "state": "on"}
+    )
+    assert unassigned.http_status in {403, 404, 409, 503}
+    assert unassigned.body.get("ok") is False
+    done = service.complete_setup(CUSTOMER_A, rental)
+    assert done.http_status == 200
+    inactive = service.control_session(
+        CUSTOMER_A, rental, {"action": "airplane_mode", "state": "on"}
+    )
+    assert inactive.http_status in {403, 404, 409}
+    assert inactive.body.get("ok") is False
+    assert not any(t["type"] == "airplane_cycle" for t in farm.tasks)
+
+
+def test_airplane_mode_missing_state_is_invalid(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, _platform, farm, service, _store, rental = _slot2_service(tmp_path, farm=farm)
+    assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
+    missing = service.control_session(CUSTOMER_A, rental, {"action": "airplane_mode"})
+    assert missing.http_status == 422
+    assert missing.body["error"] == "invalid_control"
+    assert not any(t["type"] == "airplane_cycle" for t in farm.tasks)

@@ -143,8 +143,10 @@ def test_allowed_tap_swipe_and_blocked_controls(tmp_path: Path):
         CUSTOMER_A, rental, {"action": "swipe", "x": 10, "y": 5, "x2": 10, "y2": 400}
     )
     assert shade.http_status == 200
+    assert shade.body["restriction"] == "shade_blocked"
     native_shade = service.control_session(CUSTOMER_A, rental, {"action": "notification_shade"})
     assert native_shade.http_status == 200
+    assert native_shade.body["restriction"] == "shade_blocked"
     assert service.control_session(CUSTOMER_A, rental, {"action": "keyevent"}).http_status == 403
     adb = service.control_session(
         CUSTOMER_A, rental, {"action": "tap", "x": 1, "y": 1, "adb_command": "reboot"}

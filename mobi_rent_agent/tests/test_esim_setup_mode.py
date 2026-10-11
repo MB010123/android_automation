@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT))
 
 from application.farm_agent_tasks import FarmTaskRequest, execute_farm_task
 from application.farm_task_executor import FarmTaskExecutorDeps
-from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS, decide_control
+from application.in_app_control_policy import decide_control, public_allowed_controls
 from application.setup_activity_guard import RECOVER_INTENT_ESIM
 from application.vps_farm_management_service import DEVICE_CLEANUP_DETAIL
 from tests.fakes_supabase import MemoryTenant
@@ -26,7 +26,7 @@ from tests.test_remote_access_poc import (
     _service,
 )
 
-FULL_CONTROLS = list(PUBLIC_CONTROL_ACTIONS)
+FULL_CONTROLS = public_allowed_controls(session_restrictions=True)
 
 
 def _slot2_service(tmp_path: Path, *, farm: FakeFarm | None = None, platform: FakePlatform | None = None):
@@ -107,16 +107,19 @@ def _assert_full_nav_forwarded(service, platform, owner: str, rental: str) -> No
     ):
         assert result.http_status == 200, result.body
         _assert_no_internals(result.body)
+    assert shade.body["restriction"] == "shade_blocked"
+    assert qs.body["restriction"] == "shade_blocked"
+    assert shade_swipe.body["restriction"] == "shade_blocked"
     assert {c[0] for c in platform.calls} >= {
         "home",
         "recents",
-        "notification_shade",
-        "quick_settings",
         "rotate",
         "tap",
         "swipe",
         "type",
     }
+    assert "notification_shade" not in {c[0] for c in platform.calls}
+    assert "quick_settings" not in {c[0] for c in platform.calls}
 
 
 def test_unconfirmed_phone_allows_full_android_access(tmp_path: Path):

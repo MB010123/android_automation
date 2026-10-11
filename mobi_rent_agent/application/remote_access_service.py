@@ -46,7 +46,9 @@ from application.session_restriction_policy import (
     KIND_LAUNCHER,
     KIND_UNKNOWN,
     REASON_QR_NAVIGATE,
+    REASON_SHADE_BLOCKED,
     REASON_SETTINGS_REDIRECT,
+    SHADE_ACTIONS,
     add_esim_public_body,
     classify_foreground_activity,
     decide_restriction,
@@ -91,6 +93,10 @@ PREPARE_IN_PROGRESS = frozenset(
 
 REMOTE_ACCESS_PLACE_QR_TASK = "remote_access_place_qr"
 REMOTE_ACCESS_ACTIVATION_TASK = "remote_access_activation_status"
+AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
+    "Airplane Mode cannot be changed through this rental session. "
+    "Android 16 does not allow the current Farm/GADS/companion path to toggle it."
+)
 
 _RENTAL_END_KEYS = ("ends_at", "end_at", "rental_end", "rental_ends_at", "expires_at", "end_time")
 
@@ -520,7 +526,7 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            body = {"ok": True, **existing.to_public_dict(now)}
+            body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
         self.initialize_new_rental_state(
@@ -580,7 +586,7 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        body = {"ok": True, **session.to_public_dict(now)}
+        body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
     def get_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
@@ -598,7 +604,7 @@ class RemoteAccessService:
         if session.is_active(now) and session.prepare_state not in PREPARE_IN_PROGRESS:
             evidence = self._observe_activation(auth, force=False)
             session = self._store.get(auth.rental_id) or session
-        body = {"ok": True, **session.to_public_dict(self._clock())}
+        body = {"ok": True, **self._session_public(session)}
         if evidence:
             body["activation_evidence"] = evidence
         return ApiResult(200, body)
@@ -1009,7 +1015,7 @@ class RemoteAccessService:
         session = self._store.get(auth.rental_id)
         now = self._clock()
         if session is not None:
-            public = session.to_public_dict(now)
+            public = self._session_public(session, now)
         else:
             public = {
                 "setup_phase": "esim",
@@ -1115,7 +1121,7 @@ class RemoteAccessService:
                         "slot_id": auth.slot_id,
                         "job_id": current.prepare_job_id,
                         "prepare_state": current.prepare_state,
-                        **current.to_public_dict(self._clock()),
+                        **self._session_public(current),
                     },
                 )
             if current is not None and current.prepare_state == PREPARE_READY:
@@ -1127,7 +1133,7 @@ class RemoteAccessService:
                         "slot_id": auth.slot_id,
                         "job_id": current.prepare_job_id,
                         "prepare_state": PREPARE_READY,
-                        **current.to_public_dict(self._clock()),
+                        **self._session_public(current),
                     },
                 )
             job_id = str(uuid.uuid4())
@@ -1217,10 +1223,10 @@ class RemoteAccessService:
         if isinstance(session, ApiResult):
             return session
         if session.prepare_state in PREPARE_IN_PROGRESS:
-            return ApiResult(200, {"ok": True, **session.to_public_dict(self._clock())})
+            return ApiResult(200, {"ok": True, **self._session_public(session)})
         evidence = self._observe_activation(auth, force=True)
         refreshed = self._store.get(auth.rental_id) or session
-        body = {"ok": True, **refreshed.to_public_dict(self._clock())}
+        body = {"ok": True, **self._session_public(refreshed)}
         if evidence:
             body["activation_evidence"] = evidence
         return ApiResult(200, body)
@@ -1499,6 +1505,19 @@ class RemoteAccessService:
     ) -> bool | ApiResult:
         return self._forward_control(platform, session, secret, ControlCommand(action="home"))
 
+    def _airplane_mode_unsupported(self) -> ApiResult:
+        """No approved Android 16 path. Do not call settings/cmd/root/DO."""
+        return ApiResult(
+            501,
+            error_body("action_not_supported", message=AIRPLANE_MODE_UNSUPPORTED_MESSAGE),
+        )
+
+    def _session_public(self, session: RemoteAccessSession, now: float | None = None) -> dict:
+        return session.to_public_dict(
+            self._clock() if now is None else now,
+            session_restrictions=self._session_restrictions,
+        )
+
     def _forward_restricted_control(
         self,
         platform: RemoteAccessPlatform,
@@ -1506,6 +1525,8 @@ class RemoteAccessService:
         secret: str,
         command: ControlCommand,
     ) -> tuple[bool | ApiResult, dict[str, str]]:
+        if command.action == "airplane_mode":
+            return self._airplane_mode_unsupported(), {}
         if not self._session_restrictions:
             if command.action == "settings":
                 # No GADS/Farm settings endpoint. Rollback must not 502 or launch Add eSIM.
@@ -1513,12 +1534,30 @@ class RemoteAccessService:
             return self._forward_control(platform, session, secret, command), {}
         if command.action == "settings":
             return self._forward_restricted_settings(platform, session, secret)
+        if command.action in SHADE_ACTIONS:
+            return self._forward_restricted_shade(platform, session, secret, command)
         if command.action == "back":
             return self._forward_restricted_back(platform, session, secret, command)
+        if command.action == "swipe":
+            shade = decide_restriction(
+                action="swipe",
+                activity=None,
+                voidfix_package=self._voidfix_package,
+                inspect_failed=False,
+                x=command.x,
+                y=command.y,
+                x2=command.x2,
+                y2=command.y2,
+            )
+            if shade.reason == REASON_SHADE_BLOCKED and not shade.allow_original:
+                applied = self._apply_restriction_navigation(platform, session, secret, shade)
+                if isinstance(applied, ApiResult):
+                    return applied, public_restriction_body(shade)
+                return True, public_restriction_body(shade)
         forwarded = self._forward_control(platform, session, secret, command)
         if forwarded is not True:
             return forwarded, {}
-        if command.action not in {"tap", "swipe", "type", "quick_settings"}:
+        if command.action not in {"tap", "swipe", "type"}:
             return True, {}
         return True, self._enforce_foreground(
             platform,
@@ -1526,6 +1565,25 @@ class RemoteAccessService:
             secret,
             retry_unresolved=command.action in {"tap", "swipe"},
         )
+
+    def _forward_restricted_shade(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+        command: ControlCommand,
+    ) -> tuple[bool | ApiResult, dict[str, str]]:
+        # Shade/QS actions always go Home. Do not inspect — decision is action-only.
+        decision = decide_restriction(
+            action=command.action,
+            activity=None,
+            voidfix_package=self._voidfix_package,
+            inspect_failed=False,
+        )
+        applied = self._apply_restriction_navigation(platform, session, secret, decision)
+        if isinstance(applied, ApiResult):
+            return applied, public_restriction_body(decision)
+        return True, public_restriction_body(decision)
 
     def _forward_restricted_settings(
         self,
@@ -1739,7 +1797,7 @@ class RemoteAccessService:
         self._record(slot_id, f"remote_access_{status}", f"rental_id={rental_id}")
         body = {"ok": True, "platform_revoked": revoked}
         if ended is not None:
-            body.update(ended.to_public_dict(self._clock()))
+            body.update(self._session_public(ended))
         return ApiResult(200, body)
 
     def _revoke_if_active_session(self, rental_id: str, slot_id: int) -> None:

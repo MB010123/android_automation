@@ -59,10 +59,9 @@ def test_create_reuses_session_and_hides_internals(tmp_path: Path):
         "back",
         "home",
         "recents",
-        "notification_shade",
-        "quick_settings",
         "rotate",
         "settings",
+        "airplane_mode",
     ]
     assert first.body["setup_mode"] is True
     assert "denied_controls" not in first.body
@@ -133,8 +132,10 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
         CUSTOMER_A, rental, {"action": "rotate", "orientation": "portrait"}
     )
     assert home.http_status == 200 and recents.http_status == 200
-    assert shade_cmd.http_status == 200 and qs.http_status == 200
-    assert shade_swipe.http_status == 200 and rotated.http_status == 200
+    assert shade_cmd.body["restriction"] == "shade_blocked"
+    assert qs.body["restriction"] == "shade_blocked"
+    assert shade_swipe.body["restriction"] == "shade_blocked"
+    assert rotated.http_status == 200
     assert {c[0] for c in platform.calls} >= {
         "tap",
         "swipe",
@@ -142,16 +143,16 @@ def test_stream_uses_existing_session_and_control_is_independent(tmp_path: Path)
         "back",
         "home",
         "recents",
-        "notification_shade",
-        "quick_settings",
         "rotate",
     }
+    assert "notification_shade" not in {c[0] for c in platform.calls}
+    assert "quick_settings" not in {c[0] for c in platform.calls}
     assert store.get(rental).is_active(1_000_000.0)
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
     swipe_calls = [c for c in platform.calls if c[0] == "swipe"]
     assert swipe_calls[0][1]["duration_ms"] == 250
     assert any(c[1]["y"] == 2900 and c[1]["y2"] == 2000 for c in swipe_calls)
-    assert any(c[1]["y"] == 5 and c[1]["y2"] == 400 for c in swipe_calls)
+    assert not any(c[1]["y"] == 5 and c[1]["y2"] == 400 for c in swipe_calls)
 
 
 def test_stream_and_control_concurrently(tmp_path: Path):

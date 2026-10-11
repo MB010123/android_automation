@@ -7,7 +7,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.in_app_control_policy import PUBLIC_CONTROL_ACTIONS, decide_control, public_allowed_controls
+from application.in_app_control_policy import (
+    PUBLIC_CONTROL_ACTIONS,
+    decide_control,
+    public_allowed_controls,
+)
 
 
 def test_allowed_tap_and_swipe():
@@ -51,6 +55,7 @@ def test_type_back_home_and_recents_allowed():
         "quick_settings",
         "rotate",
         "settings",
+        "airplane_mode",
     )
     assert decide_control({"action": "settings"}).allowed is True
     assert decide_control({"action": "android_settings"}).command.action == "settings"
@@ -70,8 +75,20 @@ def test_setup_mode_does_not_restrict_system_nav():
     assert decide_control({"action": "recents"}).allowed is True
     assert decide_control({"action": "notification_shade"}).allowed is True
     assert decide_control({"action": "quick_settings"}).allowed is True
-    assert public_allowed_controls(setup_mode=True) == list(PUBLIC_CONTROL_ACTIONS)
-    assert public_allowed_controls(setup_mode=False) == list(PUBLIC_CONTROL_ACTIONS)
+    hidden = public_allowed_controls(setup_mode=True)
+    assert "notification_shade" not in hidden and "quick_settings" not in hidden
+    assert "home" in hidden and "airplane_mode" in hidden
+    assert public_allowed_controls(setup_mode=False, session_restrictions=False) == list(
+        PUBLIC_CONTROL_ACTIONS
+    )
+    on = decide_control({"action": "airplane_mode", "state": "on"})
+    assert on.allowed is True and on.command is not None and on.command.state == "on"
+    off = decide_control({"action": "airplane_mode", "state": "off"})
+    assert off.allowed is True and off.command is not None and off.command.state == "off"
+    assert decide_control({"action": "airplane_mode"}).allowed is False
+    assert decide_control({"action": "airplane_mode", "state": "on", "udid": "X"}).reason == (
+        "forbidden_control"
+    )
 
 
 def test_bottom_edge_upward_swipe_is_normal_navigation():
@@ -85,7 +102,7 @@ def test_bottom_edge_upward_swipe_is_normal_navigation():
     assert setup.allowed is True
 
 
-def test_shade_swipe_allowed_before_and_after_ready():
+def test_shade_swipe_is_parseable_then_restricted_by_session_policy():
     payload = {"action": "swipe", "x": 100, "y": 10, "x2": 100, "y2": 500}
     during_setup = decide_control(payload, setup_mode=True)
     assert during_setup.allowed is True and during_setup.command is not None

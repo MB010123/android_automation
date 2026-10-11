@@ -1,9 +1,12 @@
 """Targeted customer-rental restrictions. Not the old setup-mode kiosk.
 
-Home, Recents, shade, Quick Settings, rotate, and normal apps stay allowed.
-Settings opens the allowlisted Add eSIM entry point. Back from the eSIM root
-goes Home. VoidFix and other admin surfaces are sent Home. Enforcement is
-session-layer only: GADS home or Farm ``am start`` of
+Home, Recents, rotate, and normal apps stay allowed. Notification shade and
+Quick Settings are blocked (semantic actions and top-edge pull-downs). If
+shade/QS is already visible, send Home. Settings opens the allowlisted Add
+eSIM entry point. Back from the eSIM root goes Home. VoidFix, GADS Settings,
+Companion UI, and other admin surfaces are sent Home. GADS streaming /
+MediaProjection / IME components stay allowed. Enforcement is session-layer
+only: GADS home or Farm ``am start`` of
 ``android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS``. Never restart GADS,
 never lock-task, never recover-loop when the customer is on Home.
 """
@@ -20,14 +23,20 @@ KIND_LAUNCHER = "launcher"
 KIND_ESIM_ROOT = "esim_root"
 KIND_ESIM_NESTED = "esim_nested"
 KIND_SETTINGS = "settings"
+KIND_SHADE = "shade"
 KIND_BLOCKED_APP = "blocked_app"
 KIND_OTHER = "other"
 KIND_UNKNOWN = "unknown"
 
 REASON_SETTINGS_REDIRECT = "settings_redirected"
 REASON_SENSITIVE_BLOCKED = "sensitive_app_blocked"
+REASON_SHADE_BLOCKED = "shade_blocked"
 REASON_ESIM_BACK_HOME = "esim_back_to_home"
 REASON_QR_NAVIGATE = "qr_navigated_to_add_esim"
+
+SHADE_ACTIONS = frozenset({"notification_shade", "quick_settings"})
+SHADE_PULL_MAX_START_Y = 120
+SHADE_PULL_MIN_DISTANCE = 40
 
 # Observed on Pixel 6 Slot 11 (sms role dump) plus the test fixture package.
 KNOWN_VOIDFIX_PACKAGES = frozenset(
@@ -35,6 +44,23 @@ KNOWN_VOIDFIX_PACKAGES = frozenset(
         "org.voidfix.smsgateway",
         "com.voidfix.app",
     }
+)
+
+# Exact identities already used by this system. Do not invent aliases.
+# GADS provider/devices/android.go getStreamServicePackageName / IME / cleanup.
+GADS_SETTINGS_PACKAGE = "com.gads.settings"
+# android_companion AndroidManifest package.
+COMPANION_PACKAGE = "com.mobirent.companion"
+
+# Components hosted in com.gads.settings that are required for remote access.
+# From GADS provider/devices/android.go — not the operator Settings UI.
+_GADS_REMOTE_ACCESS_MARKERS = (
+    "mjpegscreencapture",
+    "audioprojection",
+    "audioservice",
+    "remotekeyboardime",
+    "remotecontrolserver",
+    "h264server",
 )
 
 # Existing Farm allowlisted intent. Do not invent a new component/package.
@@ -129,6 +155,17 @@ _BLOCKED_APP_MARKERS = (
     "deviceadmin",
     "developmentsettings",
 )
+_SHADE_PACKAGES = frozenset({"com.android.systemui"})
+_SHADE_MARKERS = (
+    "notificationshade",
+    "notificationpanel",
+    "quicksettings",
+    "qspanel",
+    ".shade.",
+    "/shade/",
+    "expandnotifications",
+    "expandsettings",
+)
 _DIALOG_MARKERS = (
     "dialog",
     "alertdialog",
@@ -163,6 +200,37 @@ def voidfix_packages(configured: str | None = None) -> frozenset[str]:
     return frozenset(packages)
 
 
+def operator_ui_packages() -> frozenset[str]:
+    """Customer-blocked operator UIs. Same Home policy as VoidFix."""
+    return frozenset({GADS_SETTINGS_PACKAGE, COMPANION_PACKAGE})
+
+
+def _is_gads_remote_access(package: str, lowered: str) -> bool:
+    return package == GADS_SETTINGS_PACKAGE and any(
+        marker in lowered for marker in _GADS_REMOTE_ACCESS_MARKERS
+    )
+
+
+def is_shade_pull_swipe(
+    *,
+    y: int | None,
+    y2: int | None,
+    x: int | None = None,
+    x2: int | None = None,
+) -> bool:
+    """True for a downward pull that starts at the status-bar edge."""
+    if y is None or y2 is None:
+        return False
+    if y > SHADE_PULL_MAX_START_Y:
+        return False
+    dy = int(y2) - int(y)
+    if dy < SHADE_PULL_MIN_DISTANCE:
+        return False
+    start_x = 0 if x is None else int(x)
+    end_x = start_x if x2 is None else int(x2)
+    return dy >= abs(end_x - start_x)
+
+
 def classify_foreground_activity(
     activity: str | None,
     *,
@@ -176,6 +244,14 @@ def classify_foreground_activity(
     expected = voidfix_packages(voidfix_package)
     if package in expected or "voidfix" in package.lower():
         return ActivityClass(KIND_BLOCKED_APP, component, "voidfix")
+    if _is_gads_remote_access(package, lowered):
+        return ActivityClass(KIND_OTHER, component, "gads_remote_access")
+    if package == GADS_SETTINGS_PACKAGE:
+        return ActivityClass(KIND_BLOCKED_APP, component, "gads_settings")
+    if package == COMPANION_PACKAGE:
+        return ActivityClass(KIND_BLOCKED_APP, component, "companion")
+    if package in _SHADE_PACKAGES and any(marker in lowered for marker in _SHADE_MARKERS):
+        return ActivityClass(KIND_SHADE, component, "shade")
     if any(marker in lowered for marker in _LAUNCHER_MARKERS):
         return ActivityClass(KIND_LAUNCHER, component, "launcher")
     if package in _ESIM_NESTED_PACKAGES or any(marker in lowered for marker in _ESIM_NESTED_MARKERS):
@@ -202,9 +278,14 @@ def decide_restriction(
     activity: str | None,
     voidfix_package: str | None = None,
     inspect_failed: bool = False,
+    x: int | None = None,
+    y: int | None = None,
+    x2: int | None = None,
+    y2: int | None = None,
 ) -> RestrictionDecision:
     """Decide a one-shot restriction for this control. Never a recover loop."""
     current = str(action or "").strip().lower()
+    shade_pull = current == "swipe" and is_shade_pull_swipe(y=y, y2=y2, x=x, x2=x2)
     if inspect_failed:
         if current == "settings":
             return RestrictionDecision(
@@ -213,8 +294,28 @@ def decide_restriction(
                 launch_esim=True,
                 allow_original=False,
             )
+        if current in SHADE_ACTIONS:
+            return RestrictionDecision(
+                DEST_HOME,
+                REASON_SHADE_BLOCKED,
+                rewrite_action="home",
+                send_home=True,
+                allow_original=False,
+            )
+        if shade_pull:
+            return RestrictionDecision(None, REASON_SHADE_BLOCKED, allow_original=False)
         return RestrictionDecision(None, "inspect_unavailable")
     classified = classify_foreground_activity(activity, voidfix_package=voidfix_package)
+    if current in SHADE_ACTIONS:
+        return RestrictionDecision(
+            DEST_HOME,
+            REASON_SHADE_BLOCKED,
+            rewrite_action="home",
+            send_home=True,
+            allow_original=False,
+        )
+    if shade_pull:
+        return RestrictionDecision(None, REASON_SHADE_BLOCKED, allow_original=False)
     if current == "settings":
         return RestrictionDecision(
             DEST_ADD_ESIM,
@@ -241,6 +342,14 @@ def decide_restriction(
                 send_home=True,
                 allow_original=False,
             )
+        if classified.kind == KIND_SHADE:
+            return RestrictionDecision(
+                DEST_HOME,
+                REASON_SHADE_BLOCKED,
+                rewrite_action="home",
+                send_home=True,
+                allow_original=False,
+            )
         return RestrictionDecision(None, "allow_back", allow_original=True)
     if classified.kind == KIND_SETTINGS:
         return RestrictionDecision(
@@ -257,10 +366,22 @@ def decide_restriction(
             send_home=True,
             allow_original=True,
         )
+    if classified.kind == KIND_SHADE:
+        return RestrictionDecision(
+            DEST_HOME,
+            REASON_SHADE_BLOCKED,
+            send_home=True,
+            allow_original=True,
+        )
     return RestrictionDecision(None, "allow")
 
 
 def public_restriction_body(decision: RestrictionDecision) -> dict[str, str]:
+    if decision.reason == REASON_SHADE_BLOCKED:
+        body = {"restriction": REASON_SHADE_BLOCKED}
+        if decision.destination:
+            body["restricted_destination"] = decision.destination
+        return body
     if not decision.destination:
         return {}
     return {
