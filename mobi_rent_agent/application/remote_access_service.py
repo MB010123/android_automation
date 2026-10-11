@@ -43,9 +43,12 @@ from application.in_app_control_policy import (
     decide_control,
 )
 from application.session_restriction_policy import (
+    KIND_LAUNCHER,
+    KIND_UNKNOWN,
     REASON_QR_NAVIGATE,
     REASON_SETTINGS_REDIRECT,
     add_esim_public_body,
+    classify_foreground_activity,
     decide_restriction,
     public_restriction_body,
 )
@@ -1509,10 +1512,7 @@ class RemoteAccessService:
                 return True, {}
             return self._forward_control(platform, session, secret, command), {}
         if command.action == "settings":
-            launched = self._launch_add_esim(session.slot_id)
-            if isinstance(launched, ApiResult):
-                return launched, {}
-            return True, add_esim_public_body(reason=REASON_SETTINGS_REDIRECT)
+            return self._forward_restricted_settings(platform, session, secret)
         if command.action == "back":
             return self._forward_restricted_back(platform, session, secret, command)
         forwarded = self._forward_control(platform, session, secret, command)
@@ -1520,7 +1520,30 @@ class RemoteAccessService:
             return forwarded, {}
         if command.action not in {"tap", "swipe", "type", "quick_settings"}:
             return True, {}
-        return True, self._enforce_foreground(platform, session, secret)
+        return True, self._enforce_foreground(
+            platform,
+            session,
+            secret,
+            retry_unresolved=command.action in {"tap", "swipe"},
+        )
+
+    def _forward_restricted_settings(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+    ) -> tuple[bool | ApiResult, dict[str, str]]:
+        activity, inspect_failed = self._foreground_activity(session)
+        decision = decide_restriction(
+            action="settings",
+            activity=activity,
+            voidfix_package=self._voidfix_package,
+            inspect_failed=inspect_failed,
+        )
+        applied = self._apply_restriction_navigation(platform, session, secret, decision)
+        if isinstance(applied, ApiResult):
+            return applied, {}
+        return True, add_esim_public_body(reason=REASON_SETTINGS_REDIRECT)
 
     def _forward_restricted_back(
         self,
@@ -1550,29 +1573,75 @@ class RemoteAccessService:
         after = self._enforce_foreground(platform, session, secret)
         return True, after or extra
 
+    def _foreground_activity(
+        self,
+        session: RemoteAccessSession,
+        *,
+        retry_unresolved: bool = False,
+    ) -> tuple[str | None, bool]:
+        details = self._inspect_session(session.slot_id, recover=False)
+        if isinstance(details, ApiResult):
+            return None, True
+        activity = str(details.get("activity") or "").strip() or None
+        if not retry_unresolved:
+            return activity, False
+        kind = classify_foreground_activity(
+            activity, voidfix_package=self._voidfix_package
+        ).kind
+        if kind not in {KIND_LAUNCHER, KIND_UNKNOWN}:
+            return activity, False
+        again = self._inspect_session(session.slot_id, recover=False)
+        if isinstance(again, ApiResult):
+            return activity, False
+        retry = str(again.get("activity") or "").strip() or None
+        return retry or activity, False
+
+    def _apply_restriction_navigation(
+        self,
+        platform: RemoteAccessPlatform,
+        session: RemoteAccessSession,
+        secret: str,
+        decision,
+    ) -> bool | ApiResult | None:
+        """One-shot Home and/or Add eSIM. Never a recover loop."""
+        if decision.escape_settings:
+            self._send_restriction_home(platform, session, secret)
+        if decision.launch_esim:
+            launched = self._launch_add_esim(session.slot_id)
+            if isinstance(launched, ApiResult):
+                if not decision.allow_original:
+                    return launched
+                return None
+            return True
+        if decision.send_home:
+            home_sent = self._send_restriction_home(platform, session, secret)
+            if home_sent is True:
+                return True
+            return None
+        return None
+
     def _enforce_foreground(
         self,
         platform: RemoteAccessPlatform,
         session: RemoteAccessSession,
         secret: str,
+        *,
+        retry_unresolved: bool = False,
     ) -> dict[str, str]:
-        details = self._inspect_session(session.slot_id, recover=False)
-        if isinstance(details, ApiResult):
+        activity, inspect_failed = self._foreground_activity(
+            session, retry_unresolved=retry_unresolved
+        )
+        if inspect_failed:
             return {}
         decision = decide_restriction(
             action="tap",
-            activity=str(details.get("activity") or "").strip() or None,
+            activity=activity,
             voidfix_package=self._voidfix_package,
+            inspect_failed=False,
         )
-        if decision.launch_esim:
-            launched = self._launch_add_esim(session.slot_id)
-            if isinstance(launched, ApiResult):
-                return {}
+        applied = self._apply_restriction_navigation(platform, session, secret, decision)
+        if applied is True:
             return public_restriction_body(decision)
-        if decision.send_home:
-            home_sent = self._send_restriction_home(platform, session, secret)
-            if home_sent is True:
-                return public_restriction_body(decision)
         return {}
 
     def _forward_control(

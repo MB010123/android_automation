@@ -55,6 +55,7 @@ def test_settings_redirects_to_add_esim_not_homepage(tmp_path: Path):
     assert tapped.http_status == 200
     assert tapped.body["restricted_destination"] == "add_esim"
     assert any(c[0] == "tap" for c in platform.calls)
+    assert any(c[0] == "home" for c in platform.calls)
     assert not any(c[0] == "revoke" for c in platform.calls)
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
@@ -512,3 +513,93 @@ def test_restriction_paths_never_revoke_or_force_stop_gads(tmp_path: Path):
         assert "release_device" not in fragment
         assert "force-stop" not in fragment
         assert "MediaProjection" not in fragment
+
+
+def test_slot18_settings_homepage_escapes_to_add_esim_not_parent_settings(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.android.settings/.Settings"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    opened = service.control_session(CUSTOMER_A, rental, {"action": "settings"})
+    assert opened.http_status == 200
+    assert opened.body["restricted_destination"] == "add_esim"
+    assert any(c[0] == "home" for c in platform.calls)
+    recoveries = _recover_inspects(farm)
+    assert len(recoveries) == 1
+    farm.inspect_activity = "com.android.settings/com.android.settings.Settings"
+    platform.calls.clear()
+    farm.tasks.clear()
+    tapped = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 80, "y": 80})
+    assert tapped.http_status == 200
+    assert tapped.body["restricted_destination"] == "add_esim"
+    assert any(c[0] == "tap" for c in platform.calls)
+    assert any(c[0] == "home" for c in platform.calls)
+    assert not any(t["type"] == "provision_esim" for t in farm.tasks)
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+
+
+def test_nested_esim_back_and_system_nav_stay_open(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.google.android.euicc/.ui.ConfirmDownloadActivity"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    nested = service.control_session(CUSTOMER_A, rental, {"action": "back"})
+    assert nested.http_status == 200
+    assert "restricted_destination" not in nested.body
+    assert any(c[0] == "back" for c in platform.calls)
+    assert not any(c[0] == "home" for c in platform.calls)
+    farm.inspect_activity = "com.android.settings/.network.telephony.MobileNetworkActivity"
+    farm.inspect_allowed = True
+    platform.calls.clear()
+    root_back = service.control_session(CUSTOMER_A, rental, {"action": "back"})
+    assert root_back.body["restricted_destination"] == "home"
+    assert any(c[0] == "home" for c in platform.calls)
+    farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"
+    platform.calls.clear()
+    for action, body in (
+        ("home", {"action": "home"}),
+        ("recents", {"action": "recents"}),
+        ("notification_shade", {"action": "notification_shade"}),
+        ("quick_settings", {"action": "quick_settings"}),
+        ("rotate", {"action": "rotate", "orientation": "portrait"}),
+    ):
+        result = service.control_session(CUSTOMER_A, rental, body)
+        assert result.http_status == 200, action
+        assert "restricted_destination" not in result.body
+    assert {c[0] for c in platform.calls} >= {
+        "home",
+        "recents",
+        "notification_shade",
+        "quick_settings",
+        "rotate",
+    }
+
+
+def test_unknown_settings_activity_fails_open(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_unknown = True
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    tap = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 9, "y": 9})
+    assert tap.http_status == 200
+    assert "restricted_destination" not in tap.body
+    assert any(c[0] == "tap" for c in platform.calls)
+    assert not any(c[0] == "home" for c in platform.calls)
+
+
+def test_restrictions_can_be_toggled_without_touching_gads(tmp_path: Path):
+    farm = FakeFarm()
+    farm.inspect_activity = "com.android.settings/.Settings"
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    on = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 1, "y": 1})
+    assert on.body["restricted_destination"] == "add_esim"
+    service._session_restrictions = False
+    farm.tasks.clear()
+    platform.calls.clear()
+    off = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 2, "y": 2})
+    assert off.http_status == 200
+    assert "restricted_destination" not in off.body
+    assert _recover_inspects(farm) == []
+    service._session_restrictions = True
+    farm.inspect_activity = "com.android.settings/.Settings"
+    restored = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 3, "y": 3})
+    assert restored.body["restricted_destination"] == "add_esim"
+    assert not any(c[0] in {"revoke", "release"} for c in platform.calls)

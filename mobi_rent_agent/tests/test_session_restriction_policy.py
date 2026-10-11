@@ -47,6 +47,23 @@ def test_classify_esim_settings_voidfix_and_apps():
     )
     assert classify_foreground_activity("com.android.settings/.Settings").kind == KIND_SETTINGS
     assert (
+        classify_foreground_activity("com.android.settings/com.android.settings.Settings").kind
+        == KIND_SETTINGS
+    )
+    assert (
+        classify_foreground_activity(
+            "com.android.settings/.homepage.SettingsHomepageActivity"
+        ).kind
+        == KIND_SETTINGS
+    )
+    assert classify_foreground_activity("com.android.settings/.spa.SpaActivity").kind == KIND_SETTINGS
+    assert (
+        classify_foreground_activity(
+            "com.android.settings/.Settings$MobileNetworkListActivity"
+        ).kind
+        == KIND_ESIM_ROOT
+    )
+    assert (
         classify_foreground_activity("com.android.settings/.Settings$SecurityDashboardActivity").kind
         == KIND_SETTINGS
     )
@@ -110,6 +127,18 @@ def test_settings_and_back_decisions():
         action="tap", activity="com.android.settings/.Settings$SecurityDashboardActivity"
     )
     assert tap_settings.launch_esim is True and tap_settings.reason == REASON_SETTINGS_REDIRECT
+    assert tap_settings.escape_settings is True
+    tap_homepage = decide_restriction(action="tap", activity="com.android.settings/.Settings")
+    assert tap_homepage.escape_settings is True and tap_homepage.launch_esim is True
+    settings_from_homepage = decide_restriction(
+        action="settings", activity="com.android.settings/.Settings"
+    )
+    assert settings_from_homepage.escape_settings is True
+    settings_from_home = decide_restriction(
+        action="settings",
+        activity="com.google.android.apps.nexuslauncher/.NexusLauncherActivity",
+    )
+    assert settings_from_home.launch_esim is True and settings_from_home.escape_settings is False
     tap_voidfix = decide_restriction(
         action="tap", activity="org.voidfix.smsgateway/.SmsGatewayActivity"
     )
@@ -128,6 +157,7 @@ def test_settings_and_back_decisions():
         activity="com.android.settings/.network.telephony.MobileNetworkActivity",
     )
     assert tap_esim_root.launch_esim is False and tap_esim_root.send_home is False
+    assert tap_esim_root.escape_settings is False
     tap_installer = decide_restriction(
         action="tap",
         activity="com.android.packageinstaller/.InstallStart",

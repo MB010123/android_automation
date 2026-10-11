@@ -66,20 +66,28 @@ _ESIM_NESTED_MARKERS = (
 )
 _ESIM_ROOT_MARKERS = (
     "mobilenetwork",
+    "mobilenetworklist",
     "simsettings",
     "simsetting",
     "managesim",
     "managesims",
     "allsimprofiles",
+    "simonboarding",
+    "simonboardingactivity",
 )
 _SETTINGS_GENERIC_MARKERS = (
     "settings$settingsactivity",
     "settings.SettingsActivity",
     "/.settings",
+    "/.settings$",
     "subsettings",
     "homepage",
+    "deeplinkhomepage",
     "searchactivity",
     "networkdashboard",
+    "spaactivity",
+    "settings.spa",
+    "/.spa.",
 )
 _SENSITIVE_SETTINGS_MARKERS = (
     "security",
@@ -143,6 +151,7 @@ class RestrictionDecision:
     rewrite_action: str | None = None
     launch_esim: bool = False
     send_home: bool = False
+    escape_settings: bool = False
     allow_original: bool = True
 
 
@@ -211,6 +220,7 @@ def decide_restriction(
             DEST_ADD_ESIM,
             REASON_SETTINGS_REDIRECT,
             launch_esim=True,
+            escape_settings=classified.kind == KIND_SETTINGS,
             allow_original=False,
         )
     if current == "back":
@@ -237,6 +247,7 @@ def decide_restriction(
             DEST_ADD_ESIM,
             REASON_SETTINGS_REDIRECT,
             launch_esim=True,
+            escape_settings=True,
             allow_original=True,
         )
     if classified.kind == KIND_BLOCKED_APP:

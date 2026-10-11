@@ -674,12 +674,15 @@ Add eSIM entry point already allowlisted on Farm:
 - Cancel / complete still revoke the session and do **not** delete eSIMs
 - `inspect recover=true` is used only for that Add eSIM one-shot, never a loop
 
-**Known Android / Farm limitation:**
-Farm `setup_session_inspect` recover is a no-op when the current page is already
-classified as eSIM-allowed by `setup_activity_guard` (for example Network
-dashboard: `networkdashboard` / some `telephony` surfaces). VPS still classifies
-those as unrelated Settings and sends recover once. Closing the no-op needs a
-Farm Agent change and restart; this VPS change does not restart Farm.
+**Inspected on Pixel Slot 18 (read-only `dumpsys`, no Settings tap, no eSIM action):**
+foreground `com.android.settings/.Settings` / `com.android.settings/com.android.settings.Settings`
+(Settings homepage). That surface is unrelated Settings, not SIM management.
+
+**Settings homepage / SPA / dashboards:** when inspect sees those, the session
+layer sends GADS Home once, then the existing one-shot Add eSIM recover intent.
+That leaves the Settings stack so Farm recover cannot no-op on a still-open
+Settings page. Nested eUICC confirmation is not Homed. Unknown/failed inspect
+fails open (no trap, no GADS change). No Farm Agent or GADS change.
 
 **Not implemented (would drop GADS / MediaProjection or needs new shell):**
 - Device Owner / lock-task / hiding icons as enforcement
