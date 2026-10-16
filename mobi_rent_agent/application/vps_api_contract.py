@@ -66,6 +66,9 @@ ERROR_MESSAGES: dict[str, str] = {
     "invalid_slot": "slot_id must be a farm bay number from 1 to 20",
     "live_access_not_found": "No admin live-access session exists for this slot",
     "live_access_slot_mismatch": "This live-access session belongs to a different slot",
+    "admin_live_access_not_configured": (
+        "Admin live access is not enabled on this VPS"
+    ),
 }
 
 

@@ -114,7 +114,8 @@ hold. Admin live access cannot call it and does not fake success.
 | 429 | `rate_limited` | Per-bay / global admin live-access limiter |
 | 501 | `action_not_supported` | `airplane_mode` |
 | 502 | `gads_unavailable` | Hub/control/stream failure |
-| 503 | `phone_unavailable` | Unregistered, not GADS-enabled, or feature off |
+| 503 | `phone_unavailable` | Device is not registered with the screen service |
+| 503 | `admin_live_access_not_configured` | Admin live access is disabled and no admin UUIDs are configured |
 
 ## Configuration (VPS)
 
@@ -124,10 +125,12 @@ ADMIN_LIVE_ACCESS_ENABLED=true
 ADMIN_LIVE_ACCESS_TTL_MINUTES=15
 ```
 
-`ADMIN_LIVE_ACCESS_ENABLED` is **required**. Customer `REMOTE_ACCESS_POC_ENABLED`
-does **not** turn these routes on. Also requires the existing
-`REMOTE_ACCESS_PLATFORM_URL` / `REMOTE_ACCESS_ADMIN_USERNAME` /
-`REMOTE_ACCESS_ADMIN_PASSWORD` and `SLOT_MAP_PATH`. No new GADS user is created.
+`ADMIN_LIVE_ACCESS_ENABLED=true` **or** a non-empty `VPS_ADMIN_USER_IDS` list
+enables the routes. Customer `REMOTE_ACCESS_POC_ENABLED` does **not** turn them
+on. The builder loads the same `SLOT_MAP_PATH` and `REMOTE_ACCESS_WORKSPACE_MAP_PATH`
+as customer remote access so bays 2–20 resolve to their own GADS workspace.
+Also requires `REMOTE_ACCESS_PLATFORM_URL` / `REMOTE_ACCESS_ADMIN_USERNAME` /
+`REMOTE_ACCESS_ADMIN_PASSWORD`. No new GADS user is created.
 Empty `VPS_ADMIN_USER_IDS` plus no signed `app_metadata` admin claim means every
 caller is a customer (`403 admin_forbidden`).
 

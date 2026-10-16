@@ -70,13 +70,15 @@ def _admin_service(
     assignment_store: SlotAssignmentStore | None = None,
     farm: FakeFarm | None = None,
     gads_slot_ids: tuple[int, ...] | None = (1, 2),
+    slot_device_map: dict[int, str] | None = None,
+    workspace_map: dict[int, str] | None = None,
 ) -> tuple[AdminLiveAccessService, FakePlatform, FakeClock, AdminLiveAccessStore]:
     clock = clock or FakeClock()
     platform = platform or FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
     store = AdminLiveAccessStore(tmp_path / f"admin-live-{uuid.uuid4().hex}.sqlite")
     service = AdminLiveAccessService(
         enabled=enabled,
-        slot_device_map={1: SLOT1_SERIAL, 2: SLOT2_SERIAL},
+        slot_device_map=slot_device_map or {1: SLOT1_SERIAL, 2: SLOT2_SERIAL},
         platform=platform,
         store=store,
         farm_task_client=farm,
@@ -84,6 +86,7 @@ def _admin_service(
         cleanup_store=cleanup_store,
         session_ttl_minutes=ttl_minutes,
         gads_slot_ids=gads_slot_ids,
+        workspace_map=workspace_map,
         clock=clock,
     )
     return service, platform, clock, store
@@ -200,7 +203,9 @@ def test_get_user_role_admin_is_stripped_without_allowlist_or_app_metadata():
 
 def test_disabled_service_and_missing_platform_fail_closed(tmp_path: Path):
     off, _, _, _ = _admin_service(tmp_path, enabled=False)
-    assert off.create_session(_admin(), 1).http_status == 503
+    disabled = off.create_session(_admin(), 1)
+    assert disabled.http_status == 503
+    assert disabled.body["error"] == "admin_live_access_not_configured"
     none, _, _, _ = _admin_service(tmp_path)
     none._platform = None
     assert none.create_session(_admin(), 1).body["error"] == "gads_unavailable"
@@ -219,6 +224,32 @@ def test_poc_flag_does_not_build_admin_live_access(tmp_path: Path):
         db_path=tmp_path / "unused.sqlite",
     )
     assert svc is None and store is None
+
+
+def test_admin_ids_enable_builder_without_explicit_flag(tmp_path: Path):
+    from types import SimpleNamespace
+
+    mod = _load_mod()
+    platform = FakePlatform(registered={SLOT1_SERIAL})
+    svc, store = mod._build_admin_live_access_service(
+        SimpleNamespace(
+            admin_live_access_enabled=False,
+            vps_admin_user_ids=(ADMIN_ID,),
+            slot_map_path=str(tmp_path / "missing-slot-map.json"),
+            remote_access_workspace_map_path=None,
+            remote_access_workspace_id=None,
+            admin_live_access_ttl_minutes=15,
+        ),
+        farm_task_client=None,
+        event_store=None,
+        assignment_store=None,
+        cleanup_store=None,
+        db_path=tmp_path / "admin-live-builder.sqlite",
+        remote_platform=platform,
+    )
+    assert svc is not None and store is not None
+    assert svc.enabled is True
+    store.close()
 
 
 def test_admin_can_open_available_cleanup_and_rented_phones_without_rental_side_effects(
@@ -248,6 +279,7 @@ def test_admin_can_open_available_cleanup_and_rented_phones_without_rental_side_
     cleanup_view = admin_svc.create_session(_admin(), 2)
     assert cleanup_view.http_status == 200
     assert cleanup.is_required(2) is True
+    assert "customer_session_warning" in cleanup_view.body
 
     rented = admin_svc.create_session(_admin(), 1)
     assert rented.http_status == 201
@@ -317,6 +349,30 @@ def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
         _admin(), 1, {"session_id": sid, "action": "notification_shade"}
     )
     assert shade.http_status == 200
+    qs = svc.control_session(
+        _admin(), 1, {"session_id": sid, "action": "quick_settings"}
+    )
+    assert qs.http_status == 200
+    recents = svc.control_session(_admin(), 1, {"session_id": sid, "action": "recents"})
+    assert recents.http_status == 200
+    typed = svc.control_session(
+        _admin(), 1, {"session_id": sid, "action": "type", "text": "hello"}
+    )
+    assert typed.http_status == 200
+    swipe = svc.control_session(
+        _admin(),
+        1,
+        {"session_id": sid, "action": "swipe", "x": 10, "y": 20, "x2": 80, "y2": 20},
+    )
+    assert swipe.http_status == 200
+    rotate = svc.control_session(
+        _admin(), 1, {"session_id": sid, "action": "rotate", "orientation": "portrait"}
+    )
+    assert rotate.http_status == 200
+    settings = svc.control_session(
+        _admin(), 1, {"session_id": sid, "action": "settings"}
+    )
+    assert settings.http_status == 200
     airplane = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "airplane_mode", "state": "on"}
     )
@@ -429,6 +485,48 @@ def test_offline_and_gads_failures_are_safe(tmp_path: Path):
     missing = svc.create_session(_admin(), 1)
     assert missing.http_status == 503
     assert missing.body["error"] == "phone_unavailable"
+
+
+def test_admin_opens_bay_outside_customer_workspace_and_slot_filter(tmp_path: Path):
+    serial20 = "SERIAL-SLOT20"
+    platform = FakePlatform(registered={serial20})
+    platform.device_workspace = {serial20: "ws-bay-20"}
+    svc, platform, _, _ = _admin_service(
+        tmp_path,
+        platform=platform,
+        gads_slot_ids=None,
+        slot_device_map={20: serial20},
+        workspace_map={20: "ws-bay-20"},
+    )
+    created = svc.create_session(_admin(), 20)
+    assert created.http_status == 201
+    status_calls = [c for c in platform.calls if c[0] == "status"]
+    assert status_calls[-1][1]["require_workspace"] is False
+    assert status_calls[-1][1]["workspace_id"] == "ws-bay-20"
+    assert serial20 not in json.dumps(created.body)
+
+
+def test_admin_does_not_disable_customer_session_restrictions(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform(registered={SLOT1_SERIAL})
+    admin_svc, platform, _, _ = _admin_service(tmp_path, platform=platform)
+    customer_svc, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    created = customer_svc.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    opened = admin_svc.create_session(_admin(), 1)
+    qs = admin_svc.control_session(
+        _admin(),
+        1,
+        {"session_id": opened.body["session_id"], "action": "quick_settings"},
+    )
+    assert qs.http_status == 200
+    shade = customer_svc.control_session(
+        CUSTOMER_A, rental, {"action": "notification_shade"}
+    )
+    assert shade.http_status == 200
+    assert shade.body["restriction"] == "shade_blocked"
+    assert "notification_shade" not in {c[0] for c in platform.calls}
 
 
 def test_other_admin_cannot_use_session(tmp_path: Path):

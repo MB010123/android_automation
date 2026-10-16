@@ -217,6 +217,25 @@ class VpsFarmManagementService:
             "checked_at": iso_ts(now),
         }
         self._overlay_tenant_slot(body, farm_slot)
+        hold = self._occupancy_hold_fields(
+            farm_slot,
+            assignment=assignment,
+            reservation=reservation,
+            heartbeat_state=heartbeat_state,
+            adb_online=adb_online,
+            tenant_owner=body.get("user_id"),
+        )
+        body.update(hold)
+        if hold["hold_reason"] != "none" or hold["connection_reason"] != "none":
+            logger.info(
+                "slot_status bay=%s hold=%s occupancy=%s cleanup=%s connection=%s/%s",
+                farm_slot,
+                hold["hold_reason"],
+                hold["occupancy_source"],
+                hold["cleanup_state"],
+                hold["connection_status"],
+                hold["connection_reason"],
+            )
         return ApiResult(200, body)
 
     def list_all_slots(self) -> ApiResult:
@@ -269,6 +288,16 @@ class VpsFarmManagementService:
                 "heartbeat": s["heartbeat"],
                 "adb_online": s["adb_online"],
                 "checked_at": s["checked_at"],
+                "occupancy_source": s.get("occupancy_source"),
+                "hold_reason": s.get("hold_reason"),
+                "hold_label": s.get("hold_label"),
+                "hold_detail": s.get("hold_detail"),
+                "service_hold": s.get("service_hold"),
+                "cleanup_required": s.get("cleanup_required"),
+                "cleanup_state": s.get("cleanup_state"),
+                "rented": s.get("rented"),
+                "connection_status": s.get("connection_status"),
+                "connection_reason": s.get("connection_reason"),
             },
         )
 
@@ -899,6 +928,87 @@ class VpsFarmManagementService:
         carrier = _optional_text(row.get("carrier_name"))
         imei2 = _optional_text(row.get("imei2"))
         return {"carrier_name": carrier, "imei2": imei2}
+
+    def _occupancy_hold_fields(
+        self,
+        farm_slot: int,
+        *,
+        assignment: Any,
+        reservation: Any,
+        heartbeat_state: str,
+        adb_online: bool | None,
+        tenant_owner: Any,
+    ) -> dict[str, Any]:
+        cleanup_hold = self._cleanup.get(farm_slot) if self._cleanup is not None else None
+        cleanup_required = cleanup_hold is not None
+        cleanup_state = "required" if cleanup_required else "none"
+        owner = tenant_owner
+        if not owner and self._auth_store is not None:
+            lookup = getattr(self._auth_store, "owner_of_slot", None)
+            if callable(lookup):
+                try:
+                    owner = lookup(farm_slot)
+                except (TypeError, ValueError, OSError):
+                    owner = None
+        rented = bool(str(owner or "").strip())
+        if assignment is not None and reservation is not None:
+            occupancy_source = "assignment_and_reservation"
+        elif assignment is not None:
+            occupancy_source = "assignment"
+        elif reservation is not None:
+            occupancy_source = "reservation"
+        else:
+            occupancy_source = "none"
+        if heartbeat_state == "farm_unreachable":
+            connection_status, connection_reason = "unknown", "farm_unreachable"
+        elif heartbeat_state == "stale":
+            connection_status, connection_reason = "unknown", "stale_heartbeat"
+        elif heartbeat_state == "none":
+            connection_status, connection_reason = "unknown", "no_heartbeat"
+        elif adb_online is False:
+            connection_status, connection_reason = "offline", "adb_offline"
+        elif adb_online is True:
+            connection_status, connection_reason = "online", "none"
+        else:
+            connection_status, connection_reason = "unknown", "unknown"
+        if cleanup_required:
+            hold_reason = "cleanup_required"
+            hold_label = "Cleanup required"
+            hold_detail = (
+                "Operator cleanup verification is required before this phone can be rented again."
+            )
+        elif rented:
+            hold_reason = "rented"
+            hold_label = "Rented"
+            hold_detail = "A customer rental currently occupies this bay."
+        elif reservation is not None:
+            hold_reason = "reserved"
+            hold_label = "Held by phone service"
+            hold_detail = (
+                "A reservation occupies this bay. This is not a cleanup hold."
+            )
+        elif assignment is not None:
+            hold_reason = "assigned"
+            hold_label = "Held by phone service"
+            hold_detail = (
+                "The phone service has an assignment lock on this bay. This is not a cleanup hold."
+            )
+        else:
+            hold_reason = "none"
+            hold_label = None
+            hold_detail = None
+        return {
+            "occupancy_source": occupancy_source,
+            "hold_reason": hold_reason,
+            "hold_label": hold_label,
+            "hold_detail": hold_detail,
+            "service_hold": hold_reason in {"assigned", "reserved"} and not rented,
+            "cleanup_required": cleanup_required,
+            "cleanup_state": cleanup_state,
+            "rented": rented,
+            "connection_status": connection_status,
+            "connection_reason": connection_reason,
+        }
 
     def _overlay_tenant_slot(self, body: dict[str, Any], farm_slot_id: int) -> None:
         row = self._tenant_slot_row(farm_slot_id)

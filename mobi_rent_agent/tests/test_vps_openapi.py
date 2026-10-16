@@ -134,6 +134,14 @@ def test_schemas_present():
     assert status_props["cellular_status"]["enum"] == ["unknown"]
     assert status_props["imei2_status"]["enum"] == ["unknown", "known"]
     assert "carrier_name" in status_props
+    assert status_props["hold_reason"]["enum"] == [
+        "none",
+        "rented",
+        "reserved",
+        "assigned",
+        "cleanup_required",
+    ]
+    assert status_props["cleanup_state"]["enum"] == ["none", "required"]
     assert schemas["SlotRecordResponse"]["properties"]["imei2_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid"]["nullable"] is True

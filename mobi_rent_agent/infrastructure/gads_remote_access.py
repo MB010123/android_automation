@@ -348,14 +348,27 @@ class GadsRemoteAccessPlatform:
         slot_id: int,
         device_id: str,
         workspace_id: str | None = None,
+        require_workspace: bool = True,
     ) -> RemoteDeviceStatus:
         workspace = str(workspace_id or self._workspace_id or "").strip()
         registered = False
+        device_workspace = ""
         for device in self._client.registered_devices():
             if str(device.get("udid") or "") == device_id:
-                registered = str(device.get("workspace_id") or "") == workspace
+                device_workspace = str(device.get("workspace_id") or "").strip()
+                if require_workspace:
+                    registered = device_workspace == workspace
+                else:
+                    registered = True
                 break
         if not registered:
+            logger.info(
+                "gads_device_status slot=%s registered=false online=false "
+                "require_workspace=%s workspace_mapped=%s",
+                slot_id,
+                require_workspace,
+                bool(workspace),
+            )
             return RemoteDeviceStatus(
                 slot_id=slot_id,
                 device_id=device_id,
@@ -363,21 +376,41 @@ class GadsRemoteAccessPlatform:
                 online=False,
                 available=False,
             )
+        live_workspaces: list[str] = []
+        if require_workspace:
+            if workspace:
+                live_workspaces.append(workspace)
+        else:
+            for candidate in (workspace, device_workspace, self._workspace_id):
+                text = str(candidate or "").strip()
+                if text and text not in live_workspaces:
+                    live_workspaces.append(text)
         online = False
         available = False
         in_use_by: str | None = None
         raw: dict[str, Any] = {}
-        for live in self._client.live_devices(workspace):
-            info = live.get("info") if isinstance(live.get("info"), dict) else {}
-            if str(info.get("udid") or live.get("udid") or "") != device_id:
-                continue
-            raw = live
-            online = bool(live.get("connected")) and str(live.get("provider_state") or "") == "live"
-            # GADS in_use/available flags include the customer's own MJPEG session.
-            # They are not a cross-rental conflict; that is remote_access_busy.
-            available = online
-            in_use_by = str(live.get("in_use_by") or "") or None
-            break
+        for live_workspace in live_workspaces:
+            for live in self._client.live_devices(live_workspace):
+                info = live.get("info") if isinstance(live.get("info"), dict) else {}
+                if str(info.get("udid") or live.get("udid") or "") != device_id:
+                    continue
+                raw = live
+                online = bool(live.get("connected")) and str(live.get("provider_state") or "") == "live"
+                # GADS in_use/available flags include the customer's own MJPEG session.
+                # They are not a cross-rental conflict; that is remote_access_busy.
+                available = online
+                in_use_by = str(live.get("in_use_by") or "") or None
+                break
+            if raw:
+                break
+        logger.info(
+            "gads_device_status slot=%s registered=true online=%s "
+            "require_workspace=%s workspace_mapped=%s",
+            slot_id,
+            online,
+            require_workspace,
+            bool(workspace or device_workspace),
+        )
         width, height = _screen_size(raw)
         return RemoteDeviceStatus(
             slot_id=slot_id,

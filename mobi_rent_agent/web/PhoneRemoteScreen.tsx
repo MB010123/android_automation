@@ -27,7 +27,8 @@ type ControlBody =
   | { action: "recents" }
   | { action: "notification_shade" }
   | { action: "quick_settings" }
-  | { action: "rotate"; orientation: "portrait" | "landscape" };
+  | { action: "rotate"; orientation: "portrait" | "landscape" }
+  | { action: "settings" };
 
 type ControlResult = { ok: boolean; error?: string; message?: string };
 
@@ -41,6 +42,9 @@ type Props = {
   /** From session JSON. Full normal Android actions from session start. */
   allowedControls?: string[];
   setupMode?: boolean;
+  /** Admin live view. Does not change customer rental restrictions. */
+  adminMode?: boolean;
+  customerSessionWarning?: string | null;
 };
 
 const READY_NAV = ["home", "recents", "notification_shade", "quick_settings"] as const;
@@ -56,6 +60,8 @@ export function PhoneRemoteScreen({
   sendControl,
   disabled,
   allowedControls,
+  adminMode,
+  customerSessionWarning,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hitRef = useRef<HTMLDivElement | null>(null);
@@ -80,6 +86,7 @@ export function PhoneRemoteScreen({
     "notification_shade",
     "quick_settings",
     "rotate",
+    ...(adminMode ? ["settings"] : []),
   ]);
 
   useEffect(() => {
@@ -184,6 +191,11 @@ export function PhoneRemoteScreen({
 
   return (
     <div className="phone-remote-wrap">
+      {adminMode && customerSessionWarning ? (
+        <p className="phone-remote-status" role="status">
+          {customerSessionWarning}
+        </p>
+      ) : null}
       <div className="phone-remote-surface" data-ready={canControl ? "true" : "false"}>
         <canvas ref={canvasRef} aria-label="Your phone screen" />
         <div
@@ -205,7 +217,7 @@ export function PhoneRemoteScreen({
         {dot ? <span className="phone-remote-dot" style={{ left: dot.x, top: dot.y }} /> : null}
         {!ready ? (
           <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
-            Connecting to your phone…
+            {adminMode ? "Connecting to the selected phone…" : "Connecting to your phone…"}
           </div>
         ) : null}
       </div>
@@ -213,6 +225,15 @@ export function PhoneRemoteScreen({
         <button type="button" disabled={!canControl || !allowed.has("back")} onClick={() => void dispatch({ action: "back" })}>
           Back
         </button>
+        {adminMode && allowed.has("settings") ? (
+          <button
+            type="button"
+            disabled={!canControl}
+            onClick={() => void dispatch({ action: "settings" })}
+          >
+            Settings
+          </button>
+        ) : null}
         {READY_NAV.map((action) => (
           <button
             key={action}

@@ -334,6 +334,54 @@ def test_list_and_detail_slot_record(tmp_path: Path):
     assert "proxy_auth" not in record
     assert "gateway_api_key" not in record
     assert record["phone_number"] is None
+    assert record["hold_reason"] == "none"
+    assert record["cleanup_required"] is False
+    assert record["service_hold"] is False
+    assert record["connection_status"] == "online"
+
+
+def test_status_distinguishes_service_hold_cleanup_rented_and_offline(tmp_path: Path):
+    fx = Fixture(tmp_path)
+    fx.beat()
+    leftover = str(uuid.uuid4())
+    assert fx.assign.claim(1, leftover, "leftover-job")
+    held = fx.status_of()
+    assert held["hold_reason"] == "assigned"
+    assert held["hold_label"] == "Held by phone service"
+    assert held["service_hold"] is True
+    assert held["cleanup_required"] is False
+    assert held["cleanup_state"] == "none"
+    assert held["occupancy_source"] == "assignment"
+    assert held["connection_status"] == "online"
+    assert held["rented"] is False
+
+    fx.assign.release(1)
+    fx.svc._cleanup.mark_required(1, leftover, detail="awaiting_operator")
+    cleanup = fx.status_of()
+    assert cleanup["hold_reason"] == "cleanup_required"
+    assert cleanup["cleanup_required"] is True
+    assert cleanup["service_hold"] is False
+    assert 1 not in {row["bay"] for row in fx.svc.list_available_slots().body["available"]}
+    assert fx.svc.verify_cleanup(1).body["cleanup"] == "cleared"
+    assert fx.status_of()["cleanup_required"] is False
+
+    rental = str(uuid.uuid4())
+    seed_owned_slot(fx.tenant, bay=1, rental_id=rental, user_id=fx.owner)
+    assert fx.svc._reservations.claim(1, rental)
+    rented = fx.status_of()
+    assert rented["hold_reason"] == "rented"
+    assert rented["rented"] is True
+    assert rented["service_hold"] is False
+    assert rented["occupancy_source"] == "reservation"
+
+    fx.farm.offline = [2]
+    fx.beat()
+    offline = fx.status_of(SLOT2)
+    assert offline["status"] == "offline"
+    assert offline["connection_status"] == "offline"
+    assert offline["connection_reason"] == "adb_offline"
+    assert offline["hold_reason"] == "none"
+    assert offline["cleanup_required"] is False
 
 
 def test_esim_assign_accepts_qr_code_url(tmp_path: Path):

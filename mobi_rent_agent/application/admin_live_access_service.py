@@ -47,6 +47,11 @@ class ApiResult:
     body: dict[str, Any]
 
 
+def _gads_error_category(exc: BaseException) -> str:
+    text = str(exc).split(":", 1)[0].strip().replace(" ", "_")
+    return text[:64] or "gads_error"
+
+
 def _parse_session_id(raw: Any) -> str | None:
     text = str(raw or "").strip()
     if not text:
@@ -71,10 +76,16 @@ class AdminLiveAccessService:
         cleanup_store: Any = None,
         session_ttl_minutes: int = 15,
         gads_slot_ids: tuple[int, ...] | None = None,
+        workspace_map: dict[int, str] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.enabled = bool(enabled)
         self._slots = {int(k): str(v) for k, v in (slot_device_map or {}).items()}
+        self._workspaces = {
+            int(k): str(v).strip()
+            for k, v in (workspace_map or {}).items()
+            if str(v).strip()
+        }
         self._platform = platform
         self._store = store
         self._farm = farm_task_client
@@ -83,6 +94,7 @@ class AdminLiveAccessService:
         self._cleanup = cleanup_store
         ttl = int(session_ttl_minutes)
         self._ttl_minutes = min(max(ttl, _MIN_TTL_MINUTES), _MAX_TTL_MINUTES)
+        # Customer REMOTE_ACCESS_SLOT_IDS must not hide bays from an admin.
         self._gads_slots = (
             frozenset(int(s) for s in gads_slot_ids)
             if gads_slot_ids is not None
@@ -97,12 +109,24 @@ class AdminLiveAccessService:
 
     def create_session(self, admin: AuthUser, slot_id: int) -> ApiResult:
         if not is_admin_user(admin):
+            logger.info("admin_live_access_auth denied slot=%s", slot_id)
             return ApiResult(403, error_body("admin_forbidden"))
         parsed = self._parse_slot(slot_id)
         if isinstance(parsed, ApiResult):
+            logger.info("admin_live_access_denied slot=%s reason=%s", slot_id, parsed.body.get("error"))
             return parsed
+        logger.info(
+            "admin_live_access_auth ok admin=%s slot=%s mapped=%s workspace=%s cleanup=%s rented=%s",
+            admin.user_id[:8],
+            parsed,
+            parsed in self._slots,
+            bool(self._workspaces.get(parsed)),
+            self._cleanup_required(parsed),
+            self._is_rented(parsed),
+        )
         ready = self._require_ready(parsed)
         if isinstance(ready, ApiResult):
+            logger.info("admin_live_access_denied slot=%s reason=%s", parsed, ready.body.get("error"))
             return ready
         device_id, platform = ready
         with self._lock_for(parsed):
@@ -115,7 +139,7 @@ class AdminLiveAccessService:
                     parsed,
                     admin.user_id[:8],
                 )
-                return ApiResult(200, existing.to_public_dict(self._clock()))
+                return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
                 slot_id=parsed,
@@ -126,7 +150,7 @@ class AdminLiveAccessService:
         self._audit(parsed, "admin_live_access_opened", admin.user_id)
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
         _ = platform
-        return ApiResult(201, session.to_public_dict(self._clock()))
+        return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
         self, admin: AuthUser, slot_id: int, session_id: str | None
@@ -144,14 +168,20 @@ class AdminLiveAccessService:
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))
         try:
-            return opener(
+            stream = opener(
                 device_id=bound.device_id,
                 platform_username=GADS_HUB_ADMIN_USERNAME,
                 platform_password="",
             )
-        except RemoteAccessPlatformError:
-            logger.warning("admin_live_access_stream_failed slot=%s", bound.slot_id)
+        except RemoteAccessPlatformError as exc:
+            logger.warning(
+                "admin_live_access_stream_failed slot=%s category=%s",
+                bound.slot_id,
+                _gads_error_category(exc),
+            )
             return ApiResult(502, error_body("gads_unavailable"))
+        logger.info("admin_live_access_stream_open slot=%s first_frame=pending", bound.slot_id)
+        return stream
 
     def control_session(
         self,
@@ -190,8 +220,12 @@ class AdminLiveAccessService:
             return ApiResult(409, error_body("phone_unavailable"))
         try:
             forwarded = self._forward_control(platform, bound, decision.command)
-        except RemoteAccessPlatformError:
-            logger.warning("admin_live_access_control_failed slot=%s", bound.slot_id)
+        except RemoteAccessPlatformError as exc:
+            logger.warning(
+                "admin_live_access_control_failed slot=%s category=%s",
+                bound.slot_id,
+                _gads_error_category(exc),
+            )
             return ApiResult(502, error_body("gads_unavailable"))
         if isinstance(forwarded, ApiResult):
             return forwarded
@@ -281,24 +315,86 @@ class AdminLiveAccessService:
         if bay not in self._slots:
             return ApiResult(404, error_body("slot_not_found"))
         if self._gads_slots is not None and bay not in self._gads_slots:
-            return ApiResult(503, error_body("phone_unavailable"))
+            return ApiResult(
+                503,
+                error_body(
+                    "phone_unavailable",
+                    message="This bay is not enabled for screen access",
+                ),
+            )
         return bay
+
+    def _session_body(self, session: AdminLiveAccessSession, slot_id: int) -> dict[str, Any]:
+        body = session.to_public_dict(self._clock())
+        if self._is_rented(slot_id) or self._cleanup_required(slot_id):
+            body["customer_session_warning"] = (
+                "This phone may have an active customer session or cleanup hold. "
+                "Admin input can interrupt the customer. It does not end the rental "
+                "or mark cleanup complete."
+            )
+        return body
+
+    def _workspace_for(self, slot_id: int) -> str | None:
+        return self._workspaces.get(int(slot_id)) or None
+
+    def _cleanup_required(self, slot_id: int) -> bool:
+        if self._cleanup is None:
+            return False
+        required = getattr(self._cleanup, "is_required", None)
+        return bool(required(int(slot_id))) if callable(required) else False
+
+    def _is_rented(self, slot_id: int) -> bool:
+        if self._assignments is None:
+            return False
+        getter = getattr(self._assignments, "get", None)
+        return bool(callable(getter) and getter(int(slot_id)))
 
     def _require_ready(self, slot_id: int) -> tuple[str, Any] | ApiResult:
         if not self.enabled:
-            return ApiResult(503, error_body("phone_unavailable"))
+            return ApiResult(503, error_body("admin_live_access_not_configured"))
         if self._platform is None:
             return ApiResult(503, error_body("gads_unavailable"))
         device_id = self._slots.get(int(slot_id))
         if not device_id:
             return ApiResult(404, error_body("slot_not_found"))
+        workspace = self._workspace_for(slot_id)
         try:
-            status = self._platform.device_status(slot_id=int(slot_id), device_id=device_id)
-        except RemoteAccessPlatformError:
-            logger.warning("admin_live_access_readiness_failed slot=%s", slot_id)
+            status_fn = self._platform.device_status
+            try:
+                status = status_fn(
+                    slot_id=int(slot_id),
+                    device_id=device_id,
+                    workspace_id=workspace,
+                    require_workspace=False,
+                )
+            except TypeError:
+                status = status_fn(
+                    slot_id=int(slot_id),
+                    device_id=device_id,
+                    workspace_id=workspace,
+                )
+        except RemoteAccessPlatformError as exc:
+            logger.warning(
+                "admin_live_access_readiness_failed slot=%s category=%s",
+                slot_id,
+                _gads_error_category(exc),
+            )
             return ApiResult(502, error_body("gads_unavailable"))
+        logger.info(
+            "admin_live_access_ready slot=%s registered=%s online=%s workspace_mapped=%s",
+            slot_id,
+            bool(status.registered),
+            bool(status.online),
+            bool(workspace),
+        )
         if not status.registered:
-            return ApiResult(503, error_body("phone_unavailable"))
+            return ApiResult(
+                503,
+                error_body(
+                    "phone_unavailable",
+                    message="The selected phone is not registered with the screen service",
+                ),
+            )
         if not status.online:
             return ApiResult(
                 409,

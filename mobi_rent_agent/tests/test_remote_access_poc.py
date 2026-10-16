@@ -146,11 +146,25 @@ class FakePlatform:
         self.leases.pop(device_id, None)
         return True
 
-    def device_status(self, *, slot_id: int, device_id: str, workspace_id: str | None = None) -> RemoteDeviceStatus:
-        self.calls.append(("status", {"device_id": device_id, "workspace_id": workspace_id}))
+    def device_status(
+        self,
+        *,
+        slot_id: int,
+        device_id: str,
+        workspace_id: str | None = None,
+        require_workspace: bool = True,
+    ) -> RemoteDeviceStatus:
+        payload: dict[str, Any] = {"device_id": device_id, "workspace_id": workspace_id}
+        if not require_workspace:
+            payload["require_workspace"] = False
+        self.calls.append(("status", payload))
         if self.status_error:
             raise RemoteAccessPlatformError(self.status_error)
         registered = device_id in self.registered
+        if require_workspace and registered and self.device_workspace:
+            expected = self.device_workspace.get(device_id)
+            if expected is not None and str(workspace_id or "") != expected:
+                registered = False
         online = registered and self.online.get(device_id, False)
         return RemoteDeviceStatus(
             slot_id=slot_id,
@@ -1805,7 +1819,9 @@ def test_phone8_wrong_gads_workspace_fails_closed(tmp_path: Path):
     service, _, _ = _gads_multi(tmp_path, tenant, platform=platform)
     rental = _rental(tenant, bay=8, user_id=CUSTOMER_A)
     result = service.create_remote_access(CUSTOMER_A, None, rental)
-    assert result.http_status == 502
+    assert result.http_status == 503
+    assert result.body["error"] == "phone_unavailable"
+    assert [c for c in platform.calls if c[0] == "grant"] == []
 
 
 def test_shared_gads_workspace_is_rejected(tmp_path: Path):

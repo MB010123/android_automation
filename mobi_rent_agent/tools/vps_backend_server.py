@@ -477,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
         """Admin live view by farm bay. Does not create or mutate a rental."""
         service = self.admin_live_access_service
         if service is None or not service.enabled:
-            self._send_json(503, error_body("phone_unavailable"))
+            self._send_json(503, error_body("admin_live_access_not_configured"))
             return True
         if ctx.user is None:
             self._send_json(401, {"error": "unauthorized"})
@@ -1394,12 +1394,15 @@ def _build_admin_live_access_service(
     remote_platform: Any = None,
 ) -> tuple[AdminLiveAccessService | None, Any]:
     """Admin live view. Reuses GADS hub credentials; never grants a rental user."""
-    # Fail closed: customer remote-access (POC) must not silently expose admin routes.
-    if not bool(getattr(config, "admin_live_access_enabled", False)):
+    admin_ids = tuple(getattr(config, "vps_admin_user_ids", ()) or ())
+    flag = bool(getattr(config, "admin_live_access_enabled", False))
+    # Explicit flag or configured admin UUIDs. Customer POC alone does not enable this.
+    if not flag and not admin_ids:
         return None, None
     from infrastructure.adb_slot_status import SlotMapError, load_slot_map
     from infrastructure.admin_live_access_store import AdminLiveAccessStore
     from infrastructure.gads_remote_access import gads_platform_from_config
+    from infrastructure.gads_workspaces import GadsWorkspaceMapError, load_gads_workspace_map, merge_workspace_map
 
     map_path = Path(config.slot_map_path) if config.slot_map_path else ROOT / "slot_map.json"
     try:
@@ -1407,6 +1410,18 @@ def _build_admin_live_access_service(
     except SlotMapError as exc:
         logger.error("admin_live_access: slot map unavailable (%s)", exc)
         full_map = {}
+    file_map: dict[int, str] = {}
+    workspace_map_path = getattr(config, "remote_access_workspace_map_path", None)
+    if workspace_map_path:
+        try:
+            file_map = load_gads_workspace_map(workspace_map_path)
+        except GadsWorkspaceMapError as exc:
+            logger.error("admin_live_access: workspace map unavailable (%s)", exc)
+            file_map = {}
+    workspaces = merge_workspace_map(
+        file_map,
+        fallback_slot1=getattr(config, "remote_access_workspace_id", None),
+    )
     platform = remote_platform if remote_platform is not None else gads_platform_from_config(config)
     if platform is None:
         logger.error("admin_live_access: GADS platform is not configured; routes will return 503")
@@ -1417,13 +1432,18 @@ def _build_admin_live_access_service(
         platform=platform,
         store=store,
         farm_task_client=farm_task_client,
-        event_recorder=event_store.append,
+        event_recorder=event_store.append if event_store is not None else None,
         assignment_store=assignment_store,
         cleanup_store=cleanup_store,
         session_ttl_minutes=int(getattr(config, "admin_live_access_ttl_minutes", 15)),
-        gads_slot_ids=getattr(config, "remote_access_slot_ids", None),
+        gads_slot_ids=None,
+        workspace_map=workspaces,
     )
-    logger.info("admin_live_access ENABLED mapped=%s", sorted(full_map))
+    logger.info(
+        "admin_live_access ENABLED mapped=%s workspaces=%s",
+        sorted(full_map),
+        sorted(workspaces),
+    )
     return service, store
 
 

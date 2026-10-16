@@ -352,6 +352,32 @@ def _schemas() -> dict[str, Any]:
                 "imei2": {"type": "string", "nullable": True},
                 "imei2_status": {"type": "string", "enum": ["unknown", "known"]},
                 "checked_at": {"type": "string", "format": "date-time"},
+                "occupancy_source": {
+                    "type": "string",
+                    "enum": ["none", "assignment", "reservation", "assignment_and_reservation"],
+                },
+                "hold_reason": {
+                    "type": "string",
+                    "enum": ["none", "rented", "reserved", "assigned", "cleanup_required"],
+                },
+                "hold_label": {"type": "string", "nullable": True},
+                "hold_detail": {"type": "string", "nullable": True},
+                "service_hold": {"type": "boolean"},
+                "cleanup_required": {"type": "boolean"},
+                "cleanup_state": {"type": "string", "enum": ["none", "required"]},
+                "rented": {"type": "boolean"},
+                "connection_status": {"type": "string", "enum": ["online", "offline", "unknown"]},
+                "connection_reason": {
+                    "type": "string",
+                    "enum": [
+                        "none",
+                        "adb_offline",
+                        "farm_unreachable",
+                        "stale_heartbeat",
+                        "no_heartbeat",
+                        "unknown",
+                    ],
+                },
             },
         },
         "SlotEventsResponse": {
@@ -493,6 +519,16 @@ def _schemas() -> dict[str, Any]:
                 "heartbeat": {"type": "string"},
                 "adb_online": {"type": "boolean", "nullable": True},
                 "checked_at": {"type": "string", "format": "date-time"},
+                "occupancy_source": {"type": "string"},
+                "hold_reason": {"type": "string"},
+                "hold_label": {"type": "string", "nullable": True},
+                "hold_detail": {"type": "string", "nullable": True},
+                "service_hold": {"type": "boolean"},
+                "cleanup_required": {"type": "boolean"},
+                "cleanup_state": {"type": "string"},
+                "rented": {"type": "boolean"},
+                "connection_status": {"type": "string"},
+                "connection_reason": {"type": "string"},
             },
         },
         "DeviceStatusResponse": {
@@ -613,6 +649,7 @@ def _schemas() -> dict[str, Any]:
                 "session_mode": {"type": "string", "enum": ["admin_live_access"]},
                 "rental_unchanged": {"type": "boolean", "enum": [True]},
                 "cleanup_unchanged": {"type": "boolean", "enum": [True]},
+                "customer_session_warning": {"type": "string"},
             },
         },
         "AdminLiveAccessControlRequest": {
@@ -1413,7 +1450,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "409": {"description": "phone_offline"},
                     "429": {"description": "rate_limited"},
                     "502": {"description": "gads_unavailable"},
-                    "503": {"description": "phone_unavailable | gads_unavailable"},
+                    "503": {
+                        "description": (
+                            "phone_unavailable | gads_unavailable | "
+                            "admin_live_access_not_configured"
+                        )
+                    },
                 },
             }
         },
