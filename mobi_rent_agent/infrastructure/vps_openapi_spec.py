@@ -646,6 +646,19 @@ def _schemas() -> dict[str, Any]:
                 "stream_path": {"type": "string"},
                 "allowed_controls": {"type": "array", "items": {"type": "string"}},
                 "coordinate_space": {"type": "string", "enum": ["native_device_pixels"]},
+                "native_resolution": {
+                    "type": "object",
+                    "nullable": True,
+                    "description": (
+                        "Physical panel size from Farm `adb shell wm size`. "
+                        "Never the GADS MJPEG frame size."
+                    ),
+                    "properties": {
+                        "width": {"type": "integer"},
+                        "height": {"type": "integer"},
+                    },
+                },
+                "native_resolution_unavailable": {"type": "string"},
                 "session_mode": {"type": "string", "enum": ["admin_live_access"]},
                 "rental_unchanged": {"type": "boolean", "enum": [True]},
                 "cleanup_unchanged": {"type": "boolean", "enum": [True]},

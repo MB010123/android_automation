@@ -46,11 +46,19 @@ POST returns:
                        "notification_shade", "quick_settings", "rotate",
                        "settings", "airplane_mode"],
   "coordinate_space": "native_device_pixels",
+  "native_resolution": { "width": 1440, "height": 3120 },
   "session_mode": "admin_live_access",
   "rental_unchanged": true,
   "cleanup_unchanged": true
 }
 ```
+
+`native_resolution` is the phone's physical panel size from Farm `adb shell wm size`
+(`device_display_size`), the same field as customer `GET/POST .../device-status`.
+It is not the GADS MJPEG frame size. When `wm size` cannot be read, the object is
+omitted and `native_resolution_unavailable` is `wm_size_unavailable` or
+`wm_size_unreported`. The frontend must map taps using `native_resolution`, not
+the decoded stream frame.
 
 The browser never receives GADS admin credentials, hub URLs, ADB serials, or
 workspace ids. Stream/control bind `session_id` to **that admin** and **that bay**.

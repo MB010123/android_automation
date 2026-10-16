@@ -142,6 +142,11 @@ def test_schemas_present():
         "cleanup_required",
     ]
     assert status_props["cleanup_state"]["enum"] == ["none", "required"]
+    admin_session = schemas["AdminLiveAccessSession"]["properties"]
+    assert admin_session["coordinate_space"]["enum"] == ["native_device_pixels"]
+    assert "width" in admin_session["native_resolution"]["properties"]
+    assert "height" in admin_session["native_resolution"]["properties"]
+    assert "native_resolution_unavailable" in admin_session
     assert schemas["SlotRecordResponse"]["properties"]["imei2_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid_status"]["enum"] == ["unknown", "known"]
     assert schemas["DeviceStatusResponse"]["properties"]["eid"]["nullable"] is True

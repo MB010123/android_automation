@@ -506,6 +506,47 @@ def test_admin_opens_bay_outside_customer_workspace_and_slot_filter(tmp_path: Pa
     assert serial20 not in json.dumps(created.body)
 
 
+def test_admin_live_access_returns_farm_wm_size_not_stream_frame(tmp_path: Path):
+    farm = FakeFarm()
+    farm.display_width = 1344
+    farm.display_height = 2992
+    svc, _, _, _ = _admin_service(tmp_path, farm=farm)
+    created = svc.create_session(_admin(), 1)
+    assert created.http_status == 201
+    assert created.body["coordinate_space"] == "native_device_pixels"
+    assert created.body["native_resolution"] == {"width": 1344, "height": 2992}
+    assert created.body["native_resolution"] != {"width": 720, "height": 1480}
+    assert created.body["native_resolution"] != {"width": 720, "height": 1600}
+    assert "native_resolution_unavailable" not in created.body
+    sized = [t for t in farm.tasks if t["type"] == "device_display_size"]
+    assert len(sized) == 1
+    assert sized[0]["slot"] == 1
+    reused = svc.create_session(_admin(), 1)
+    assert reused.http_status == 200
+    assert reused.body["native_resolution"] == {"width": 1344, "height": 2992}
+    assert len([t for t in farm.tasks if t["type"] == "device_display_size"]) == 1
+
+
+def test_admin_live_access_omits_invented_resolution_when_wm_size_missing(tmp_path: Path):
+    farm = FakeFarm()
+    farm.fail_types.add("device_display_size")
+    svc, _, _, _ = _admin_service(tmp_path, farm=farm)
+    created = svc.create_session(_admin(), 1)
+    assert created.http_status == 201
+    assert created.body["coordinate_space"] == "native_device_pixels"
+    assert "native_resolution" not in created.body
+    assert created.body["native_resolution_unavailable"] == "wm_size_unavailable"
+
+
+def test_admin_live_access_reports_unavailable_resolution_without_farm(tmp_path: Path):
+    svc, _, _, _ = _admin_service(tmp_path)
+    created = svc.create_session(_admin(), 1)
+    assert created.http_status == 201
+    assert created.body["coordinate_space"] == "native_device_pixels"
+    assert "native_resolution" not in created.body
+    assert created.body["native_resolution_unavailable"] == "wm_size_unavailable"
+
+
 def test_admin_does_not_disable_customer_session_restrictions(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform(registered={SLOT1_SERIAL})
@@ -618,11 +659,13 @@ def _start_admin_http(tmp_path: Path):
         cleanup_store=cleanup,
     )
     admin_store = AdminLiveAccessStore(tmp_path / "admin-live.sqlite")
+    farm = FakeFarm()
     admin_svc = AdminLiveAccessService(
         enabled=True,
         slot_device_map={1: SLOT1_SERIAL, 2: SLOT2_SERIAL},
         platform=platform,
         store=admin_store,
+        farm_task_client=farm,
         cleanup_store=cleanup,
         assignment_store=assign,
         gads_slot_ids=(1, 2),
@@ -683,6 +726,8 @@ def test_http_admin_live_access_auth_stream_and_no_rental(tmp_path: Path):
         assert status == 201, live
         assert live["slot_id"] == 2
         assert live["rental_unchanged"] is True
+        assert live["coordinate_space"] == "native_device_pixels"
+        assert live["native_resolution"] == {"width": 1440, "height": 3120}
         sid = live["session_id"]
 
         status, rented_live, _ = _http("POST", f"{base}/admin/devices/1/live-access", token=admin_token, body={})
