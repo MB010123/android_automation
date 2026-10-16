@@ -61,6 +61,8 @@ REQUIRED_PATHS = [
     "/admin/devices/{slot_id}/live-access/control",
     "/admin/devices/{slot_id}/live-access/close",
     "/voidfix/inbound",
+    "/api/webhooks/whmcs",
+    "/billing/config",
 ]
 
 
@@ -119,6 +121,8 @@ def test_schemas_present():
         "AdminLiveAccessControlRequest",
         "AdminLiveAccessControlResponse",
         "AdminLiveAccessCloseRequest",
+        "WhmcsWebhookRequest",
+        "BillingConfigResponse",
     ):
         assert name in schemas
     assert schemas["SlotAvailability"]["required"] == ["bay", "box", "slot_id"]

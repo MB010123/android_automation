@@ -69,6 +69,13 @@ ERROR_MESSAGES: dict[str, str] = {
     "admin_live_access_not_configured": (
         "Admin live access is not enabled on this VPS"
     ),
+    "webhook_not_configured": "WHMCS webhook identifier and secret are not configured",
+    "invalid_whmcs_event": "Unsupported WHMCS billing event",
+    "invalid_user_id": "user_id must be the Supabase user UUID",
+    "invalid_credit_delta": "credit_delta must be an integer from 1 to 1000",
+    "invalid_tier": "tier must be a short alphanumeric package name",
+    "user_not_found": "No billing profile exists for this user",
+    "tenant_unavailable": "Tenant billing service is temporarily unavailable",
 }
 
 

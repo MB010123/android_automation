@@ -43,6 +43,8 @@ RE_ADMIN_LIVE_ACCESS = re.compile(r"^/admin/devices/(\d{1,2})/live-access$")
 RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
     r"^/admin/devices/(\d{1,2})/live-access/(stream|control|close)$"
 )
+RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
+RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
 REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
 ADMIN_LIVE_ACCESS_KINDS = frozenset(
     {"admin_live_access", "admin_live_access_action"}
@@ -101,6 +103,10 @@ def parse_route(path: str) -> ParsedRoute | None:
             farm_bay=int(m.group(1)),
             action=m.group(2),
         )
+    if RE_WHMCS_WEBHOOK.match(path):
+        return ParsedRoute(kind="whmcs_webhook")
+    if RE_BILLING_CONFIG.match(path):
+        return ParsedRoute(kind="billing_config")
     if m := RE_JOB.match(path):
         return ParsedRoute(kind="job", job_id=m.group(1))
     if m := RE_SLOT_SMS_SEND.match(path):

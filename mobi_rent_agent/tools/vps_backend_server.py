@@ -38,6 +38,8 @@ from application.vps_job_worker import VpsJobWorker
 from application.auth_middleware import resolve_auth_context
 from application.auth_service import AuthContext, AuthService
 from application.admin_live_access_service import AdminLiveAccessService
+from application.whmcs_billing_service import LovableCreditWallet, WhmcsBillingService
+from application.whmcs_webhook import IDENTIFIER_HEADER, SIGNATURE_HEADER
 from application.vps_lovable_routes import (
     ADMIN_LIVE_ACCESS_KINDS,
     FARM_SERVICE_ONLY,
@@ -54,6 +56,8 @@ from application.esim_qr_upload import (
 from application.remote_access_service import RemoteAccessService
 from infrastructure.auth_rate_limiter import AuthRateLimiter
 from infrastructure.supabase_gateway import gotrue_from_env
+from infrastructure.credit_wallet_store import CreditWalletStore
+from infrastructure.lovable_server_client import lovable_client_from_env
 from infrastructure.lovable_tenant_store import tenant_store_from_env
 from application.vps_slot_sms_service import VpsSlotSmsService
 from application.webhook_outbound_dispatcher import WebhookOutboundDispatcher
@@ -184,6 +188,7 @@ class Handler(BaseHTTPRequestHandler):
     remote_access_service: RemoteAccessService | None = None
     admin_live_access_service: AdminLiveAccessService | None = None
     admin_live_access_rate_limiter: VpsRateLimiter | None = None
+    whmcs_billing_service: WhmcsBillingService | None = None
 
     def log_message(self, fmt: str, *args) -> None:
         rendered = fmt % args if args else str(fmt)
@@ -215,7 +220,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header(
                 "Access-Control-Allow-Headers",
-                "Authorization, Content-Type, X-Admin-Live-Access-Session",
+                "Authorization, Content-Type, X-Admin-Live-Access-Session, "
+                "X-WHMCS-Identifier, X-WHMCS-Signature",
             )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
@@ -370,6 +376,29 @@ class Handler(BaseHTTPRequestHandler):
             self._send_html(200, redoc_html())
             return True
         return False
+
+    def _handle_whmcs_webhook(self) -> None:
+        service = self.whmcs_billing_service
+        if service is None:
+            self._send_json(503, error_body("webhook_not_configured"))
+            return
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > 65536:
+            remaining = length
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+            self._send_json(400, error_body("invalid_json"))
+            return
+        raw = self.rfile.read(length) if length else b""
+        result = service.handle(
+            raw,
+            identifier=self.headers.get(IDENTIFIER_HEADER),
+            signature=self.headers.get(SIGNATURE_HEADER),
+        )
+        self._send_json(result.http_status, result.body)
 
     def _handle_remote_access(self, route, ctx: AuthContext, payload: dict[str, Any] | None) -> bool:
         """Remote-access session. Slot/device are derived server-side from the rental."""
@@ -702,6 +731,17 @@ class Handler(BaseHTTPRequestHandler):
             result = self.auth_service.session_body(ctx)
             self._send_json(result.http_status, result.body)
             return True
+        if route.kind == "billing_config":
+            service = self.whmcs_billing_service
+            if service is None:
+                self._send_json(
+                    200,
+                    {"ok": True, "upgrade_url": None, "store_url": None},
+                )
+                return True
+            result = service.billing_config()
+            self._send_json(result.http_status, result.body)
+            return True
         if route.kind == "auth_me":
             if self.auth_service is None:
                 self._send_json(503, {"ok": False, "error": "auth_not_configured"})
@@ -833,6 +873,14 @@ class Handler(BaseHTTPRequestHandler):
             if route.kind in PUBLIC_AUTH_POST or route.kind in {"auth_logout", "auth_resend"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
+            if route.kind == "whmcs_webhook":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return
+            if route.kind == "billing_config":
+                if self._handle_service_get(route):
+                    return
+                self._send_json(404, {"error": "not_found"})
+                return
             ctx = self._authorize_route(route)
             if ctx is None:
                 return
@@ -891,8 +939,11 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         route = parse_route(path)
         if route is not None:
-            if route.kind in {"auth_me", "auth_session"}:
+            if route.kind in {"auth_me", "auth_session", "billing_config"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return
+            if route.kind == "whmcs_webhook":
+                self._handle_whmcs_webhook()
                 return
             ctx: AuthContext | None = None
             if route.kind not in PUBLIC_AUTH_POST:
@@ -1265,6 +1316,20 @@ def main() -> int:
     Handler.lovable_inbound_url = os.getenv("LOVABLE_INBOUND_WEBHOOK_URL") or None
     Handler.lovable_inbound_secret = os.getenv("LOVABLE_INBOUND_WEBHOOK_HMAC_SECRET") or None
     Handler.request_timeout = config.request_timeout_seconds
+    lovable_billing_client = lovable_client_from_env()
+    credit_wallet_store: CreditWalletStore | None = None
+    if lovable_billing_client is not None:
+        billing_wallet: Any = LovableCreditWallet(lovable_billing_client)
+    else:
+        credit_wallet_store = CreditWalletStore(Path(vps_jobs_db).with_name("credit_wallets.sqlite"))
+        billing_wallet = credit_wallet_store
+    Handler.whmcs_billing_service = WhmcsBillingService(
+        identifier=config.whmcs_webhook_identifier,
+        secret=config.whmcs_webhook_secret,
+        wallet=billing_wallet,
+        store_url=config.whmcs_store_url,
+        cart_url=config.whmcs_store_cart_url,
+    )
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(
@@ -1298,6 +1363,8 @@ def main() -> int:
             remote_access_store.close()
         if admin_live_access_store is not None:
             admin_live_access_store.close()
+        if credit_wallet_store is not None:
+            credit_wallet_store.close()
         if tenant_store is not None:
             tenant_store.close()
     return 0

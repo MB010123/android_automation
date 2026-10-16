@@ -106,6 +106,11 @@ class AgentConfig:
     vps_admin_user_ids: tuple[str, ...] = ()
     admin_live_access_enabled: bool = False
     admin_live_access_ttl_minutes: int = 15
+    # WHMCS → VPS billing webhook. Identifier + HMAC secret; never in source.
+    whmcs_webhook_identifier: str | None = None
+    whmcs_webhook_secret: str | None = None
+    whmcs_store_url: str | None = None
+    whmcs_store_cart_url: str | None = None
 
     @property
     def sms_enabled(self) -> bool:
@@ -278,6 +283,10 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             admin_live_access_ttl_minutes=_read_int_range(
                 "ADMIN_LIVE_ACCESS_TTL_MINUTES", 15, 5, 60
             ),
+            whmcs_webhook_identifier=(os.getenv("WHMCS_WEBHOOK_IDENTIFIER") or "").strip() or None,
+            whmcs_webhook_secret=(os.getenv("WHMCS_WEBHOOK_SECRET") or "").strip() or None,
+            whmcs_store_url=(os.getenv("WHMCS_STORE_URL") or "").strip() or None,
+            whmcs_store_cart_url=(os.getenv("WHMCS_STORE_CART_URL") or "").strip() or None,
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

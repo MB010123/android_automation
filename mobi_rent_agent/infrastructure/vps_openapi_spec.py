@@ -718,6 +718,38 @@ def _schemas() -> dict[str, Any]:
             "required": ["session_id"],
             "properties": {"session_id": {"type": "string", "format": "uuid"}},
         },
+        "WhmcsWebhookRequest": {
+            "type": "object",
+            "required": ["event", "user_id"],
+            "properties": {
+                "event": {
+                    "type": "string",
+                    "enum": [
+                        "InvoicePaid",
+                        "AfterOrderAccept",
+                        "ServiceSuspensionAudit",
+                        "CancellationRequest",
+                    ],
+                },
+                "user_id": {"type": "string", "format": "uuid"},
+                "credit_delta": {"type": "integer", "minimum": 0, "maximum": 1000},
+                "credits": {"type": "integer", "minimum": 0, "maximum": 1000},
+                "tier": {"type": "string"},
+                "whmcs_client_id": {"type": "integer"},
+                "invoice_id": {"type": "string"},
+                "service_id": {"type": "string"},
+                "idempotency_key": {"type": "string"},
+            },
+        },
+        "BillingConfigResponse": {
+            "type": "object",
+            "required": ["ok", "upgrade_url", "store_url"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "upgrade_url": {"type": "string", "nullable": True},
+                "store_url": {"type": "string", "nullable": True},
+            },
+        },
     }
 
 
@@ -1264,6 +1296,66 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "403": {"description": "forbidden"},
                     "409": {"description": "rental_active"},
+                },
+            }
+        },
+        "/api/webhooks/whmcs": {
+            "post": {
+                "tags": ["Billing"],
+                "summary": "WHMCS billing webhook from vps_sync.php",
+                "description": (
+                    "Server-to-server only. Requires `X-WHMCS-Identifier` and "
+                    "`X-WHMCS-Signature` (HMAC-SHA256 hex of the raw body). "
+                    "Does not accept user JWTs, farm tokens, or a request-body role."
+                ),
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "X-WHMCS-Identifier",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "X-WHMCS-Signature",
+                        "in": "header",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/WhmcsWebhookRequest"}
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Credits and tier applied or replayed"},
+                    "400": {"description": "invalid_whmcs_event | invalid_user_id | invalid_credit_delta"},
+                    "401": {"description": "unauthorized"},
+                    "503": {"description": "webhook_not_configured"},
+                },
+            }
+        },
+        "/billing/config": {
+            "get": {
+                "tags": ["Billing"],
+                "summary": "Public store and upgrade cart URLs",
+                "description": (
+                    "Returns HTTPS `WHMCS_STORE_CART_URL` / `WHMCS_STORE_URL` for the "
+                    "Upgrade button. No secrets."
+                ),
+                "security": [],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/BillingConfigResponse"}
+                            }
+                        }
+                    }
                 },
             }
         },

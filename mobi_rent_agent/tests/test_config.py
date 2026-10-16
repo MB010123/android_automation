@@ -65,6 +65,10 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
         "VPS_ADMIN_USER_IDS",
         "ADMIN_LIVE_ACCESS_ENABLED",
         "ADMIN_LIVE_ACCESS_TTL_MINUTES",
+        "WHMCS_WEBHOOK_IDENTIFIER",
+        "WHMCS_WEBHOOK_SECRET",
+        "WHMCS_STORE_URL",
+        "WHMCS_STORE_CART_URL",
     ):
         monkeypatch.delenv(optional, raising=False)
 
@@ -100,6 +104,9 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
     assert config.vps_admin_user_ids == ()
     assert config.admin_live_access_enabled is False
     assert config.admin_live_access_ttl_minutes == 15
+    assert config.whmcs_webhook_identifier is None
+    assert config.whmcs_webhook_secret is None
+    assert config.whmcs_store_cart_url is None
 
 
 def test_vps_admin_user_ids_and_live_access_ttl(monkeypatch):
@@ -117,6 +124,18 @@ def test_vps_admin_user_ids_and_live_access_ttl(monkeypatch):
     )
     assert config.admin_live_access_enabled is True
     assert config.admin_live_access_ttl_minutes == 20
+
+
+def test_whmcs_billing_env(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("WHMCS_WEBHOOK_IDENTIFIER", "test-identifier")
+    monkeypatch.setenv("WHMCS_WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setenv("WHMCS_STORE_URL", "https://store.example.com")
+    monkeypatch.setenv("WHMCS_STORE_CART_URL", "https://store.example.com/cart.php?a=add&pid=1")
+    config = load_config(env_file=None)
+    assert config.whmcs_webhook_identifier == "test-identifier"
+    assert config.whmcs_webhook_secret == "test-secret"
+    assert config.whmcs_store_cart_url.endswith("pid=1")
 
 
 @pytest.mark.parametrize("raw_value", ("0", "false", "no", "off"))

@@ -43,8 +43,35 @@ Base URL: `LOVABLE_API_URL` (example: `https://app.loanerphones.com/api/vps`)
 | POST | `/messages` | Create inbound/outbound tenant message |
 | PATCH | `/messages/{message_id}` | Update message status |
 | POST | `/esim-uploads` | Record eSIM storage key for a slot |
+| POST | `/billing/whmcs-event` | Apply a VPS-verified WHMCS credit/tier update |
 
 No generic SQL/RPC endpoint.
+
+## WHMCS billing event
+
+`POST /billing/whmcs-event` is called only by the VPS after identifier + HMAC
+verification. Lovable/Supabase owns the credit wallet.
+
+```json
+{
+  "event": "InvoicePaid",
+  "action": "credit_grant",
+  "user_id": "<supabase-uuid>",
+  "credit_delta": 2,
+  "tier": "starter",
+  "subscription_status": "active",
+  "whmcs_client_id": 123,
+  "invoice_id": "456",
+  "idempotency_key": "whmcs-invoicepaid-<user>-456"
+}
+```
+
+- `credit_grant` increments available and total credits and sets tier/status
+- `credit_revoke` decreases available credits (not below 0) and sets
+  `suspended` or `cancelled`
+- Repeat the same `Idempotency-Key` without double-crediting
+- 404 if the user/profile does not exist
+- Do not accept this body from the browser
 
 ## Claim rules
 
