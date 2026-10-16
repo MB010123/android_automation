@@ -56,6 +56,10 @@ REQUIRED_PATHS = [
     "/rentals/{rental_id}/end",
     "/rentals/{rental_id}/cancel",
     "/farm/slots/{bay}/cleanup-verified",
+    "/admin/devices/{slot_id}/live-access",
+    "/admin/devices/{slot_id}/live-access/stream",
+    "/admin/devices/{slot_id}/live-access/control",
+    "/admin/devices/{slot_id}/live-access/close",
     "/voidfix/inbound",
 ]
 
@@ -86,6 +90,8 @@ def test_required_paths_and_security():
     assert "security" not in health
     remote_access = paths["/rentals/{rental_id}/remote-access"]["post"]
     assert remote_access.get("security") == [{"UserAccessBearer": []}]
+    admin_live = paths["/admin/devices/{slot_id}/live-access"]["post"]
+    assert admin_live.get("security") == [{"UserAccessBearer": []}]
 
 
 def test_schemas_present():
@@ -109,6 +115,10 @@ def test_schemas_present():
         "SlotRecordResponse",
         "DeviceStatusResponse",
         "EsimAssignRequest",
+        "AdminLiveAccessSession",
+        "AdminLiveAccessControlRequest",
+        "AdminLiveAccessControlResponse",
+        "AdminLiveAccessCloseRequest",
     ):
         assert name in schemas
     assert schemas["SlotAvailability"]["required"] == ["bay", "box", "slot_id"]

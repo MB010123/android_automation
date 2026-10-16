@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,7 +37,9 @@ from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.auth_middleware import resolve_auth_context
 from application.auth_service import AuthContext, AuthService
+from application.admin_live_access_service import AdminLiveAccessService
 from application.vps_lovable_routes import (
+    ADMIN_LIVE_ACCESS_KINDS,
     FARM_SERVICE_ONLY,
     PUBLIC_AUTH_POST,
     REMOTE_ACCESS_KINDS,
@@ -84,6 +87,7 @@ from infrastructure.voidfix_webhook_http import (
 
 HEALTH_PATH = "/health"
 FARM_STATUS_PATH = "/farm/status"
+_SESSION_QUERY_RE = re.compile(r"([?&]session=)[0-9a-fA-F-]{8,36}", re.IGNORECASE)
 # Upper bound per background thread when shutting down (never indefinite).
 SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
 DEFAULT_WEBHOOK_PATH = "/voidfix/inbound"
@@ -178,9 +182,13 @@ class Handler(BaseHTTPRequestHandler):
     request_timeout: float = 10.0
     tenant_store: Any = None
     remote_access_service: RemoteAccessService | None = None
+    admin_live_access_service: AdminLiveAccessService | None = None
+    admin_live_access_rate_limiter: VpsRateLimiter | None = None
 
     def log_message(self, fmt: str, *args) -> None:
-        logger.info("%s - %s", self.address_string(), fmt % args)
+        rendered = fmt % args if args else str(fmt)
+        rendered = _SESSION_QUERY_RE.sub(r"\1[redacted]", rendered)
+        logger.info("%s - %s", self.address_string(), rendered)
 
     def _auth_context(self) -> AuthContext | None:
         return resolve_auth_context(
@@ -205,7 +213,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Credentials", "true")
-            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type, X-Admin-Live-Access-Session",
+            )
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
     def _read_json_body(self) -> dict[str, Any] | None:
@@ -326,6 +337,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "unauthorized"})
                 return None
             return ctx
+        if kind in ADMIN_LIVE_ACCESS_KINDS:
+            if ctx is None or ctx.kind != "user" or ctx.user is None:
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            if str(ctx.user.role or "").strip().lower() != "admin":
+                self._send_json(403, error_body("admin_forbidden"))
+                return None
+            return ctx
         if ctx is None or ctx.kind not in {"user", "farm_service"}:
             self._send_json(401, {"error": "unauthorized"})
             return None
@@ -425,6 +444,77 @@ class Handler(BaseHTTPRequestHandler):
             result = service.control_session(customer_id or "", rental_id, payload or {})
         elif action == "complete":
             result = service.complete_setup(customer_id or "", rental_id)
+        else:
+            self._send_json(404, {"error": "not_found"})
+            return True
+        self._send_json(result.http_status, result.body)
+        return True
+
+    def _admin_session_id(self, payload: dict[str, Any] | None) -> str | None:
+        header = (self.headers.get("X-Admin-Live-Access-Session") or "").strip()
+        query = parse_qs(urlparse(self.path).query)
+        from_query = (query.get("session") or [""])[0].strip()
+        from_body = ""
+        if isinstance(payload, dict):
+            from_body = str(payload.get("session_id") or "").strip()
+        return from_body or from_query or header or None
+
+    def _rate_limit_admin_live_access(self, slot_id: int) -> bool:
+        limiter = self.admin_live_access_rate_limiter
+        if limiter is None:
+            return True
+        allowed, retry = limiter.check(int(slot_id))
+        if allowed:
+            return True
+        body = error_body("rate_limited")
+        body["retry_after"] = retry
+        self._send_json(429, body)
+        return False
+
+    def _handle_admin_live_access(
+        self, route, ctx: AuthContext, payload: dict[str, Any] | None
+    ) -> bool:
+        """Admin live view by farm bay. Does not create or mutate a rental."""
+        service = self.admin_live_access_service
+        if service is None or not service.enabled:
+            self._send_json(503, error_body("phone_unavailable"))
+            return True
+        if ctx.user is None:
+            self._send_json(401, {"error": "unauthorized"})
+            return True
+        slot_id = route.farm_bay
+        if slot_id is None:
+            self._send_json(400, error_body("invalid_slot"))
+            return True
+        if not self._rate_limit_admin_live_access(slot_id):
+            return True
+        method = self.command
+        if route.kind == "admin_live_access":
+            if method != "POST":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            result = service.create_session(ctx.user, slot_id)
+            self._send_json(result.http_status, result.body)
+            return True
+        action = route.action
+        if action == "stream":
+            if method != "GET":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            opened = service.open_stream(ctx.user, slot_id, self._admin_session_id(payload))
+            if hasattr(opened, "http_status") and hasattr(opened, "body"):
+                self._send_json(int(opened.http_status), dict(opened.body))
+                return True
+            self._proxy_device_stream(opened)
+            return True
+        if method != "POST":
+            self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+            return True
+        body = payload if isinstance(payload, dict) else {}
+        if action == "control":
+            result = service.control_session(ctx.user, slot_id, body)
+        elif action == "close":
+            result = service.close_session(ctx.user, slot_id, body)
         else:
             self._send_json(404, {"error": "not_found"})
             return True
@@ -752,6 +842,9 @@ class Handler(BaseHTTPRequestHandler):
             if route.kind in REMOTE_ACCESS_KINDS:
                 self._handle_remote_access(route, ctx, None)
                 return
+            if route.kind in ADMIN_LIVE_ACCESS_KINDS:
+                self._handle_admin_live_access(route, ctx, None)
+                return
             if self._handle_service_get(route):
                 return
             self._send_json(404, {"error": "not_found"})
@@ -815,6 +908,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if route.kind in REMOTE_ACCESS_KINDS and ctx is not None:
                 self._handle_remote_access(route, ctx, payload)
+                return
+            if route.kind in ADMIN_LIVE_ACCESS_KINDS and ctx is not None:
+                self._handle_admin_live_access(route, ctx, payload)
                 return
             if self._handle_auth_post(route, payload):
                 return
@@ -1066,6 +1162,7 @@ def main() -> int:
             tenant=tenant_store,
             jwt_secret=(os.getenv("SUPABASE_JWT_SECRET") or "").strip(),
             access_ttl_seconds=int(os.getenv("VPS_AUTH_ACCESS_TOKEN_TTL_SECONDS", "3600")),
+            admin_user_ids=frozenset(getattr(config, "vps_admin_user_ids", ()) or ()),
         )
     farm_management_service = VpsFarmManagementService(
         job_store=vps_job_store,
@@ -1113,10 +1210,23 @@ def main() -> int:
     )
     if remote_access_service is not None:
         farm_management_service.set_remote_access(remote_access_service)
+    admin_live_access_service, admin_live_access_store = _build_admin_live_access_service(
+        config,
+        farm_task_client=farm_task_client,
+        event_store=event_store,
+        assignment_store=assignment_store,
+        cleanup_store=cleanup_store,
+        db_path=Path(vps_jobs_db).with_name("admin_live_access_sessions.sqlite"),
+        remote_platform=getattr(remote_access_service, "_platform", None)
+        if remote_access_service is not None
+        else None,
+    )
 
     def _after_heartbeat_poll() -> None:
         if remote_access_service is not None:
             remote_access_service.sweep_stale_sessions()
+        if admin_live_access_service is not None:
+            admin_live_access_service.sweep_stale_sessions()
         farm_management_service.sweep_ended_rentals()
 
     heartbeat_poller.set_after_poll(_after_heartbeat_poll)
@@ -1135,6 +1245,11 @@ def main() -> int:
     Handler.auth_service = auth_service
     Handler.tenant_store = tenant_store
     Handler.remote_access_service = remote_access_service
+    Handler.admin_live_access_service = admin_live_access_service
+    Handler.admin_live_access_rate_limiter = VpsRateLimiter(
+        per_slot_limit=int(os.getenv("VPS_ADMIN_LIVE_ACCESS_RATE_LIMIT_PER_SLOT", "30")),
+        global_limit=int(os.getenv("VPS_ADMIN_LIVE_ACCESS_RATE_LIMIT_GLOBAL", "200")),
+    )
     Handler.auth_rate_limiter = AuthRateLimiter(
         limit=int(os.getenv("VPS_AUTH_RATE_LIMIT", "10")),
         window_seconds=float(os.getenv("VPS_AUTH_RATE_WINDOW_SECONDS", "60")),
@@ -1181,6 +1296,8 @@ def main() -> int:
         status_store.close()
         if remote_access_store is not None:
             remote_access_store.close()
+        if admin_live_access_store is not None:
+            admin_live_access_store.close()
         if tenant_store is not None:
             tenant_store.close()
     return 0
@@ -1263,6 +1380,50 @@ def _build_remote_access_service(
         "gads-enabled" if observe_ids is None else sorted(observe_ids),
         sorted(full_map),
     )
+    return service, store
+
+
+def _build_admin_live_access_service(
+    config: Any,
+    *,
+    farm_task_client: FarmTaskClient | None,
+    event_store: SlotEventStore,
+    assignment_store: SlotAssignmentStore,
+    cleanup_store: DeviceCleanupStore,
+    db_path: Path,
+    remote_platform: Any = None,
+) -> tuple[AdminLiveAccessService | None, Any]:
+    """Admin live view. Reuses GADS hub credentials; never grants a rental user."""
+    # Fail closed: customer remote-access (POC) must not silently expose admin routes.
+    if not bool(getattr(config, "admin_live_access_enabled", False)):
+        return None, None
+    from infrastructure.adb_slot_status import SlotMapError, load_slot_map
+    from infrastructure.admin_live_access_store import AdminLiveAccessStore
+    from infrastructure.gads_remote_access import gads_platform_from_config
+
+    map_path = Path(config.slot_map_path) if config.slot_map_path else ROOT / "slot_map.json"
+    try:
+        full_map = load_slot_map(map_path)
+    except SlotMapError as exc:
+        logger.error("admin_live_access: slot map unavailable (%s)", exc)
+        full_map = {}
+    platform = remote_platform if remote_platform is not None else gads_platform_from_config(config)
+    if platform is None:
+        logger.error("admin_live_access: GADS platform is not configured; routes will return 503")
+    store = AdminLiveAccessStore(db_path)
+    service = AdminLiveAccessService(
+        enabled=True,
+        slot_device_map=full_map,
+        platform=platform,
+        store=store,
+        farm_task_client=farm_task_client,
+        event_recorder=event_store.append,
+        assignment_store=assignment_store,
+        cleanup_store=cleanup_store,
+        session_ttl_minutes=int(getattr(config, "admin_live_access_ttl_minutes", 15)),
+        gads_slot_ids=getattr(config, "remote_access_slot_ids", None),
+    )
+    logger.info("admin_live_access ENABLED mapped=%s", sorted(full_map))
     return service, store
 
 

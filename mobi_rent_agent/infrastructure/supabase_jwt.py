@@ -26,6 +26,8 @@ def sign_supabase_access_token(
     ttl_seconds: int = 3600,
     now: float | None = None,
     issuer: str | None = None,
+    app_metadata: dict[str, Any] | None = None,
+    user_metadata: dict[str, Any] | None = None,
 ) -> str:
     """Test helper: sign a Supabase-shaped access token. Not used in production."""
     issued = int(now if now is not None else time.time())
@@ -40,6 +42,10 @@ def sign_supabase_access_token(
     }
     if issuer:
         claims["iss"] = issuer
+    if app_metadata is not None:
+        claims["app_metadata"] = app_metadata
+    if user_metadata is not None:
+        claims["user_metadata"] = user_metadata
     payload = _b64url(json.dumps(claims, separators=(",", ":")).encode())
     signing = f"{header}.{payload}".encode("ascii")
     sig = hmac.new(secret.encode("utf-8"), signing, hashlib.sha256).digest()

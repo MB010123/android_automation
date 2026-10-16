@@ -100,6 +100,12 @@ class AgentConfig:
     voidfix_android_package: str | None = None
     # Customer rental Settings/Back/VoidFix session-layer redirects. Rollback: 0.
     customer_session_restrictions: bool = True
+    # Supabase user UUIDs allowed to use /admin/devices/{bay}/live-access.
+    # Never accept an admin role from a request body. JWT app_metadata.role=admin
+    # is also honored after signature verification.
+    vps_admin_user_ids: tuple[str, ...] = ()
+    admin_live_access_enabled: bool = False
+    admin_live_access_ttl_minutes: int = 15
 
     @property
     def sms_enabled(self) -> bool:
@@ -267,6 +273,11 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             ),
             voidfix_android_package=(os.getenv("VOIDFIX_ANDROID_PACKAGE") or "").strip() or None,
             customer_session_restrictions=_read_bool("CUSTOMER_SESSION_RESTRICTIONS", True),
+            vps_admin_user_ids=_parse_csv(os.getenv("VPS_ADMIN_USER_IDS")),
+            admin_live_access_enabled=_read_bool("ADMIN_LIVE_ACCESS_ENABLED", False),
+            admin_live_access_ttl_minutes=_read_int_range(
+                "ADMIN_LIVE_ACCESS_TTL_MINUTES", 15, 5, 60
+            ),
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

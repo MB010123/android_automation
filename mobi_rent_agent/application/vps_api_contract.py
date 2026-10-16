@@ -62,6 +62,10 @@ ERROR_MESSAGES: dict[str, str] = {
     "qr_not_on_device": "Remote QR file is missing after ADB push",
     "qr_push_failed": "ADB push of QR image failed",
     "qr_download_failed": "QR image could not be transferred to the Farm Agent",
+    "admin_forbidden": "Administrator access is required",
+    "invalid_slot": "slot_id must be a farm bay number from 1 to 20",
+    "live_access_not_found": "No admin live-access session exists for this slot",
+    "live_access_slot_mismatch": "This live-access session belongs to a different slot",
 }
 
 

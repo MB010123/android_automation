@@ -37,6 +37,10 @@ from domain.remote_access import (
 
 logger = logging.getLogger("vps_backend.remote_access.gads")
 
+# Sentinel username for admin live access. The adapter uses the hub admin JWT
+# and never creates a per-rental GADS user. Never returned to browsers.
+GADS_HUB_ADMIN_USERNAME = "__gads_hub_admin__"
+
 # GADS user JWTs are valid for one hour; refresh a little early.
 _ADMIN_TOKEN_TTL_SECONDS = 3300.0
 _MAX_SESSION_TTL_MINUTES = 360
@@ -388,6 +392,8 @@ class GadsRemoteAccessPlatform:
         )
 
     def _user_token(self, username: str, password: str) -> str:
+        if username == GADS_HUB_ADMIN_USERNAME:
+            return self._client.admin_token()
         now = self._clock()
         cached = self._user_tokens.get(username)
         if cached and (now - cached[1]) < 3000.0:

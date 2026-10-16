@@ -62,6 +62,9 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
         "FARM_MAX_CONCURRENT",
         "SMS_MAX_ATTEMPTS",
         "CUSTOMER_SESSION_RESTRICTIONS",
+        "VPS_ADMIN_USER_IDS",
+        "ADMIN_LIVE_ACCESS_ENABLED",
+        "ADMIN_LIVE_ACCESS_TTL_MINUTES",
     ):
         monkeypatch.delenv(optional, raising=False)
 
@@ -94,6 +97,26 @@ def test_minimal_config_applies_documented_defaults(monkeypatch):
     assert config.farm_max_concurrent == 4
     assert config.sms_max_attempts == 1
     assert config.customer_session_restrictions is True
+    assert config.vps_admin_user_ids == ()
+    assert config.admin_live_access_enabled is False
+    assert config.admin_live_access_ttl_minutes == 15
+
+
+def test_vps_admin_user_ids_and_live_access_ttl(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv(
+        "VPS_ADMIN_USER_IDS",
+        "11111111-1111-4111-8111-111111111111, 22222222-2222-4222-8222-222222222222",
+    )
+    monkeypatch.setenv("ADMIN_LIVE_ACCESS_ENABLED", "true")
+    monkeypatch.setenv("ADMIN_LIVE_ACCESS_TTL_MINUTES", "20")
+    config = load_config(env_file=None)
+    assert config.vps_admin_user_ids == (
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    assert config.admin_live_access_enabled is True
+    assert config.admin_live_access_ttl_minutes == 20
 
 
 @pytest.mark.parametrize("raw_value", ("0", "false", "no", "off"))

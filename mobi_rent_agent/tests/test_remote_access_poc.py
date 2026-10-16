@@ -39,6 +39,7 @@ from infrastructure.adb_companion import AdbCommandResult, AdbCommandRunner
 from infrastructure.config import AgentConfig, load_config
 from infrastructure.farm_task_client import FarmTaskResponse
 from infrastructure.gads_remote_access import (
+    GADS_HUB_ADMIN_USERNAME,
     GadsHubClient,
     GadsRemoteAccessPlatform,
     platform_username_for_rental,
@@ -103,6 +104,13 @@ class FakePlatform:
         self.gads_tap_available = True
         self.gads_swipe_available = True
         self.tap_error: str | None = None
+        self.status_error: str | None = None
+
+    def _require_control_user(self, device_id: str, platform_username: str) -> None:
+        if platform_username == GADS_HUB_ADMIN_USERNAME:
+            return
+        if self.leases.get(device_id) != platform_username:
+            raise RemoteAccessPlatformError("device_not_locked")
 
     def grant_access(self, *, device_id: str, rental_id: str, ttl_minutes: int, workspace_id: str = "") -> PlatformAccessGrant:
         self.calls.append(("grant", {"device_id": device_id, "rental_id": rental_id, "ttl": ttl_minutes, "workspace_id": workspace_id}))
@@ -140,6 +148,8 @@ class FakePlatform:
 
     def device_status(self, *, slot_id: int, device_id: str, workspace_id: str | None = None) -> RemoteDeviceStatus:
         self.calls.append(("status", {"device_id": device_id, "workspace_id": workspace_id}))
+        if self.status_error:
+            raise RemoteAccessPlatformError(self.status_error)
         registered = device_id in self.registered
         online = registered and self.online.get(device_id, False)
         return RemoteDeviceStatus(
@@ -153,8 +163,7 @@ class FakePlatform:
 
     def tap(self, *, device_id: str, platform_username: str, platform_password: str, x: int, y: int) -> bool:
         self.calls.append(("tap", {"device_id": device_id, "x": x, "y": y, "username": platform_username}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         if self.tap_error:
             raise RemoteAccessPlatformError(self.tap_error)
         return bool(self.gads_tap_available)
@@ -174,47 +183,40 @@ class FakePlatform:
         self.calls.append(
             ("swipe", {"device_id": device_id, "x": x, "y": y, "x2": x2, "y2": y2, "duration_ms": duration_ms})
         )
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_swipe_available)
 
     def type_text(self, *, device_id: str, platform_username: str, platform_password: str, text: str) -> None:
         self.calls.append(("type", {"device_id": device_id, "text": text}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
 
     def press_back(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
         self.calls.append(("back", {"device_id": device_id}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_nav_available)
 
     def press_home(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
         self.calls.append(("home", {"device_id": device_id}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_nav_available)
 
     def press_recents(self, *, device_id: str, platform_username: str, platform_password: str) -> bool:
         self.calls.append(("recents", {"device_id": device_id}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_nav_available)
 
     def press_notification_shade(
         self, *, device_id: str, platform_username: str, platform_password: str
     ) -> bool:
         self.calls.append(("notification_shade", {"device_id": device_id}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_nav_available)
 
     def press_quick_settings(
         self, *, device_id: str, platform_username: str, platform_password: str
     ) -> bool:
         self.calls.append(("quick_settings", {"device_id": device_id}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_nav_available)
 
     def set_rotation(
@@ -226,14 +228,12 @@ class FakePlatform:
         orientation: str,
     ) -> bool:
         self.calls.append(("rotate", {"device_id": device_id, "orientation": orientation}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return bool(self.gads_rotation_available)
 
     def open_mjpeg_stream(self, *, device_id: str, platform_username: str, platform_password: str):
         self.calls.append(("stream", {"device_id": device_id, "username": platform_username}))
-        if self.leases.get(device_id) != platform_username:
-            raise RemoteAccessPlatformError("device_not_locked")
+        self._require_control_user(device_id, platform_username)
         return FakeMjpeg(device_id)
 
 
@@ -1139,6 +1139,13 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route(f"/rentals/{slot}/remote-access/stream").action == "stream"
     assert parse_route(f"/rentals/{slot}/cancel").kind == "rental_cancel"
     assert parse_route("/farm/slots/1/cleanup-verified").kind == "cleanup_verified"
+    live = parse_route("/admin/devices/3/live-access")
+    assert live is not None and live.kind == "admin_live_access" and live.farm_bay == 3
+    assert parse_route("/admin/devices/3/live-access/stream").action == "stream"
+    assert parse_route("/admin/devices/3/live-access/control").action == "control"
+    assert parse_route("/admin/devices/3/live-access/close").action == "close"
+    assert parse_route("/admin/devices/21/live-access").farm_bay == 21
+    assert parse_route("/admin/devices/abc/live-access") is None
     assert parse_route(f"/rentals/{slot}/remote-access/adb-shell") is None
     assert parse_route(f"/rentals/not-a-uuid/remote-access") is None
 
@@ -1295,6 +1302,8 @@ def _start_http(tmp_path: Path, *, with_service: bool = True, slot_msisdn_map_pa
     Handler.webhook_secret = None
     Handler.tenant_store = tenant
     Handler.remote_access_service = service
+    Handler.admin_live_access_service = None
+    Handler.admin_live_access_rate_limiter = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, server.server_address[1], tenant, platform, Handler

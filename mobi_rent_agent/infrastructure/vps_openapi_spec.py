@@ -46,6 +46,16 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
                 ),
             },
             {"name": "Integration", "description": "Outbound webhooks to Lovable (not inbound VPS routes)."},
+            {
+                "name": "Admin live access",
+                "description": (
+                    "Administrator live view/control by farm bay (1–20). "
+                    "Does not create, assign, extend, cancel, or release a rental. "
+                    "Does not mark cleanup complete or approve reuse. "
+                    "Requires a verified admin (VPS_ADMIN_USER_IDS or signed JWT app_metadata). "
+                    "GADS credentials stay server-side."
+                ),
+            },
         ],
         "paths": _paths(webhook_path),
         "components": {
@@ -575,6 +585,88 @@ def _schemas() -> dict[str, Any]:
                 "received_at": {"type": "string", "format": "date-time"},
                 "provider_message_id": {"type": "string", "nullable": True},
             },
+        },
+        "AdminLiveAccessSession": {
+            "type": "object",
+            "required": [
+                "ok",
+                "session_id",
+                "slot_id",
+                "status",
+                "active",
+                "stream_path",
+                "allowed_controls",
+                "rental_unchanged",
+                "cleanup_unchanged",
+            ],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "session_id": {"type": "string", "format": "uuid"},
+                "slot_id": {"type": "integer", "minimum": 1, "maximum": 20},
+                "status": {"type": "string", "enum": ["active", "closed", "expired"]},
+                "active": {"type": "boolean"},
+                "expires_at": {"type": "number"},
+                "expires_at_iso": {"type": "string", "format": "date-time", "nullable": True},
+                "stream_path": {"type": "string"},
+                "allowed_controls": {"type": "array", "items": {"type": "string"}},
+                "coordinate_space": {"type": "string", "enum": ["native_device_pixels"]},
+                "session_mode": {"type": "string", "enum": ["admin_live_access"]},
+                "rental_unchanged": {"type": "boolean", "enum": [True]},
+                "cleanup_unchanged": {"type": "boolean", "enum": [True]},
+            },
+        },
+        "AdminLiveAccessControlRequest": {
+            "type": "object",
+            "required": ["session_id", "action"],
+            "properties": {
+                "session_id": {"type": "string", "format": "uuid"},
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "tap",
+                        "swipe",
+                        "type",
+                        "back",
+                        "home",
+                        "recents",
+                        "notification_shade",
+                        "quick_settings",
+                        "rotate",
+                        "settings",
+                        "airplane_mode",
+                    ],
+                },
+                "x": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "y": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "x2": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "y2": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "start_x": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "start_y": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "end_x": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "end_y": {"type": "integer", "minimum": 0, "maximum": 8192},
+                "duration_ms": {"type": "integer", "minimum": 1, "maximum": 5000},
+                "text": {"type": "string", "maxLength": 64},
+                "orientation": {"type": "string", "enum": ["portrait", "landscape"]},
+                "state": {"type": "string", "enum": ["on", "off"]},
+            },
+        },
+        "AdminLiveAccessControlResponse": {
+            "type": "object",
+            "required": ["ok", "action", "forwarded", "slot_id", "session_id"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "action": {"type": "string"},
+                "forwarded": {"type": "boolean"},
+                "slot_id": {"type": "integer"},
+                "session_id": {"type": "string", "format": "uuid"},
+                "rental_unchanged": {"type": "boolean", "enum": [True]},
+                "cleanup_unchanged": {"type": "boolean", "enum": [True]},
+            },
+        },
+        "AdminLiveAccessCloseRequest": {
+            "type": "object",
+            "required": ["session_id"],
+            "properties": {"session_id": {"type": "string", "format": "uuid"}},
         },
     }
 
@@ -1270,6 +1362,200 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "404": {"description": "slot_not_found"},
                     "409": {"description": "slot_unavailable"},
+                },
+            }
+        },
+        "/admin/devices/{slot_id}/live-access": {
+            "post": {
+                "tags": ["Admin live access"],
+                "summary": "Open a short-lived admin live-view session for a farm bay",
+                "description": (
+                    "Verified administrator only (`VPS_ADMIN_USER_IDS` or signed JWT "
+                    "`app_metadata.role=admin` / `app_metadata.mobi_rent_role=admin`). "
+                    "`slot_id` is the farm bay 1–20. Works for available, rented, cleanup-pending, "
+                    "and cleanup-in-progress phones. Does not create a rental, assign a customer, "
+                    "change availability, mark cleanup complete, or reboot the phone. "
+                    "Request body is ignored: role/slot claims in JSON are never authorization. "
+                    "GADS hub credentials stay on the VPS; the browser receives only `session_id` "
+                    "and a VPS-proxied `stream_path`."
+                ),
+                "security": user_bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "description": "Farm bay / PhoneFarmBox slot number (1–20).",
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Existing valid admin session reused",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AdminLiveAccessSession"}
+                            }
+                        },
+                    },
+                    "201": {
+                        "description": "Admin live-access session created",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AdminLiveAccessSession"}
+                            }
+                        },
+                    },
+                    "400": {"description": "invalid_slot"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "phone_offline"},
+                    "429": {"description": "rate_limited"},
+                    "502": {"description": "gads_unavailable"},
+                    "503": {"description": "phone_unavailable | gads_unavailable"},
+                },
+            }
+        },
+        "/admin/devices/{slot_id}/live-access/stream": {
+            "get": {
+                "tags": ["Admin live access"],
+                "summary": "Proxy the phone MJPEG stream for an admin session",
+                "description": (
+                    "Same MJPEG proxy as customer `GET /rentals/{id}/remote-access/stream`. "
+                    "Requires the admin JWT plus `session` query or `X-Admin-Live-Access-Session`. "
+                    "The session must belong to this administrator and this bay. "
+                    "Does not grant a GADS rental user and does not change rental or cleanup state."
+                ),
+                "security": user_bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                    },
+                    {
+                        "name": "session",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string", "format": "uuid"},
+                        "description": "Admin live-access session id from POST .../live-access.",
+                    },
+                    {
+                        "name": "X-Admin-Live-Access-Session",
+                        "in": "header",
+                        "required": False,
+                        "schema": {"type": "string", "format": "uuid"},
+                    },
+                ],
+                "responses": {
+                    "200": {
+                        "description": "MJPEG (`multipart/x-mixed-replace; boundary=frame`)"
+                    },
+                    "400": {"description": "invalid_request | invalid_slot"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden | session_expired | live_access_slot_mismatch"},
+                    "404": {"description": "live_access_not_found | slot_not_found"},
+                    "409": {"description": "phone_offline"},
+                    "502": {"description": "gads_unavailable"},
+                    "503": {"description": "gads_unavailable"},
+                },
+            }
+        },
+        "/admin/devices/{slot_id}/live-access/control": {
+            "post": {
+                "tags": ["Admin live access"],
+                "summary": "Forward a supported touch or navigation action",
+                "description": (
+                    "Allowlisted actions only: tap, swipe, type, back, home, recents, "
+                    "notification_shade, quick_settings, rotate, settings, airplane_mode. "
+                    "`airplane_mode` returns 501 (no approved Android 16 path). "
+                    "Rejected: shell, ADB, package install, factory reset, reboot, "
+                    "device identity fields. Session cannot control a different bay. "
+                    "Customer session restrictions are not applied (admin cleanup may use "
+                    "Settings / shade / VoidFix). Does not mark cleanup complete."
+                ),
+                "security": user_bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/AdminLiveAccessControlRequest"}
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Forwarded",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AdminLiveAccessControlResponse"
+                                }
+                            }
+                        },
+                    },
+                    "400": {"description": "invalid_request | invalid_slot"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {
+                        "description": "admin_forbidden | forbidden_control | session_expired | live_access_slot_mismatch"
+                    },
+                    "404": {"description": "live_access_not_found"},
+                    "409": {"description": "phone_offline"},
+                    "422": {"description": "invalid_control"},
+                    "501": {"description": "action_not_supported (airplane_mode)"},
+                    "502": {"description": "gads_unavailable"},
+                },
+            }
+        },
+        "/admin/devices/{slot_id}/live-access/close": {
+            "post": {
+                "tags": ["Admin live access"],
+                "summary": "Close the admin viewing session",
+                "description": (
+                    "Ends only the temporary admin session row. Does not stop shared GADS "
+                    "services, interrupt other bays, revoke a customer rental lease, "
+                    "release occupancy, or verify cleanup."
+                ),
+                "security": user_bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                    }
+                ],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/AdminLiveAccessCloseRequest"}
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Closed",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/AdminLiveAccessSession"}
+                            }
+                        },
+                    },
+                    "400": {"description": "invalid_request | invalid_slot"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden | live_access_slot_mismatch"},
+                    "404": {"description": "live_access_not_found"},
                 },
             }
         },

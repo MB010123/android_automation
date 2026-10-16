@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from application.admin_identity import resolve_admin_role
 from application.vps_api_contract import error_body, iso_ts
 from infrastructure.auth_models import AuthUser
 from infrastructure.supabase_gateway import SupabaseAuthError, SupabaseGateway, SupabaseSession
@@ -44,6 +45,7 @@ class AuthService:
         tenant: Any = None,
         jwt_secret: str = "",
         access_ttl_seconds: int = 3600,
+        admin_user_ids: frozenset[str] | set[str] | tuple[str, ...] = (),
     ) -> None:
         if supabase is None:
             raise ValueError("supabase_required")
@@ -51,6 +53,7 @@ class AuthService:
         self._tenant = tenant
         self._jwt_secret = (jwt_secret or "").strip()
         self._ttl = int(access_ttl_seconds)
+        self._admin_user_ids = frozenset(str(uid).strip() for uid in admin_user_ids if str(uid).strip())
 
     @property
     def access_ttl_seconds(self) -> int:
@@ -99,11 +102,13 @@ class AuthService:
     def validate_user_token(self, token: str | None) -> AuthContext | None:
         if not token:
             return None
-        user = self._user_from_local_jwt(token)
+        user, claims = self._user_from_local_jwt(token)
         if user is None:
             user = self._supabase.get_user(token)
+            claims = None
         if user is None or not user.is_active:
             return None
+        user = self._with_admin_role(user, claims)
         return AuthContext(kind="user", user=user, session_id=user.user_id, access_token=token)
 
     def logout(self, ctx: AuthContext) -> AuthResult:
@@ -176,27 +181,39 @@ class AuthService:
             return AuthResult(400, error_body("invalid_request"))
         return AuthResult(200, {"ok": True})
 
-    def _user_from_local_jwt(self, token: str) -> AuthUser | None:
+    def _user_from_local_jwt(self, token: str) -> tuple[AuthUser | None, dict[str, Any] | None]:
         if not self._jwt_secret:
-            return None
+            return None, None
         claims = verify_supabase_access_token(
             token,
             self._jwt_secret,
             issuer=self._supabase.project_url,
         )
         if claims is None:
-            return None
+            return None, None
         email = str(claims.get("email") or "").strip().lower()
         user_id = str(claims.get("sub") or "").strip()
         if not user_id:
-            return None
-        return AuthUser(
-            user_id=user_id,
-            email=email,
-            is_active=True,
-            email_verified=bool(claims.get("email_verified") or claims.get("email_confirmed_at")),
-            role="user",
+            return None, None
+        return (
+            AuthUser(
+                user_id=user_id,
+                email=email,
+                is_active=True,
+                email_verified=bool(claims.get("email_verified") or claims.get("email_confirmed_at")),
+                role="user",
+            ),
+            claims,
         )
+
+    def _with_admin_role(self, user: AuthUser, claims: dict[str, Any] | None) -> AuthUser:
+        role = resolve_admin_role(
+            user_id=user.user_id,
+            allowlist=self._admin_user_ids,
+            claims=claims,
+        )
+        # Never keep a role supplied by get_user / client metadata.
+        return replace(user, role=role)
 
     def _ensure_profile(self, user: AuthUser) -> None:
         if self._tenant is None:

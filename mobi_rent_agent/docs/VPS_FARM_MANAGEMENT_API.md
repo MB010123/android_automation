@@ -177,3 +177,11 @@ Exceeded limits return `429 rate_limited`. Limits are in-process (per VPS servic
 - VPS → Farm: `FARM_AGENT_API_TOKEN`
 - Slot isolation: serial and VoidFix IDs come from on-disk maps only.
 - No secrets in logs; SMS bodies are not stored in slot events.
+
+## Cleanup verification vs admin live view
+
+`POST /farm/slots/{bay}/cleanup-verified` remains farm-service-only and is the
+only API that clears CLEANUP REQUIRED. Administrator live view
+(`POST /admin/devices/{bay}/live-access`, see [ADMIN_LIVE_ACCESS.md](ADMIN_LIVE_ACCESS.md))
+can show a cleanup-pending phone but never marks cleanup complete or makes the
+bay available again.
