@@ -1,10 +1,19 @@
-# WHMCS billing webhook
+# WHMCS billing webhook → Supabase `user_credits`
 
 WHMCS (`vps_sync.php`) POSTs lifecycle events to the VPS. The VPS verifies the
-request, then updates the user's credit wallet and subscription tier in
-Lovable/Supabase.
+request, then updates the user's row in Lovable/Supabase **`public.user_credits`**.
 
-The browser never calls this endpoint. Do not put the identifier or HMAC secret
+Authoritative columns:
+
+| Column | Meaning |
+|---|---|
+| `user_id` | Supabase auth UUID (primary key) |
+| `available_credits` | Spendable credits |
+| `total_credits` | Lifetime / package total |
+| `subscription_tier` | Package name |
+| `whmcs_service_id` | WHMCS service id for the package |
+
+The browser never calls the webhook. Do not put the identifier or HMAC secret
 in Lovable, git, or frontend environment files.
 
 ## Endpoint
@@ -16,9 +25,6 @@ X-WHMCS-Identifier: <WHMCS_WEBHOOK_IDENTIFIER>
 X-WHMCS-Signature: <hex HMAC-SHA256 of the raw JSON body>
 ```
 
-`X-WHMCS-Signature` may be a bare hex digest or `sha256=<hex>`. Query-string
-secrets are rejected.
-
 Configure on the VPS only:
 
 ```
@@ -26,7 +32,13 @@ WHMCS_WEBHOOK_IDENTIFIER=
 WHMCS_WEBHOOK_SECRET=
 WHMCS_STORE_URL=https://store.example.com
 WHMCS_STORE_CART_URL=https://store.example.com/cart.php?a=add&pid=1
+LOVABLE_API_URL=https://your-app.example/api/vps
+VPS_TO_LOVABLE_API_TOKEN=
 ```
+
+When `LOVABLE_API_URL` + `VPS_TO_LOVABLE_API_TOKEN` are set, the VPS forwards
+verified events to Lovable `POST /billing/whmcs-event`, which **must** upsert
+`user_credits` for that `user_id`.
 
 ## Payload
 
@@ -35,67 +47,60 @@ WHMCS_STORE_CART_URL=https://store.example.com/cart.php?a=add&pid=1
   "event": "InvoicePaid",
   "user_id": "11111111-1111-4111-8111-111111111111",
   "credit_delta": 2,
-  "tier": "starter",
+  "subscription_tier": "starter",
   "whmcs_client_id": 1001,
+  "whmcs_service_id": "4401",
   "invoice_id": "8801",
-  "service_id": "4401",
   "idempotency_key": "invoice-8801"
 }
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `event` | yes | See events below |
-| `user_id` | yes | Supabase auth user UUID. Never inferred from email. |
-| `credit_delta` | grant only | Integer 1–1000. Aliases: `credits`, `package_credits`. |
-| `tier` | no | Package name (`[A-Za-z0-9_-]{1,32}`) |
-| `whmcs_client_id` | no | Integer WHMCS client id |
-| `invoice_id` / `service_id` | no | Used for default idempotency |
-| `idempotency_key` | no | Retries must send the same key |
-
-`email` may be present for operator debugging on the WHMCS side. The VPS does
-not log it and does not use it as identity.
+Aliases still accepted: `tier` → `subscription_tier`, `service_id` →
+`whmcs_service_id`, `credits` / `package_credits` → `credit_delta`.
 
 ## Events
 
-| WHMCS event | Action | Wallet effect |
+| WHMCS event | Action | `user_credits` effect |
 |---|---|---|
-| `InvoicePaid` | `credit_grant` | Add credits; set tier; `subscription_status=active` |
-| `AfterOrderAccept` | `credit_grant` | Same as paid invoice |
-| `ServiceSuspensionAudit` | `credit_revoke` | Subtract credits (floor 0); `suspended` |
-| `CancellationRequest` | `credit_revoke` | Subtract credits (floor 0); `cancelled` |
+| `InvoicePaid` | `credit_grant` | `available_credits` += delta; `total_credits` += delta; set `subscription_tier` / `whmcs_service_id` |
+| `AfterOrderAccept` | `credit_grant` | Same |
+| `ServiceSuspensionAudit` | `credit_revoke` | `available_credits` = max(0, available − delta) |
+| `CancellationRequest` | `credit_revoke` | Same; status cancelled |
 
-Unknown events return `400 invalid_whmcs_event`.
-
-## Success
+## Success body (live column names)
 
 ```json
 {
   "ok": true,
+  "table": "user_credits",
+  "user_id": "11111111-1111-4111-8111-111111111111",
+  "available_credits": 2,
+  "total_credits": 2,
+  "subscription_tier": "starter",
+  "whmcs_service_id": "4401",
   "event": "InvoicePaid",
   "action": "credit_grant",
-  "user_id": "11111111-1111-4111-8111-111111111111",
-  "credits_available": 2,
-  "credits_total": 2,
-  "tier": "starter",
   "subscription_status": "active",
   "replayed": false
 }
 ```
 
-A repeated idempotency key returns `200` with `replayed: true` and does not
-change the balance again.
+## Phone activate / terminate
 
-## Upgrade button
+When Lovable is configured, the VPS also:
 
-`GET /billing/config` is public and returns only HTTPS store/cart URLs:
+- Deducts 1 `available_credits` on durable phone reservation (activation)
+- Refunds 1 `available_credits` on rental end (termination)
 
-```json
-{ "ok": true, "upgrade_url": "https://store.example.com/cart.php?a=add&pid=1", "store_url": "https://store.example.com" }
-```
+via Lovable `POST /billing/credits/deduct` and `POST /billing/credits/refund`.
+Those handlers must update `user_credits` atomically (idempotent by rental id).
 
-Lovable should use `upgrade_url` (or `VITE_WHMCS_CART_URL`) instead of a
-placeholder `/billing` route. The VPS helper is `web/billingConfig.ts`.
+## Dashboard / frontend
+
+- Prefer Supabase realtime on `user_credits` filtered by `user_id = auth.uid()`
+- Helper: `web/userCredits.ts`
+- Or poll `GET /billing/credits` with the user JWT (returns the same columns)
+- Upgrade button: `GET /billing/config` → `upgrade_url`
 
 ## PHP HMAC
 

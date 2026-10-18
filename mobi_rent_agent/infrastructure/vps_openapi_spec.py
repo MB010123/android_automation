@@ -721,6 +721,7 @@ def _schemas() -> dict[str, Any]:
         "WhmcsWebhookRequest": {
             "type": "object",
             "required": ["event", "user_id"],
+            "description": "Maps to Supabase public.user_credits for the given user_id.",
             "properties": {
                 "event": {
                     "type": "string",
@@ -734,11 +735,27 @@ def _schemas() -> dict[str, Any]:
                 "user_id": {"type": "string", "format": "uuid"},
                 "credit_delta": {"type": "integer", "minimum": 0, "maximum": 1000},
                 "credits": {"type": "integer", "minimum": 0, "maximum": 1000},
-                "tier": {"type": "string"},
+                "subscription_tier": {"type": "string"},
+                "tier": {"type": "string", "description": "Alias for subscription_tier"},
                 "whmcs_client_id": {"type": "integer"},
+                "whmcs_service_id": {"type": "string"},
                 "invoice_id": {"type": "string"},
-                "service_id": {"type": "string"},
+                "service_id": {"type": "string", "description": "Alias for whmcs_service_id"},
                 "idempotency_key": {"type": "string"},
+            },
+        },
+        "UserCreditsResponse": {
+            "type": "object",
+            "required": ["ok", "user_id", "available_credits", "total_credits"],
+            "properties": {
+                "ok": {"type": "boolean", "enum": [True]},
+                "table": {"type": "string", "enum": ["user_credits"]},
+                "user_id": {"type": "string", "format": "uuid"},
+                "available_credits": {"type": "integer"},
+                "total_credits": {"type": "integer"},
+                "subscription_tier": {"type": "string", "nullable": True},
+                "whmcs_service_id": {"type": "string", "nullable": True},
+                "replayed": {"type": "boolean"},
             },
         },
         "BillingConfigResponse": {
@@ -748,6 +765,7 @@ def _schemas() -> dict[str, Any]:
                 "ok": {"type": "boolean", "enum": [True]},
                 "upgrade_url": {"type": "string", "nullable": True},
                 "store_url": {"type": "string", "nullable": True},
+                "credits_table": {"type": "string", "enum": ["user_credits"]},
             },
         },
     }
@@ -1356,6 +1374,28 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                             }
                         }
                     }
+                },
+            }
+        },
+        "/billing/credits": {
+            "get": {
+                "tags": ["Billing"],
+                "summary": "Signed-in user's live user_credits row",
+                "description": (
+                    "Returns `available_credits`, `total_credits`, `subscription_tier`, "
+                    "and `whmcs_service_id` for the authenticated user. Prefer Supabase "
+                    "realtime on `user_credits` in the Lovable dashboard."
+                ),
+                "security": [{"UserAccessBearer": []}],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/UserCreditsResponse"}
+                            }
+                        }
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
                 },
             }
         },

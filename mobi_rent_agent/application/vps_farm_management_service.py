@@ -88,6 +88,7 @@ class VpsFarmManagementService:
         remote_access: Any = None,
         cleanup_store: DeviceCleanupStore | None = None,
         farm_task_client: Any = None,
+        credit_billing: Any = None,
     ) -> None:
         self._jobs = job_store
         self._assignments = assignment_store
@@ -115,9 +116,39 @@ class VpsFarmManagementService:
             )
         self._cleanup = cleanup_store
         self._farm_tasks = farm_task_client
+        self._credit_billing = credit_billing
 
     def set_remote_access(self, remote_access: Any) -> None:
         self._remote_access = remote_access
+
+    def set_credit_billing(self, credit_billing: Any) -> None:
+        """Optional WHMCS/user_credits billing service for activate/terminate."""
+        self._credit_billing = credit_billing
+
+    def _deduct_activation_credit(self, user_id: str, rental_id: str) -> ApiResult | None:
+        billing = self._credit_billing
+        if billing is None:
+            return None
+        deduct = getattr(billing, "deduct_for_activation", None)
+        if not callable(deduct):
+            return None
+        result = deduct(user_id=user_id, rental_id=rental_id, amount=1)
+        if getattr(result, "http_status", 500) >= 400:
+            return result
+        return None
+
+    def _refund_termination_credit(self, user_id: str, rental_id: str) -> ApiResult | None:
+        billing = self._credit_billing
+        if billing is None:
+            return None
+        refund = getattr(billing, "refund_for_termination", None)
+        if not callable(refund):
+            return None
+        result = refund(user_id=user_id, rental_id=rental_id, amount=1)
+        if getattr(result, "http_status", 500) >= 400:
+            logger.warning("credit_refund_failed rental=%s", rental_id[:8])
+            return result
+        return None
 
     def resolve_farm_slot(self, slot_ref: str) -> int | None:
         farm_slot = farm_slot_for_public_id(slot_ref, self._overrides)
@@ -418,6 +449,13 @@ class VpsFarmManagementService:
             return ApiResult(503, error_body("auth_unavailable"))
         if not claimed:
             return ApiResult(409, error_body("slot_unavailable"))
+        billed = self._deduct_activation_credit(owner, rental_id)
+        if isinstance(billed, ApiResult):
+            try:
+                self._auth_store.unclaim_slot(bay, rental_id)
+            except (TypeError, ValueError, OSError, requests.RequestException):
+                logger.warning("tenant_unclaim_after_credit_fail bay=%s", bay)
+            return billed
         reserved = self._ensure_reservation(bay, rental_id)
         if reserved is not None:
             return reserved
@@ -487,9 +525,14 @@ class VpsFarmManagementService:
         self._cleanup.mark_required(bay, rental, detail=DEVICE_CLEANUP_DETAIL)
         self._events.append(bay, DEVICE_CLEANUP_EVENT, DEVICE_CLEANUP_DETAIL)
 
+        owner = str((row or {}).get("user_id") or "").strip() if isinstance(row, dict) else ""
         unclaimed = self._unclaim_tenant(bay, rental)
         if isinstance(unclaimed, ApiResult):
             return unclaimed
+        if owner:
+            refunded = self._refund_termination_credit(owner, rental)
+            if isinstance(refunded, ApiResult):
+                return refunded
 
         released = self._reservations.release(bay, rental)
         leftover = self._reservations.get_by_rental(rental)

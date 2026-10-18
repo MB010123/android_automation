@@ -736,10 +736,27 @@ class Handler(BaseHTTPRequestHandler):
             if service is None:
                 self._send_json(
                     200,
-                    {"ok": True, "upgrade_url": None, "store_url": None},
+                    {
+                        "ok": True,
+                        "upgrade_url": None,
+                        "store_url": None,
+                        "credits_table": "user_credits",
+                    },
                 )
                 return True
             result = service.billing_config()
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "billing_credits":
+            ctx = self._auth_context()
+            if ctx is None or ctx.kind != "user" or ctx.user is None:
+                self._send_json(401, {"error": "unauthorized"})
+                return True
+            service = self.whmcs_billing_service
+            if service is None:
+                self._send_json(503, error_body("webhook_not_configured"))
+                return True
+            result = service.get_user_credits(ctx.user.user_id)
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "auth_me":
@@ -881,6 +898,11 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_json(404, {"error": "not_found"})
                 return
+            if route.kind == "billing_credits":
+                if self._handle_service_get(route):
+                    return
+                self._send_json(404, {"error": "not_found"})
+                return
             ctx = self._authorize_route(route)
             if ctx is None:
                 return
@@ -939,7 +961,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         route = parse_route(path)
         if route is not None:
-            if route.kind in {"auth_me", "auth_session", "billing_config"}:
+            if route.kind in {"auth_me", "auth_session", "billing_config", "billing_credits"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
             if route.kind == "whmcs_webhook":
@@ -1330,6 +1352,9 @@ def main() -> int:
         store_url=config.whmcs_store_url,
         cart_url=config.whmcs_store_cart_url,
     )
+    # Phone activate/terminate mutate live Supabase user_credits via Lovable only.
+    if lovable_billing_client is not None:
+        farm_management_service.set_credit_billing(Handler.whmcs_billing_service)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(

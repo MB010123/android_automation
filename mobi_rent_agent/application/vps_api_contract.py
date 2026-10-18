@@ -76,6 +76,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "invalid_tier": "tier must be a short alphanumeric package name",
     "user_not_found": "No billing profile exists for this user",
     "tenant_unavailable": "Tenant billing service is temporarily unavailable",
+    "insufficient_credits": "Not enough available credits for this phone",
 }
 
 

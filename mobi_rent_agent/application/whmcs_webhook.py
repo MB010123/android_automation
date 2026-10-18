@@ -36,12 +36,20 @@ class WhmcsWebhookCommand:
     action: str
     user_id: str
     credit_delta: int
-    tier: str | None
+    subscription_tier: str | None
     subscription_status: str
     whmcs_client_id: int | None
     invoice_id: str | None
-    service_id: str | None
+    whmcs_service_id: str | None
     idempotency_key: str
+
+    @property
+    def tier(self) -> str | None:
+        return self.subscription_tier
+
+    @property
+    def service_id(self) -> str | None:
+        return self.whmcs_service_id
 
 
 def sign_whmcs_body(secret: str, body: bytes) -> str:
@@ -87,12 +95,19 @@ def parse_whmcs_payload(raw: Any) -> WhmcsWebhookCommand | str:
     delta = _parse_credit_delta(raw, required=action == ACTION_GRANT)
     if delta is None:
         return "invalid_credit_delta"
-    tier = _parse_tier(raw.get("tier") or raw.get("package") or raw.get("subscription_tier"))
-    if raw.get("tier") not in (None, "") and tier is None:
+    tier_raw = raw.get("subscription_tier")
+    if tier_raw in (None, ""):
+        tier_raw = raw.get("tier")
+    if tier_raw in (None, ""):
+        tier_raw = raw.get("package")
+    tier = _parse_tier(tier_raw)
+    if tier_raw not in (None, "") and tier is None:
         return "invalid_tier"
     client_id = _optional_int(raw.get("whmcs_client_id") or raw.get("client_id"))
     invoice_id = _optional_text(raw.get("invoice_id"))
-    service_id = _optional_text(raw.get("service_id"))
+    service_id = _optional_text(
+        raw.get("whmcs_service_id") or raw.get("service_id")
+    )
     idem = _optional_text(raw.get("idempotency_key")) or _default_idempotency(
         event=normalized, user_id=user_id, invoice_id=invoice_id, service_id=service_id
     )
@@ -101,11 +116,11 @@ def parse_whmcs_payload(raw: Any) -> WhmcsWebhookCommand | str:
         action=action,
         user_id=user_id,
         credit_delta=delta,
-        tier=tier,
+        subscription_tier=tier,
         subscription_status=status,
         whmcs_client_id=client_id,
         invoice_id=invoice_id,
-        service_id=service_id,
+        whmcs_service_id=service_id,
         idempotency_key=idem,
     )
 

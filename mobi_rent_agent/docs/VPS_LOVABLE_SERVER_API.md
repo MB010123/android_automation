@@ -43,35 +43,86 @@ Base URL: `LOVABLE_API_URL` (example: `https://app.loanerphones.com/api/vps`)
 | POST | `/messages` | Create inbound/outbound tenant message |
 | PATCH | `/messages/{message_id}` | Update message status |
 | POST | `/esim-uploads` | Record eSIM storage key for a slot |
-| POST | `/billing/whmcs-event` | Apply a VPS-verified WHMCS credit/tier update |
+| GET | `/billing/credits/{user_id}` | Read `public.user_credits` for that user |
+| POST | `/billing/whmcs-event` | Apply a VPS-verified WHMCS credit/tier update to `user_credits` |
+| POST | `/billing/credits/deduct` | Atomic phone-activation debit of `available_credits` |
+| POST | `/billing/credits/refund` | Atomic phone-termination credit refund |
 
 No generic SQL/RPC endpoint.
+
+## `user_credits` table
+
+Lovable must read/write Supabase **`public.user_credits`** with columns:
+
+- `user_id` (uuid, PK = auth user)
+- `available_credits` (int)
+- `total_credits` (int)
+- `subscription_tier` (text, nullable)
+- `whmcs_service_id` (text, nullable)
+
+Dashboard credit cards should subscribe to realtime changes on this table for
+`user_id = auth.uid()`.
 
 ## WHMCS billing event
 
 `POST /billing/whmcs-event` is called only by the VPS after identifier + HMAC
-verification. Lovable/Supabase owns the credit wallet.
+verification. Upsert **`user_credits`** for `user_id`.
 
 ```json
 {
+  "table": "user_credits",
   "event": "InvoicePaid",
   "action": "credit_grant",
   "user_id": "<supabase-uuid>",
   "credit_delta": 2,
-  "tier": "starter",
+  "subscription_tier": "starter",
   "subscription_status": "active",
   "whmcs_client_id": 123,
+  "whmcs_service_id": "456",
   "invoice_id": "456",
   "idempotency_key": "whmcs-invoicepaid-<user>-456"
 }
 ```
 
-- `credit_grant` increments available and total credits and sets tier/status
-- `credit_revoke` decreases available credits (not below 0) and sets
-  `suspended` or `cancelled`
+Response must include live columns:
+
+```json
+{
+  "ok": true,
+  "user_id": "<uuid>",
+  "available_credits": 2,
+  "total_credits": 2,
+  "subscription_tier": "starter",
+  "whmcs_service_id": "456",
+  "replayed": false
+}
+```
+
+- `credit_grant` increments `available_credits` and `total_credits`; sets
+  `subscription_tier` / `whmcs_service_id`
+- `credit_revoke` decreases `available_credits` (not below 0)
 - Repeat the same `Idempotency-Key` without double-crediting
 - 404 if the user/profile does not exist
 - Do not accept this body from the browser
+
+## Credit deduct / refund
+
+Called by the VPS on phone reservation (activate) and rental end (terminate):
+
+```json
+{
+  "table": "user_credits",
+  "user_id": "<uuid>",
+  "amount": 1,
+  "reason": "phone_activation",
+  "rental_id": "<uuid>",
+  "idempotency_key": "phone-activate-<rental_id>"
+}
+```
+
+- Deduct: fail with `409 insufficient_credits` when `available_credits < amount`
+- Refund: add to `available_credits` only (do not inflate `total_credits`)
+- Idempotent per `idempotency_key` / rental id
 
 ## Claim rules
 
