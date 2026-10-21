@@ -34,6 +34,7 @@ from application.inbound_sms_normalize import (
     provider_message_id_from_payload,
 )
 from application.farm_heartbeat_poller import FarmHeartbeatPoller
+from application.vps_farm_inventory import configured_static_slots
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.auth_middleware import resolve_auth_context
@@ -1179,8 +1180,24 @@ def main() -> int:
         str(ROOT / "logs" / "outbound_api_messages.sqlite"),
     )
     message_store = OutboundMessageStore(Path(api_messages_db))
-    # VoidFix/SMS catalog only. Physical Pixel inventory is Farm health `mapped_slots`.
-    known_slots = set(device_map.keys()) if device_map else set()
+    # VoidFix is the SMS catalog (Pixels 1–20). Physical inventory — including
+    # Slot 21 (Samsung S20) — comes from slot_map. Farm management used to
+    # treat only VoidFix keys as known, so cleanup/assign for bay 21 returned
+    # slot_not_found ("Farm bay or public slot ID is not configured").
+    slot_map_slots: set[int] = set()
+    slot_map_path = Path(config.slot_map_path) if getattr(config, "slot_map_path", None) else ROOT / "slot_map.json"
+    if slot_map_path.exists():
+        from infrastructure.adb_slot_status import SlotMapError, load_slot_map
+
+        try:
+            slot_map_slots = set(load_slot_map(slot_map_path))
+        except SlotMapError as exc:
+            logger.warning("known_slots: farm slot map unavailable (%s)", exc)
+    known_slots = configured_static_slots(
+        voidfix_slots=device_map.keys(),
+        slot_map_slots=slot_map_slots,
+    )
+    logger.info("farm_known_slots=%s", sorted(known_slots))
     overrides = load_slot_public_id_overrides(os.getenv("SLOT_PUBLIC_ID_MAP_PATH"))
 
     def _farm_status() -> dict[str, Any]:

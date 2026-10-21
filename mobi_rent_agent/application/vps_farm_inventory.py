@@ -6,7 +6,10 @@ bay does not make the Farm Agent unreachable.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
+
+from domain.farm import ALLOWED_FARM_SLOT_IDS
 
 FARM_AGENT_UNAVAILABLE_ERRORS = frozenset(
     {
@@ -31,6 +34,29 @@ def farm_agent_unavailable(farm: Any) -> bool:
     if farm.get("ok") is True:
         return False
     return True
+
+
+def configured_static_slots(
+    *,
+    voidfix_slots: Iterable[int] = (),
+    slot_map_slots: Iterable[int] = (),
+) -> set[int]:
+    """Startup set of configured farm bays.
+
+    Farm management (reserve / assign / cleanup-verified) must not be limited
+    to the VoidFix SMS catalog (Pixels 1–20). Extra physical bays such as
+    Slot 21 come from ``slot_map.json``.
+    """
+    combined: set[int] = set()
+    for source in (voidfix_slots, slot_map_slots):
+        for item in source:
+            try:
+                bay = int(item)
+            except (TypeError, ValueError):
+                continue
+            if bay in ALLOWED_FARM_SLOT_IDS:
+                combined.add(bay)
+    return combined
 
 
 def mapped_farm_slots(farm: dict[str, Any]) -> frozenset[int]:

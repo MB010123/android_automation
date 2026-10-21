@@ -65,3 +65,14 @@ def test_verify_rejected_while_still_occupied(tmp_path: Path):
     blocked = svc.verify_cleanup(1)
     assert blocked.http_status == 409
     assert reservations.is_reserved(1) is True
+
+
+def test_slot_21_cleanup_hold_can_be_verified_without_voidfix_catalog(tmp_path: Path):
+    """Admin cleanup-verified for Slot 21 must not 404 when VoidFix omits bay 21."""
+    svc, _w, _j, _a, _r, _t, _e, _g = _harness(tmp_path)
+    svc._known_slots = {1, 2}
+    svc._cleanup.mark_required(21, str(uuid.uuid4()), detail="awaiting_operator")
+    verified = svc.verify_cleanup(21)
+    assert verified.http_status == 200, verified.body
+    assert verified.body["cleanup"] == "cleared"
+    assert svc._cleanup.is_required(21) is False

@@ -24,6 +24,7 @@ from application.vps_farm_inventory import (
     mapped_farm_slots,
     offline_farm_slots,
 )
+from domain.farm import MAX_FARM_SLOT_ID
 from application.vps_job_worker import VpsJobWorker
 from application.vps_slot_state import derive_slot_state, heartbeat_is_fresh
 from infrastructure.slot_assignment_store import SlotAssignmentStore
@@ -149,6 +150,30 @@ class VpsFarmManagementService:
             logger.warning("credit_refund_failed rental=%s", rental_id[:8])
             return result
         return None
+
+    def _is_configured_bay(self, bay: int, *, allow_cleanup_hold: bool = False) -> bool:
+        """True when this bay is a real farm slot, not just a VoidFix SMS id.
+
+        Startup ``known_farm_slots`` used to be the VoidFix catalog only (1–20),
+        so Slot 21 returned ``slot_not_found`` ("Farm bay or public slot ID is
+        not configured") on cleanup-verified / reserve / assign even when Farm
+        health listed it. A bay is configured if it is in that startup set, the
+        live Farm ``mapped_slots`` list, or (cleanup only) already on hold.
+        """
+        try:
+            slot = int(bay)
+        except (TypeError, ValueError):
+            return False
+        if not 1 <= slot <= MAX_FARM_SLOT_ID:
+            return False
+        if slot in self._known_slots:
+            return True
+        if allow_cleanup_hold and self._cleanup.is_required(slot):
+            return True
+        farm = self._load_farm()
+        if isinstance(farm, ApiResult):
+            return False
+        return slot in mapped_farm_slots(farm)
 
     def resolve_farm_slot(self, slot_ref: str) -> int | None:
         farm_slot = farm_slot_for_public_id(slot_ref, self._overrides)
@@ -334,7 +359,7 @@ class VpsFarmManagementService:
 
     def user_owns_public_slot(self, user_id: str, slot_public_id: str) -> bool:
         farm_slot = self.resolve_farm_slot(slot_public_id)
-        if farm_slot is None or farm_slot not in self._known_slots or self._auth_store is None:
+        if farm_slot is None or not self._is_configured_bay(farm_slot) or self._auth_store is None:
             return False
         return self._auth_store.owner_of_slot(farm_slot) == user_id
 
@@ -358,7 +383,7 @@ class VpsFarmManagementService:
     def assign_slot_by_public_id(self, slot_public_id: str, payload: dict[str, Any]) -> ApiResult:
         """eSIM provision via public slot UUID (Lovable esim_uploads.qr_code_url)."""
         farm_slot = self.resolve_farm_slot(slot_public_id)
-        if farm_slot is None or farm_slot not in self._known_slots:
+        if farm_slot is None or not self._is_configured_bay(farm_slot):
             return ApiResult(404, error_body("slot_not_found"))
         body = dict(payload)
         if not str(body.get("esim_qr_url") or "").strip():
@@ -369,7 +394,7 @@ class VpsFarmManagementService:
 
     def assign_esim_for_user(self, slot_public_id: str, payload: dict[str, Any], user_id: str) -> ApiResult:
         farm_slot = self.resolve_farm_slot(slot_public_id)
-        if farm_slot is None or farm_slot not in self._known_slots:
+        if farm_slot is None or not self._is_configured_bay(farm_slot):
             return ApiResult(404, error_body("slot_not_found"))
         owner = self._auth_store.owner_of_slot(farm_slot) if self._auth_store is not None else None
         if owner != user_id:
@@ -406,7 +431,7 @@ class VpsFarmManagementService:
 
     def reserve_slot(self, bay: int, payload: dict[str, Any]) -> ApiResult:
         """Durable occupancy for a rental. Does not dispatch Farm assign/provision."""
-        if bay not in self._known_slots:
+        if not self._is_configured_bay(bay):
             return ApiResult(404, error_body("slot_not_found"))
         if payload.get("imei2") not in (None, ""):
             return ApiResult(400, error_body("invalid_request", message="client imei2 is not accepted"))
@@ -473,7 +498,7 @@ class VpsFarmManagementService:
 
     def release_reservation(self, bay: int, rental_id: str) -> ApiResult:
         """Explicit rental-end release. Does not unclaim tenant or wipe the device."""
-        if bay not in self._known_slots:
+        if not self._is_configured_bay(bay):
             return ApiResult(404, error_body("slot_not_found"))
         rental = str(rental_id or "").strip()
         if not RENTAL_ID_RE.match(rental):
@@ -564,7 +589,7 @@ class VpsFarmManagementService:
 
     def verify_cleanup(self, bay: int) -> ApiResult:
         """Admin-only: CLEANUP REQUIRED → AVAILABLE after physical verification."""
-        if bay not in self._known_slots:
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         if self._reservations.is_reserved(bay) or self._assignments.is_assigned(bay):
             return ApiResult(409, error_body("slot_unavailable"))
@@ -627,7 +652,7 @@ class VpsFarmManagementService:
                 logger.warning("rental_end_sweep_incomplete bay=%s", item.farm_slot_id)
 
     def assign_slot(self, bay: int, payload: dict[str, Any]) -> ApiResult:
-        if bay not in self._known_slots:
+        if not self._is_configured_bay(bay):
             return ApiResult(404, error_body("slot_not_found"))
         if payload.get("imei2") not in (None, ""):
             return ApiResult(400, error_body("invalid_request", message="client imei2 is not accepted"))
@@ -728,7 +753,7 @@ class VpsFarmManagementService:
         if action not in SUPPORTED_ACTIONS:
             return ApiResult(400, error_body("unsupported_action"))
         farm_slot = self.resolve_farm_slot(slot_public_id)
-        if farm_slot is None or farm_slot not in self._known_slots:
+        if farm_slot is None or not self._is_configured_bay(farm_slot):
             return ApiResult(404, error_body("slot_not_found"))
         allowed, retry_after = self._rate.check(farm_slot)
         if not allowed:
@@ -786,7 +811,7 @@ class VpsFarmManagementService:
         limit_raw: str | None,
     ) -> ApiResult:
         farm_slot = self.resolve_farm_slot(slot_public_id)
-        if farm_slot is None or farm_slot not in self._known_slots:
+        if farm_slot is None or not self._is_configured_bay(farm_slot):
             return ApiResult(404, error_body("slot_not_found"))
         since: float | None = None
         if since_raw:

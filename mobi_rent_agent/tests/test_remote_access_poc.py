@@ -1157,6 +1157,10 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route(f"/rentals/{slot}/remote-access/stream").action == "stream"
     assert parse_route(f"/rentals/{slot}/cancel").kind == "rental_cancel"
     assert parse_route("/farm/slots/1/cleanup-verified").kind == "cleanup_verified"
+    slot21_cleanup = parse_route("/farm/slots/21/cleanup-verified")
+    assert slot21_cleanup is not None and slot21_cleanup.farm_bay == 21
+    slot21_assign = parse_route("/farm/slots/21/assign")
+    assert slot21_assign is not None and slot21_assign.farm_bay == 21
     live = parse_route("/admin/devices/3/live-access")
     assert live is not None and live.kind == "admin_live_access" and live.farm_bay == 3
     assert parse_route("/admin/devices/3/live-access/stream").action == "stream"

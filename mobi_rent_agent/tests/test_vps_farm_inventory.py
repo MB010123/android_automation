@@ -8,7 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots, offline_farm_slots
+from application.vps_farm_inventory import (
+    configured_static_slots,
+    farm_agent_unavailable,
+    mapped_farm_slots,
+    offline_farm_slots,
+)
+from application.vps_api_contract import ERROR_MESSAGES
 from application.vps_farm_management_service import VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from infrastructure.slot_assignment_store import SlotAssignmentStore
@@ -143,3 +149,34 @@ def test_adb_unavailable_is_farm_unreachable(tmp_path: Path):
     result = svc.list_available_slots()
     assert result.http_status == 503
     assert result.body["error"] == "farm_unreachable"
+
+
+def test_configured_static_slots_unions_voidfix_and_slot_map():
+    # VoidFix catalog is 1–20; Slot 21 lives only in slot_map.
+    assert configured_static_slots(voidfix_slots=range(1, 21)) == set(range(1, 21))
+    assert configured_static_slots(
+        voidfix_slots=range(1, 21),
+        slot_map_slots={1, 21},
+    ) == set(range(1, 21)) | {21}
+    assert 99 not in configured_static_slots(slot_map_slots={21, 99})
+
+
+def test_slot_21_cleanup_and_reserve_are_not_voidfix_gated(tmp_path: Path):
+    """Bay 21 must not 404 as slot_not_found just because VoidFix omits it."""
+    svc, reservations, tenant = _svc(tmp_path, health=_health(mapped=[1, 21]))
+    svc._known_slots = {1, 2}  # simulate VoidFix-only startup catalog
+    verified = svc.verify_cleanup(21)
+    assert verified.http_status == 200, verified.body
+    assert verified.body["bay"] == 21
+    assert "error" not in verified.body
+
+    rental = str(uuid.uuid4())
+    seed_owned_slot(tenant, bay=21, rental_id=rental, user_id=OWNER, qr_code_url=FAKE_QR, carrier_name="T-Mobile")
+    reserved = svc.reserve_slot(21, {"rental_id": rental, "user_id": OWNER})
+    assert reserved.http_status == 200, reserved.body
+    assert reservations.is_reserved(21)
+
+    unknown = svc.verify_cleanup(99)
+    assert unknown.http_status == 404
+    assert unknown.body["error"] == "slot_not_found"
+    assert unknown.body["message"] == ERROR_MESSAGES["slot_not_found"]
