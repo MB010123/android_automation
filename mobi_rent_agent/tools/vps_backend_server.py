@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.vps_api_contract import error_body
+from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.inbound_message_store import InboundMessageStore
 from infrastructure.voidfix_api import SmsGatewayError, parse_inbound_payload
 from infrastructure.voidfix_devices import VoidFixDeviceMapError, load_voidfix_device_map
@@ -623,7 +624,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if row.get(key) is not None:
                     slot = int(row.get(key))
-                    return slot if 1 <= slot <= 20 else None
+                    return slot if 1 <= slot <= MAX_FARM_SLOT_ID else None
             except (TypeError, ValueError):
                 continue
         return None

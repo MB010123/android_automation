@@ -60,6 +60,20 @@ def _config() -> AgentConfig:
     )
 
 
+def test_parse_accepts_slot_21():
+    request = parse_farm_task_body(
+        {"job_id": "j21", "type": "device_display_size", "farm_slot_id": 21, "payload": {}}
+    )
+    assert request.farm_slot_id == 21
+
+
+def test_parse_rejects_slot_above_max():
+    with pytest.raises(ValueError, match="out of range"):
+        parse_farm_task_body(
+            {"job_id": "j33", "type": "device_display_size", "farm_slot_id": 33, "payload": {}}
+        )
+
+
 def test_parse_rejects_unknown_task():
     with pytest.raises(ValueError, match="unsupported"):
         parse_farm_task_body(

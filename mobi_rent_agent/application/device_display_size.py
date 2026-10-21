@@ -1,7 +1,8 @@
 """Read-only native display size from Android ``wm size``.
 
-Authoritative source is the phone's Physical size. This is not the GADS
-MJPEG frame size. Never invents a Pixel-class default.
+Authoritative input size is Override size when Android reports one
+(Samsung One UI / ``wm size``), otherwise Physical size. This is not the
+GADS MJPEG frame size. Never invents a Pixel-class default.
 """
 from __future__ import annotations
 
@@ -22,11 +23,13 @@ _OVERRIDE_RE = re.compile(r"Override size:\s*(\d+)\s*x\s*(\d+)", re.IGNORECASE)
 
 
 def parse_wm_size(text: str | None) -> tuple[int, int] | None:
-    """Return physical WxH from ``adb shell wm size`` output, or None."""
+    """Return active WxH from ``adb shell wm size`` output, or None.
+
+    Override size wins when present because that is the coordinate space
+    for taps/swipes. Physical size is used only when there is no override.
+    """
     blob = str(text or "")
-    match = _PHYSICAL_RE.search(blob)
-    if match is None:
-        match = _OVERRIDE_RE.search(blob)
+    match = _OVERRIDE_RE.search(blob) or _PHYSICAL_RE.search(blob)
     if match is None:
         return None
     width = int(match.group(1))
@@ -34,6 +37,13 @@ def parse_wm_size(text: str | None) -> tuple[int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def wm_size_source(text: str | None) -> str:
+    blob = str(text or "")
+    if _OVERRIDE_RE.search(blob):
+        return "wm_size_override"
+    return "wm_size_physical"
 
 
 def native_resolution_body(width: int, height: int) -> dict[str, int]:
@@ -70,5 +80,9 @@ def run_device_display_size(
     if parsed is None:
         return FarmTaskResult(ok=False, http_status=422, error="wm_size_unreported")
     width, height = parsed
-    details: dict[str, Any] = {"width": width, "height": height, "source": "wm_size_physical"}
+    details: dict[str, Any] = {
+        "width": width,
+        "height": height,
+        "source": wm_size_source(output),
+    }
     return FarmTaskResult(ok=True, http_status=200, details=details)

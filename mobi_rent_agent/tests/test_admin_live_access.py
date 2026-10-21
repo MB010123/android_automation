@@ -310,8 +310,9 @@ def test_non_admin_invalid_slot_and_cross_slot_control_rejected(tmp_path: Path):
     assert not any(c[0] == "grant" for c in platform.calls)
 
     assert svc.create_session(_admin(), 0).body["error"] == "invalid_slot"
-    assert svc.create_session(_admin(), 21).body["error"] == "invalid_slot"
+    assert svc.create_session(_admin(), 33).body["error"] == "invalid_slot"
     assert svc.create_session(_admin(), 9).body["error"] == "slot_not_found"
+    assert svc.create_session(_admin(), 21).body["error"] == "slot_not_found"
 
     opened = svc.create_session(_admin(), 1)
     sid = opened.body["session_id"]

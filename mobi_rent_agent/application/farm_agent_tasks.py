@@ -20,6 +20,7 @@ from application.farm_task_types import (
 
 )
 
+from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.config import AgentConfig
 
 
@@ -56,7 +57,7 @@ def parse_farm_task_body(data: dict[str, Any]) -> FarmTaskRequest:
 
     farm_slot_id = int(raw_slot)
 
-    if not 1 <= farm_slot_id <= 20:
+    if not 1 <= farm_slot_id <= MAX_FARM_SLOT_ID:
 
         raise ValueError("farm_slot_id out of range")
 

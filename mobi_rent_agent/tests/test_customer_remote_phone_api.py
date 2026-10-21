@@ -522,11 +522,14 @@ def test_twenty_slot_workspaces_remain_unique(tmp_path: Path):
         assert getattr(stream, "device_id") == serials[bay]
 
 
-def test_parse_wm_size_uses_physical_not_a_default():
-    from application.device_display_size import parse_wm_size
+def test_parse_wm_size_prefers_override_when_present():
+    from application.device_display_size import parse_wm_size, wm_size_source
 
     assert parse_wm_size("Physical size: 1440x3120\n") == (1440, 3120)
-    assert parse_wm_size("Physical size: 1344x2992\nOverride size: 720x1600\n") == (1344, 2992)
+    assert wm_size_source("Physical size: 1440x3120\n") == "wm_size_physical"
+    assert parse_wm_size("Physical size: 1440x3200\nOverride size: 1080x2400\n") == (1080, 2400)
+    assert wm_size_source("Physical size: 1440x3200\nOverride size: 1080x2400\n") == "wm_size_override"
+    assert parse_wm_size("Physical size: 1344x2992\nOverride size: 720x1600\n") == (720, 1600)
     assert parse_wm_size("") is None
     assert parse_wm_size("Physical size: 0x0\n") is None
 
@@ -599,7 +602,10 @@ def test_device_display_size_task_reads_wm_size_from_adb():
     class WmRunner(FakeRunner):
         def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
             if arguments == ["shell", "wm", "size"]:
-                return AdbCommandResult(stdout="Physical size: 1440x3120\n", stderr="")
+                return AdbCommandResult(
+                    stdout="Physical size: 1440x3200\nOverride size: 1080x2400\n",
+                    stderr="",
+                )
             return super().run(serial, arguments)
 
     result = execute_farm_task(
@@ -615,7 +621,7 @@ def test_device_display_size_task_reads_wm_size_from_adb():
         deps=FarmTaskExecutorDeps(command_runner=WmRunner()),
     )
     assert result.ok is True
-    assert result.details == {"width": 1440, "height": 3120, "source": "wm_size_physical"}
+    assert result.details == {"width": 1080, "height": 2400, "source": "wm_size_override"}
 
 
 def test_farm_nav_input_uses_fixed_internal_events():

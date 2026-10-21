@@ -56,6 +56,7 @@ from application.session_restriction_policy import (
     public_restriction_body,
 )
 from application.setup_activity_guard import PHASE_ESIM, PHASE_VOIDFIX
+from domain.farm import MAX_FARM_SLOT_ID
 from domain.remote_access import (
     ACTIVATION_CUSTOMER_REQUIRED,
     RemoteAccessPlatform,
@@ -214,7 +215,7 @@ class RemoteAccessService:
             {
                 int(slot): str(workspace).strip()
                 for slot, workspace in (workspace_map or {}).items()
-                if 1 <= int(slot) <= 20 and str(workspace).strip()
+                if 1 <= int(slot) <= MAX_FARM_SLOT_ID and str(workspace).strip()
             }
         )
         self._gads_slots = None if gads_slot_ids is None else tuple(int(s) for s in gads_slot_ids)
@@ -2029,6 +2030,6 @@ def _slot_from_row(row: dict[str, Any]) -> int | None:
             slot = int(value)
         except (TypeError, ValueError):
             continue
-        if 1 <= slot <= 20:
+        if 1 <= slot <= MAX_FARM_SLOT_ID:
             return slot
     return None
