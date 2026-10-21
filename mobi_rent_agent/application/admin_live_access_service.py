@@ -34,6 +34,7 @@ from infrastructure.admin_live_access_store import (
 )
 from infrastructure.auth_models import AuthUser
 from infrastructure.gads_remote_access import GADS_HUB_ADMIN_USERNAME
+from infrastructure.slot_public_id import farm_slot_for_public_id
 
 logger = logging.getLogger("vps_backend.admin_live_access")
 
@@ -83,6 +84,7 @@ class AdminLiveAccessService:
         session_ttl_minutes: int = 15,
         gads_slot_ids: tuple[int, ...] | None = None,
         workspace_map: dict[int, str] | None = None,
+        slot_public_id_overrides: dict[str, int] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.enabled = bool(enabled)
@@ -106,10 +108,36 @@ class AdminLiveAccessService:
             if gads_slot_ids is not None
             else None
         )
+        self._public_id_overrides = dict(slot_public_id_overrides or {})
         self._clock = clock
         self._locks_guard = threading.Lock()
         self._slot_locks: dict[int, threading.Lock] = {}
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
+
+    def resolve_slot_reference(self, reference: Any) -> int | None:
+        """Farm bay for a dashboard device reference.
+
+        Accepts the bay number (``21``), the slot public UUID shown to
+        Lovable/Supabase (``26876bff-...``), or the ADB serial
+        (``RFCNB056WEV``). Returns None when nothing matches; bay-range and
+        slot-map checks stay in ``_parse_slot``.
+        """
+        text = str(reference or "").strip()
+        if not text:
+            return None
+        if text.isdigit():
+            return int(text)
+        try:
+            canonical = str(UUID(text))
+        except (TypeError, ValueError):
+            canonical = None
+        if canonical is not None:
+            return farm_slot_for_public_id(canonical, self._public_id_overrides)
+        needle = text.upper()
+        for bay, serial in self._slots.items():
+            if str(serial).strip().upper() == needle:
+                return int(bay)
+        return None
 
     def sweep_stale_sessions(self) -> int:
         return self._store.expire_stale(now=self._clock())

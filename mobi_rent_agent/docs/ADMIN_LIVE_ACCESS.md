@@ -1,7 +1,7 @@
 # Admin live phone access (backend)
 
 Administrators can view and control any PhoneFarmBox bay by its farm slot number
-(1–20) without creating a rental. Lovable is unchanged: these routes are VPS-only.
+(1–32) without creating a rental. Lovable is unchanged: these routes are VPS-only.
 
 ## Endpoints
 
@@ -15,7 +15,10 @@ administrator**. Farm-service tokens and ordinary customer JWTs are rejected.
 | `POST` | `/admin/devices/{slot_id}/live-access/control` | Allowlisted tap / swipe / navigation |
 | `POST` | `/admin/devices/{slot_id}/live-access/close` | End only this admin session |
 
-`slot_id` is the farm bay (`1`–`20`), not the public slot UUID and not a rental id.
+`slot_id` accepts the farm bay number (`1`–`32`), the slot public UUID shown to
+Lovable/Supabase (e.g. Slot 21 = `26876bff-eccd-5b98-b2c4-be09ba4b0708`), or the
+ADB serial (e.g. `RFCNB056WEV`). UUIDs honor `SLOT_PUBLIC_ID_MAP_PATH` overrides.
+It is never a rental id.
 
 ### Authentication
 
@@ -108,7 +111,7 @@ hold. Admin live access cannot call it and does not fake success.
 
 | HTTP | `error` | When |
 |------|---------|------|
-| 400 | `invalid_slot` | Bay not 1–20 |
+| 400 | `invalid_slot` | Bay not 1–32 |
 | 400 | `invalid_request` | Missing/invalid `session_id` |
 | 401 | `unauthorized` | Missing/invalid user JWT (or farm-service token) |
 | 403 | `admin_forbidden` | Authenticated but not an administrator |

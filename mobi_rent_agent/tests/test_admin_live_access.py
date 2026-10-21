@@ -49,6 +49,7 @@ from tests.test_remote_access_poc import (
 ADMIN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 USER_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 JWT_SECRET = "unit-test-supabase-jwt-secret-not-for-production"
+SLOT21_SERIAL = "RFCNB056WEV"
 
 
 def _admin() -> AuthUser:
@@ -638,7 +639,7 @@ def _start_admin_http(tmp_path: Path):
     admin_session = gotrue.signup("admin@example.com", STRONG)
     assert not isinstance(admin_session, Exception)
     admin_id = admin_session.user.user_id
-    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL, SLOT21_SERIAL})
     cleanup = DeviceCleanupStore(tmp_path / "cleanup.sqlite")
 
     class SyncWorker(VpsJobWorker):
@@ -679,13 +680,13 @@ def _start_admin_http(tmp_path: Path):
     farm = FakeFarm()
     admin_svc = AdminLiveAccessService(
         enabled=True,
-        slot_device_map={1: SLOT1_SERIAL, 2: SLOT2_SERIAL},
+        slot_device_map={1: SLOT1_SERIAL, 2: SLOT2_SERIAL, 21: SLOT21_SERIAL},
         platform=platform,
         store=admin_store,
         farm_task_client=farm,
         cleanup_store=cleanup,
         assignment_store=assign,
-        gads_slot_ids=(1, 2),
+        gads_slot_ids=(1, 2, 21),
     )
     customer_svc, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
     farm_svc.set_remote_access(customer_svc)
@@ -816,6 +817,111 @@ def test_access_log_redacts_session_query():
     redacted = mod._SESSION_QUERY_RE.sub(r"\1[redacted]", raw)
     assert "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee" not in redacted
     assert "session=[redacted]" in redacted
+
+
+def test_parse_route_accepts_bay_uuid_and_serial_device_refs():
+    from infrastructure.slot_public_id import public_id_for_farm_slot
+
+    slot21_uuid = public_id_for_farm_slot(21)
+    assert slot21_uuid == "26876bff-eccd-5b98-b2c4-be09ba4b0708"
+    bay = parse_route("/admin/devices/21/live-access")
+    assert bay.kind == "admin_live_access"
+    assert bay.farm_bay == 21 and bay.device_ref == "21"
+    by_uuid = parse_route(f"/admin/devices/{slot21_uuid}/live-access")
+    assert by_uuid.kind == "admin_live_access"
+    assert by_uuid.farm_bay is None and by_uuid.device_ref == slot21_uuid
+    by_serial = parse_route(f"/admin/devices/{SLOT21_SERIAL}/live-access/stream")
+    assert by_serial.kind == "admin_live_access_action"
+    assert by_serial.action == "stream" and by_serial.device_ref == SLOT21_SERIAL
+    assert parse_route("/admin/devices/21/live-access/reboot") is None
+
+
+def test_resolve_slot_reference_bay_uuid_serial_and_unknown(tmp_path: Path):
+    from infrastructure.slot_public_id import public_id_for_farm_slot
+
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT21_SERIAL})
+    service, _, _, _ = _admin_service(
+        tmp_path,
+        platform=platform,
+        slot_device_map={1: SLOT1_SERIAL, 21: SLOT21_SERIAL},
+        gads_slot_ids=None,
+    )
+    slot21_uuid = public_id_for_farm_slot(21)
+    assert service.resolve_slot_reference("21") == 21
+    assert service.resolve_slot_reference(slot21_uuid) == 21
+    assert service.resolve_slot_reference(slot21_uuid.upper()) == 21
+    assert service.resolve_slot_reference(SLOT21_SERIAL) == 21
+    assert service.resolve_slot_reference("rfcnb056wev") == 21
+    assert service.resolve_slot_reference(SLOT1_SERIAL) == 1
+    assert service.resolve_slot_reference(str(uuid.uuid4())) is None
+    assert service.resolve_slot_reference("UNKNOWN-SERIAL") is None
+    assert service.resolve_slot_reference("") is None
+    created = service.create_session(_admin(), service.resolve_slot_reference(slot21_uuid))
+    assert created.http_status == 201, created.body
+    assert created.body["slot_id"] == 21
+
+
+def test_resolve_slot_reference_honors_public_id_overrides(tmp_path: Path):
+    override_uuid = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    store = AdminLiveAccessStore(tmp_path / f"admin-live-{uuid.uuid4().hex}.sqlite")
+    service = AdminLiveAccessService(
+        enabled=True,
+        slot_device_map={21: SLOT21_SERIAL},
+        platform=FakePlatform(registered={SLOT21_SERIAL}),
+        store=store,
+        slot_public_id_overrides={override_uuid: 21},
+    )
+    assert service.resolve_slot_reference(override_uuid) == 21
+
+
+def test_http_admin_live_access_by_uuid_and_serial(tmp_path: Path):
+    from infrastructure.slot_public_id import public_id_for_farm_slot
+
+    server, port, _tenant, _platform, _cleanup, _admin_id = _start_admin_http(tmp_path)
+    base = f"http://127.0.0.1:{port}"
+    slot21_uuid = public_id_for_farm_slot(21)
+    try:
+        status, body, _ = _http(
+            "POST", f"{base}/auth/login", body={"email": "admin@example.com", "password": STRONG}
+        )
+        assert status == 200, body
+        admin_token = body["session"]["access_token"]
+
+        status, live, _ = _http(
+            "POST", f"{base}/admin/devices/{slot21_uuid}/live-access", token=admin_token, body={}
+        )
+        assert status == 201, live
+        assert live["slot_id"] == 21
+        assert SLOT21_SERIAL not in json.dumps(live)
+
+        # Same bay by serial reuses the session; by bay number too.
+        status, by_serial, _ = _http(
+            "POST", f"{base}/admin/devices/{SLOT21_SERIAL}/live-access", token=admin_token, body={}
+        )
+        assert status == 200, by_serial
+        assert by_serial["session_id"] == live["session_id"]
+        status, by_bay, _ = _http(
+            "POST", f"{base}/admin/devices/21/live-access", token=admin_token, body={}
+        )
+        assert status == 200 and by_bay["session_id"] == live["session_id"]
+
+        status, missing, _ = _http(
+            "POST",
+            f"{base}/admin/devices/9e107d9d-ef7a-4ca1-8ae1-111111111111/live-access",
+            token=admin_token,
+            body={},
+        )
+        assert status == 404 and missing["error"] == "slot_not_found"
+
+        status, closed, _ = _http(
+            "POST",
+            f"{base}/admin/devices/{slot21_uuid}/live-access/close",
+            token=admin_token,
+            body={"session_id": live["session_id"]},
+        )
+        assert status == 200 and closed["active"] is False
+    finally:
+        server.shutdown()
 
 
 def test_routes_do_not_collide_with_customer_remote_access():

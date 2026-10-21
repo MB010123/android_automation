@@ -1163,7 +1163,10 @@ def test_k_existing_task_types_and_routes_unchanged():
     assert parse_route("/admin/devices/3/live-access/control").action == "control"
     assert parse_route("/admin/devices/3/live-access/close").action == "close"
     assert parse_route("/admin/devices/21/live-access").farm_bay == 21
-    assert parse_route("/admin/devices/abc/live-access") is None
+    # Non-numeric refs (slot UUID / serial) now parse; the admin service
+    # resolves them and answers 404 slot_not_found for unknown references.
+    by_ref = parse_route("/admin/devices/abc/live-access")
+    assert by_ref is not None and by_ref.farm_bay is None and by_ref.device_ref == "abc"
     assert parse_route(f"/rentals/{slot}/remote-access/adb-shell") is None
     assert parse_route(f"/rentals/not-a-uuid/remote-access") is None
 

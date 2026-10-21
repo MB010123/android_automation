@@ -49,7 +49,8 @@ def build_vps_openapi_document(*, voidfix_webhook_path: str = "/voidfix/inbound"
             {
                 "name": "Admin live access",
                 "description": (
-                    "Administrator live view/control by farm bay (1–20). "
+                    "Administrator live view/control by device reference: farm bay number "
+                    "(1–32), slot public UUID, or ADB serial. "
                     "Does not create, assign, extend, cancel, or release a rental. "
                     "Does not mark cleanup complete or approve reuse. "
                     "Requires a verified admin (VPS_ADMIN_USER_IDS or signed JWT app_metadata). "
@@ -638,7 +639,7 @@ def _schemas() -> dict[str, Any]:
             "properties": {
                 "ok": {"type": "boolean", "enum": [True]},
                 "session_id": {"type": "string", "format": "uuid"},
-                "slot_id": {"type": "integer", "minimum": 1, "maximum": 20},
+                "slot_id": {"type": "integer", "minimum": 1, "maximum": 32},
                 "status": {"type": "string", "enum": ["active", "closed", "expired"]},
                 "active": {"type": "boolean"},
                 "expires_at": {"type": "number"},
@@ -1554,7 +1555,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "Verified administrator only (`VPS_ADMIN_USER_IDS` or signed JWT "
                     "`app_metadata.role=admin` / `app_metadata.mobi_rent_role=admin`). "
-                    "`slot_id` is the farm bay 1–20. Works for available, rented, cleanup-pending, "
+                    "`slot_id` is the farm bay number (1–32), the slot public UUID, or the "
+                    "device serial. Works for available, rented, cleanup-pending, "
                     "and cleanup-in-progress phones. Does not create a rental, assign a customer, "
                     "change availability, mark cleanup complete, or reboot the phone. "
                     "Request body is ignored: role/slot claims in JSON are never authorization. "
@@ -1567,8 +1569,11 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "name": "slot_id",
                         "in": "path",
                         "required": True,
-                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
-                        "description": "Farm bay / PhoneFarmBox slot number (1–20).",
+                        "schema": {"type": "string"},
+                        "description": (
+                            "Device reference: farm bay number (1–32), slot public UUID, "
+                            "or ADB serial."
+                        ),
                     }
                 ],
                 "responses": {
@@ -1620,7 +1625,11 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "name": "slot_id",
                         "in": "path",
                         "required": True,
-                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "schema": {"type": "string"},
+                        "description": (
+                            "Device reference: farm bay number (1–32), slot public UUID, "
+                            "or ADB serial."
+                        ),
                     },
                     {
                         "name": "session",
@@ -1669,7 +1678,11 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "name": "slot_id",
                         "in": "path",
                         "required": True,
-                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "schema": {"type": "string"},
+                        "description": (
+                            "Device reference: farm bay number (1–32), slot public UUID, "
+                            "or ADB serial."
+                        ),
                     }
                 ],
                 "requestBody": {
@@ -1719,7 +1732,11 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                         "name": "slot_id",
                         "in": "path",
                         "required": True,
-                        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+                        "schema": {"type": "string"},
+                        "description": (
+                            "Device reference: farm bay number (1–32), slot public UUID, "
+                            "or ADB serial."
+                        ),
                     }
                 ],
                 "requestBody": {

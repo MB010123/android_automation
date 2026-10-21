@@ -513,6 +513,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(401, {"error": "unauthorized"})
             return True
         slot_id = route.farm_bay
+        device_ref = getattr(route, "device_ref", None)
+        if slot_id is None and device_ref:
+            # Dashboard may address a phone by slot UUID or serial, not bay.
+            slot_id = service.resolve_slot_reference(device_ref)
+            if slot_id is None:
+                self._send_json(404, error_body("slot_not_found"))
+                return True
         if slot_id is None:
             self._send_json(400, error_body("invalid_slot"))
             return True
@@ -1294,6 +1301,7 @@ def main() -> int:
         remote_platform=getattr(remote_access_service, "_platform", None)
         if remote_access_service is not None
         else None,
+        slot_public_id_overrides=overrides,
     )
 
     def _after_heartbeat_poll() -> None:
@@ -1485,6 +1493,7 @@ def _build_admin_live_access_service(
     cleanup_store: DeviceCleanupStore,
     db_path: Path,
     remote_platform: Any = None,
+    slot_public_id_overrides: dict[str, int] | None = None,
 ) -> tuple[AdminLiveAccessService | None, Any]:
     """Admin live view. Reuses GADS hub credentials; never grants a rental user."""
     admin_ids = tuple(getattr(config, "vps_admin_user_ids", ()) or ())
@@ -1531,6 +1540,7 @@ def _build_admin_live_access_service(
         session_ttl_minutes=int(getattr(config, "admin_live_access_ttl_minutes", 15)),
         gads_slot_ids=None,
         workspace_map=workspaces,
+        slot_public_id_overrides=slot_public_id_overrides,
     )
     logger.info(
         "admin_live_access ENABLED mapped=%s workspaces=%s",

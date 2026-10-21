@@ -38,10 +38,13 @@ RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
 RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$")
-# Admin live view by farm bay (1–20). Separate from customer /rentals/.../remote-access.
-RE_ADMIN_LIVE_ACCESS = re.compile(r"^/admin/devices/(\d{1,2})/live-access$")
+# Admin live view. The device reference may be a farm bay number (1–32), a
+# slot public UUID (Supabase public.slots id), or an ADB serial; the admin
+# service resolves it. Separate from customer /rentals/.../remote-access.
+_DEVICE_REF = r"[0-9a-zA-Z\-]{1,64}"
+RE_ADMIN_LIVE_ACCESS = re.compile(rf"^/admin/devices/({_DEVICE_REF})/live-access$")
 RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
-    r"^/admin/devices/(\d{1,2})/live-access/(stream|control|close)$"
+    rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close)$"
 )
 RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
 RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
@@ -77,6 +80,8 @@ class ParsedRoute:
     farm_bay: int | None = None
     action: str | None = None
     rental_id: str | None = None
+    # Raw /admin/devices/{ref} path segment: bay number, slot UUID, or serial.
+    device_ref: str | None = None
 
 
 def parse_route(path: str) -> ParsedRoute | None:
@@ -97,12 +102,19 @@ def parse_route(path: str) -> ParsedRoute | None:
     if m := RE_FARM_CLEANUP_VERIFIED.match(path):
         return ParsedRoute(kind="cleanup_verified", farm_bay=int(m.group(1)))
     if m := RE_ADMIN_LIVE_ACCESS.match(path):
-        return ParsedRoute(kind="admin_live_access", farm_bay=int(m.group(1)))
+        ref = m.group(1)
+        return ParsedRoute(
+            kind="admin_live_access",
+            farm_bay=int(ref) if ref.isdigit() else None,
+            device_ref=ref,
+        )
     if m := RE_ADMIN_LIVE_ACCESS_ACTION.match(path):
+        ref = m.group(1)
         return ParsedRoute(
             kind="admin_live_access_action",
-            farm_bay=int(m.group(1)),
+            farm_bay=int(ref) if ref.isdigit() else None,
             action=m.group(2),
+            device_ref=ref,
         )
     if RE_WHMCS_WEBHOOK.match(path):
         return ParsedRoute(kind="whmcs_webhook")
