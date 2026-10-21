@@ -1,31 +1,37 @@
 """Farm Agent task: zero-touch eSIM activation on the Samsung Galaxy S20.
 
-Samsung One UI (SM-G981U1, Android 13) does not export the AOSP LUI
-``PROVISION_EMBEDDED_SUBSCRIPTION`` activity, so the "Add more" entry in
-Settings is a dead end for automation. Verified on the live Slot 21 device:
-the supported hands-free path is Samsung's public, BROWSABLE deep link
+Primary method — real One UI flow (verified live on Slot 21, RFCNB056WEV,
+One UI 5.1 / Android 13), exactly the screens a human walks:
 
-    esimmanagerfromqr://launch/?activation_code=<raw LPA code>
+1. ``am start -n com.samsung.android.app.telephonyui/.netsettings.ui.
+   simcardmanager.SimCardMgrActivity`` (exported) — the "SIM manager" screen.
+2. Tap "Add eSIM" → "Select your service provider".
+3. Tap "Other ways to connect to a mobile network" → "Choose how to add
+   your eSIM".
+4. Tap "Scan QR code" → ``netsettings.ui.esim.qrcode.CaptureActivity``.
+5. Tap the "Open Gallery" button (``id/gallery_button``, bottom right).
+6. Samsung Gallery picker ("Select item"): open the "Pictures" album tile,
+   tap the newest grid item (``remote_access_place_qr`` pushes the renter QR
+   to ``/sdcard/Pictures/`` moments earlier, so it is first).
+7. Tap "Done" (``id/menu_edit_app_bar_done``) on the crop screen. The
+   scanner decodes the QR natively and One UI walks
+   ``OTHER_WAYS_TO_CONNECT_TO_MOBILE_NETWORK → PROFILE_SEARCHING → …``.
+8. Monitor ``UT.EsimAddProgressState`` logcat transitions and auto-confirm
+   allowlisted dialogs (Add / Confirm / Download / OK / Done).
 
-handled by ``com.samsung.android.app.telephonyui/.netsettings.ui.esim.
-QrTransferActivity``. It feeds ``INTENT_EXTRA_ACTIVATION_CODE`` straight into
-``EsimAddPlanFragment`` → ``searchDownloadableProfileByCode`` (the exact flow
-a human reaches by scanning the QR), then One UI walks PROFILE_SEARCHING →
-download → confirmation screens. The activation code must be passed RAW:
-QrTransferActivity does not URL-decode, so a percent-encoded code is rejected
-by the Samsung LPA with "wrong format".
+Every step is verified before the next: dump the UI (``uiautomator dump``),
+find the target by label, tap, then poll until the next screen's marker
+appears or the step times out (reported as ``ui_flow_step_failed`` with the
+step name).
 
-This task:
-1. decodes the renter's QR image (same payload shape as
-   ``remote_access_place_qr``) into its ``LPA:1$...`` activation code,
-2. fires the deep link over ADB,
-3. auto-confirms One UI dialogs by text (Add / Confirm / Download / OK), and
-4. tracks ``UT.EsimAddProgressState`` logcat transitions as ground truth.
+Secondary method — if the payload carries ``activation_code`` explicitly
+(smoke tests / operator tooling), the public BROWSABLE deep link
+``esimmanagerfromqr://launch/?activation_code=<raw LPA>`` is used instead.
 
 Scope guards: Samsung devices only (Pixel renters keep the manual GADS scan
-flow), public viewer intent + ``input tap`` only — no EuiccManager, no
-``provision_esim`` companion, no Device Owner, no privileged APIs. The
-activation code never appears in logs or task results (only the SM-DP+ host).
+flow), public intents + ``input tap`` only — no EuiccManager, no
+``provision_esim`` companion, no Device Owner, no privileged APIs. Activation
+codes never appear in logs or task results (only the SM-DP+ host).
 """
 from __future__ import annotations
 
@@ -33,33 +39,32 @@ import logging
 import re
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any, Callable
 
-import requests
-
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.remote_access_farm_task import (
-    MAX_QR_IMAGE_BYTES,
-    Downloader,
-    _default_downloader,
-    _image_extension,
-    _inline_image_from_payload,
     _is_samsung_renter_device,
     _manufacturer_from_adb,
     _place_qr_config_gate,
 )
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
-from infrastructure.esim_qr_security import esim_fetch_url_is_public_https, esim_fetch_url_is_safe
 
 logger = logging.getLogger("farm_agent.esim_auto_activation")
 
 ESIM_AUTO_ACTIVATION_TASK = "esim_auto_activation"
 
+SIM_CARD_MGR_COMPONENT = (
+    "com.samsung.android.app.telephonyui/"
+    ".netsettings.ui.simcardmanager.SimCardMgrActivity"
+)
 SAMSUNG_ESIM_DEEPLINK_PREFIX = "esimmanagerfromqr://launch/?activation_code="
 PROGRESS_LOG_TAG = "UT.EsimAddProgressState"
 UI_DUMP_REMOTE_PATH = "/sdcard/mobirent_esim_auto_ui.xml"
+GALLERY_ITEM_RID = "recycler_view_item"
+GALLERY_DONE_RID = "menu_edit_app_bar_done"
 
 # GSMA SGP.22 activation code: LPA:1$<SM-DP+ FQDN>$<matching id>[$<oid>[$...]]
 _LPA_CODE_RE = re.compile(
@@ -73,7 +78,7 @@ _BOUNDS_RE = re.compile(r"-?\d+")
 # conservative synonyms across One UI 5 variants). Matched case-insensitively
 # on exact button text.
 CONFIRM_BUTTON_TEXTS = frozenset({"add", "confirm", "download", "continue", "ok", "done"})
-# The whole screen must look like the eSIM add flow before any tap.
+# The whole screen must look like the eSIM add flow before any confirm tap.
 ESIM_SCREEN_MARKERS = ("esim", "mobile plan", "sim")
 
 FAILURE_TEXT_MARKERS = (
@@ -154,15 +159,85 @@ def _center(bounds: str) -> tuple[int, int] | None:
     return (nums[0] + nums[2]) // 2, (nums[1] + nums[3]) // 2
 
 
-def find_confirm_tap(ui_xml: str) -> tuple[int, int, str] | None:
-    """Center of the first allowlisted confirm button on an eSIM screen."""
+def _parse_ui(ui_xml: str) -> ET.Element | None:
     try:
-        root = ET.fromstring(ui_xml or "")
+        return ET.fromstring(ui_xml or "")
     except ET.ParseError:
         return None
-    full_text = " ".join(
-        f"{node.get('text') or ''} {node.get('content-desc') or ''}" for node in root.iter("node")
-    ).lower()
+
+
+def _node_label(node: ET.Element) -> str:
+    return f"{node.get('text') or ''} {node.get('content-desc') or ''}".strip()
+
+
+def ui_contains(ui_xml: str, *markers: str) -> bool:
+    lowered = (ui_xml or "").lower()
+    return any(marker.lower() in lowered for marker in markers)
+
+
+def find_label_tap(ui_xml: str, label: str) -> tuple[int, int] | None:
+    """Center of the first node whose text/content-desc contains ``label``."""
+    root = _parse_ui(ui_xml)
+    if root is None:
+        return None
+    needle = label.lower()
+    for node in root.iter("node"):
+        if needle in _node_label(node).lower():
+            return _center(node.get("bounds") or "")
+    return None
+
+
+def find_album_tile_tap(ui_xml: str, titles: tuple[str, ...] = ("Pictures", "Recent")) -> tuple[int, int] | None:
+    """Center of the Gallery album tile (recycler item) matching a title.
+
+    The bottom navigation bar repeats the album names, so only grid tiles
+    (``id/recycler_view_item``) whose subtree holds the title count.
+    """
+    root = _parse_ui(ui_xml)
+    if root is None:
+        return None
+    wanted = tuple(t.lower() for t in titles)
+    for title in wanted:
+        for node in root.iter("node"):
+            rid = node.get("resource-id") or ""
+            if not rid.endswith(GALLERY_ITEM_RID):
+                continue
+            subtree_text = " ".join(
+                (child.get("text") or "") for child in node.iter("node")
+            ).lower()
+            if title in subtree_text:
+                return _center(node.get("bounds") or "")
+    return None
+
+
+def find_first_gallery_item_tap(ui_xml: str) -> tuple[int, int] | None:
+    """Center of the first (newest) image tile in the Gallery grid.
+
+    Image tiles are clickable ``id/recycler_view_item`` nodes without album
+    title text in their subtree.
+    """
+    root = _parse_ui(ui_xml)
+    if root is None:
+        return None
+    for node in root.iter("node"):
+        rid = node.get("resource-id") or ""
+        if not rid.endswith(GALLERY_ITEM_RID) or node.get("clickable") != "true":
+            continue
+        has_title = any(
+            (child.get("resource-id") or "").endswith("title") and (child.get("text") or "").strip()
+            for child in node.iter("node")
+        )
+        if not has_title:
+            return _center(node.get("bounds") or "")
+    return None
+
+
+def find_confirm_tap(ui_xml: str) -> tuple[int, int, str] | None:
+    """Center of the first allowlisted confirm button on an eSIM screen."""
+    root = _parse_ui(ui_xml)
+    if root is None:
+        return None
+    full_text = " ".join(_node_label(node) for node in root.iter("node")).lower()
     if not any(marker in full_text for marker in ESIM_SCREEN_MARKERS):
         return None
     for node in root.iter("node"):
@@ -194,6 +269,65 @@ def ui_success_marker(ui_xml: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class UiFlowStep:
+    """One verified step of the One UI walk."""
+
+    name: str
+    # Returns tap coordinates for the step target, or None when not found.
+    locate: Callable[[str], tuple[int, int] | None]
+    # Markers proving the step completed (next screen is showing).
+    done_markers: tuple[str, ...]
+    # When these markers are already visible, the step is skipped (e.g. some
+    # One UI variants go straight to "Choose how to add your eSIM").
+    skip_markers: tuple[str, ...] = field(default=())
+
+
+def _samsung_ui_flow_steps() -> tuple[UiFlowStep, ...]:
+    return (
+        UiFlowStep(
+            name="add_esim",
+            locate=lambda xml: find_label_tap(xml, "Add eSIM"),
+            done_markers=(
+                "Other ways to connect",
+                "Choose how to add your eSIM",
+                "Scan QR code",
+            ),
+        ),
+        UiFlowStep(
+            name="other_ways_to_connect",
+            locate=lambda xml: find_label_tap(xml, "Other ways to connect"),
+            done_markers=("Scan QR code",),
+            skip_markers=("Scan QR code",),
+        ),
+        UiFlowStep(
+            name="scan_qr_code",
+            locate=lambda xml: find_label_tap(xml, "Scan QR code"),
+            done_markers=("Open Gallery",),
+        ),
+        UiFlowStep(
+            name="open_gallery",
+            locate=lambda xml: find_label_tap(xml, "Open Gallery"),
+            done_markers=("Select item", "Albums", "Pictures", "Recent"),
+        ),
+        UiFlowStep(
+            name="open_album",
+            locate=find_album_tile_tap,
+            done_markers=("Expand",),
+        ),
+        UiFlowStep(
+            name="pick_newest_image",
+            locate=find_first_gallery_item_tap,
+            done_markers=("Done",),
+        ),
+        UiFlowStep(
+            name="confirm_done",
+            locate=lambda xml: find_label_tap(xml, "Done"),
+            done_markers=(),  # terminal: the monitor phase takes over
+        ),
+    )
+
+
 def _result(
     *,
     ok: bool,
@@ -208,37 +342,28 @@ def _result(
     return FarmTaskResult(ok=ok, http_status=http_status, error=error, message=message, details=body)
 
 
-def _qr_image_from_request(
-    request: FarmTaskRequest,
-    agent_config: AgentConfig,
-    downloader: Downloader | None,
-) -> bytes | str:
-    """Image bytes from image_base64 / esim_qr_url, or an error code string."""
-    try:
-        inline = _inline_image_from_payload(request.payload)
-    except ValueError:
-        return "qr_not_an_image"
-    if inline is not None:
-        payload = inline
-    else:
-        qr_url = str(request.payload.get("esim_qr_url") or "").strip()
-        if not qr_url or not esim_fetch_url_is_public_https(qr_url):
-            return "invalid_assignment"
-        prefixes = tuple(getattr(agent_config, "remote_access_qr_url_prefixes", ()) or ())
-        if prefixes and not esim_fetch_url_is_safe(qr_url, allowed_url_prefixes=prefixes):
-            return "invalid_assignment"
-        fetch = downloader or _default_downloader
+class _DeviceUi:
+    """Thin ADB UI helper shared by the step walk and the monitor phase."""
+
+    def __init__(self, runner: AdbCommandRunner, serial: str) -> None:
+        self._runner = runner
+        self._serial = serial
+
+    def dump(self) -> str:
+        self._runner.run(self._serial, ["shell", "uiautomator", "dump", UI_DUMP_REMOTE_PATH])
+        return self._runner.run(self._serial, ["shell", "cat", UI_DUMP_REMOTE_PATH]).stdout or ""
+
+    def tap(self, x: int, y: int) -> None:
+        self._runner.run(self._serial, ["shell", "input", "tap", str(int(x)), str(int(y))])
+
+    def progress_states(self) -> list[str]:
         try:
-            payload = fetch(qr_url, float(agent_config.request_timeout_seconds))
-        except (requests.RequestException, ValueError, OSError):
-            return "qr_download_failed"
-    if not payload:
-        return "qr_download_failed"
-    if len(payload) > MAX_QR_IMAGE_BYTES:
-        return "qr_image_too_large"
-    if _image_extension(payload) is None:
-        return "qr_not_an_image"
-    return payload
+            text = self._runner.run(
+                self._serial, ["shell", "logcat", "-d", f"{PROGRESS_LOG_TAG}:I", "*:S"]
+            ).stdout
+        except AdbCommandError:
+            return []
+        return parse_progress_states(text or "")
 
 
 def run_esim_auto_activation(
@@ -248,12 +373,11 @@ def run_esim_auto_activation(
     request: FarmTaskRequest,
     agent_config: AgentConfig | None,
     command_runner: AdbCommandRunner | None = None,
-    downloader: Downloader | None = None,
-    decoder: Callable[[bytes], str | None] | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-    timeout_seconds: float = 150.0,
+    timeout_seconds: float = 180.0,
     poll_interval_seconds: float = 2.5,
+    step_timeout_seconds: float = 25.0,
 ) -> FarmTaskResult:
     slot_id = int(request.farm_slot_id)
     gated = _place_qr_config_gate(agent_config)
@@ -285,63 +409,76 @@ def run_esim_auto_activation(
             message=NOT_SAMSUNG_MESSAGE,
         )
 
+    # Explicit activation_code → deep-link method (smoke tests / tooling).
     code = str(request.payload.get("activation_code") or "").strip()
-    if not code:
-        image = _qr_image_from_request(request, agent_config, downloader)
-        if isinstance(image, str):
-            return _result(ok=False, http_status=422, job_id=request.job_id, error=image)
-        decode = decoder or decode_lpa_activation_code
-        try:
-            decoded = decode(image)
-        except RuntimeError as exc:
-            return _result(ok=False, http_status=503, job_id=request.job_id, error=str(exc))
-        if not decoded:
+    smdp: str | None = None
+    if code:
+        if not _LPA_CODE_RE.match(code) or not lpa_code_is_shell_safe(code):
             return _result(
-                ok=False,
-                http_status=422,
-                job_id=request.job_id,
-                error="qr_decode_failed",
-                message="QR image does not contain an LPA activation code",
+                ok=False, http_status=422, job_id=request.job_id, error="invalid_activation_code"
             )
-        code = decoded
-    if not _LPA_CODE_RE.match(code) or not lpa_code_is_shell_safe(code):
-        return _result(
-            ok=False, http_status=422, job_id=request.job_id, error="invalid_activation_code"
-        )
-    smdp = smdp_host_from_code(code)
+        smdp = smdp_host_from_code(code)
 
+    ui = _DeviceUi(runner, serial)
     transitions: list[str] = []
     taps: list[str] = []
+    steps_done: list[str] = []
     outcome: str | None = None
     detail: str | None = None
+    method = "deeplink" if code else "one_ui_flow"
     try:
         runner.run(serial, ["shell", "logcat", "-c"])
         runner.run(serial, ["shell", "input", "keyevent", "224"])  # wake
-        # QrTransferActivity reads the query value verbatim (no URL decoding),
-        # so the LPA code is embedded raw; single quotes keep the device shell
-        # from expanding the $ separators.
-        runner.run(
-            serial,
-            [
-                "shell",
-                "am",
-                "start",
-                "-a",
-                "android.intent.action.VIEW",
-                "-d",
-                f"'{SAMSUNG_ESIM_DEEPLINK_PREFIX}{code}'",
-            ],
-        )
+        runner.run(serial, ["shell", "input", "keyevent", "3"])  # clean start from home
+        if code:
+            # QrTransferActivity reads the query value verbatim (no URL
+            # decoding); single quotes keep the device shell from expanding
+            # the $ separators.
+            runner.run(
+                serial,
+                [
+                    "shell",
+                    "am",
+                    "start",
+                    "-a",
+                    "android.intent.action.VIEW",
+                    "-d",
+                    f"'{SAMSUNG_ESIM_DEEPLINK_PREFIX}{code}'",
+                ],
+            )
+        else:
+            walk_error = _walk_one_ui_flow(
+                ui,
+                runner,
+                serial,
+                steps_done=steps_done,
+                taps=taps,
+                sleep_fn=sleep_fn,
+                clock=clock,
+                poll_interval_seconds=poll_interval_seconds,
+                step_timeout_seconds=step_timeout_seconds,
+            )
+            if walk_error is not None:
+                failed_step, screen_hint = walk_error
+                return _result(
+                    ok=False,
+                    http_status=422,
+                    job_id=request.job_id,
+                    error="ui_flow_step_failed",
+                    message=f"step={failed_step}",
+                    method=method,
+                    failed_step=failed_step,
+                    steps_done=steps_done,
+                    screen_hint=screen_hint,
+                    state_transitions=ui.progress_states(),
+                    taps=taps,
+                    activated=False,
+                )
+
         deadline = clock() + float(timeout_seconds)
         while clock() < deadline:
             sleep_fn(float(poll_interval_seconds))
-            try:
-                log_text = runner.run(
-                    serial, ["shell", "logcat", "-d", f"{PROGRESS_LOG_TAG}:I", "*:S"]
-                ).stdout
-            except AdbCommandError:
-                log_text = ""
-            states = parse_progress_states(log_text or "")
+            states = ui.progress_states()
             for found in states[len(transitions):]:
                 transitions.append(found)
             classified = _classify_state(transitions[-1]) if transitions else None
@@ -350,8 +487,7 @@ def run_esim_auto_activation(
                 detail = transitions[-1]
                 break
             try:
-                runner.run(serial, ["shell", "uiautomator", "dump", UI_DUMP_REMOTE_PATH])
-                ui_xml = runner.run(serial, ["shell", "cat", UI_DUMP_REMOTE_PATH]).stdout or ""
+                ui_xml = ui.dump()
             except AdbCommandError:
                 continue
             failure = ui_failure_marker(ui_xml)
@@ -368,7 +504,7 @@ def run_esim_auto_activation(
             if tap is not None:
                 x, y, label = tap
                 taps.append(label)
-                runner.run(serial, ["shell", "input", "tap", str(x), str(y)])
+                ui.tap(x, y)
     except AdbCommandError:
         logger.warning("esim_auto_activation_adb_failed slot=%s", slot_id)
         return _result(
@@ -376,12 +512,25 @@ def run_esim_auto_activation(
             http_status=422,
             job_id=request.job_id,
             error="activation_adb_failed",
+            method=method,
             smdp_address=smdp,
+            steps_done=steps_done,
             state_transitions=transitions,
             taps=taps,
         )
     finally:
-        # Remove the UI dump, dismiss any remaining dialog, and return home.
+        # The "Can't add eSIM" dialog survives back/home presses (verified
+        # live); it must be dismissed via its OK button or it stays on the
+        # renter's screen.
+        try:
+            final_xml = ui.dump()
+            if ui_failure_marker(final_xml):
+                dismiss = find_label_tap(final_xml, "OK")
+                if dismiss is not None:
+                    ui.tap(dismiss[0], dismiss[1])
+        except AdbCommandError:
+            pass
+        # Remove the UI dump, back out, and return home.
         for cleanup in (
             ["shell", "rm", "-f", UI_DUMP_REMOTE_PATH],
             ["shell", "input", "keyevent", "4"],
@@ -394,9 +543,10 @@ def run_esim_auto_activation(
 
     if outcome == "success":
         logger.info(
-            "esim_auto_activation_ok slot=%s job_id=%s state=%s taps=%s",
+            "esim_auto_activation_ok slot=%s job_id=%s method=%s state=%s taps=%s",
             slot_id,
             request.job_id,
+            method,
             detail,
             len(taps),
         )
@@ -405,18 +555,21 @@ def run_esim_auto_activation(
             http_status=200,
             job_id=request.job_id,
             message=f"esim_activation_automated:{detail}",
+            method=method,
             smdp_address=smdp,
             final_state=detail,
+            steps_done=steps_done,
             state_transitions=transitions,
             taps=taps,
             activated=True,
         )
     error = "activation_failed" if outcome == "failure" else "activation_timeout"
     logger.warning(
-        "esim_auto_activation_%s slot=%s job_id=%s detail=%s transitions=%s",
+        "esim_auto_activation_%s slot=%s job_id=%s method=%s detail=%s transitions=%s",
         "failed" if outcome == "failure" else "timeout",
         slot_id,
         request.job_id,
+        method,
         detail,
         transitions,
     )
@@ -426,9 +579,100 @@ def run_esim_auto_activation(
         job_id=request.job_id,
         error=error,
         message=detail,
+        method=method,
         smdp_address=smdp,
         final_state=detail,
+        steps_done=steps_done,
         state_transitions=transitions,
         taps=taps,
         activated=False,
     )
+
+
+def _walk_one_ui_flow(
+    ui: _DeviceUi,
+    runner: AdbCommandRunner,
+    serial: str,
+    *,
+    steps_done: list[str],
+    taps: list[str],
+    sleep_fn: Callable[[float], None],
+    clock: Callable[[], float],
+    poll_interval_seconds: float,
+    step_timeout_seconds: float,
+) -> tuple[str, str] | None:
+    """Walk SIM manager → … → Gallery Done. None on success.
+
+    On failure returns ``(step_name, screen_hint)`` where ``screen_hint`` is a
+    short note about what the screen showed instead (never raw UI content
+    beyond known labels).
+    """
+    runner.run(
+        serial,
+        [
+            "shell",
+            "am",
+            "start",
+            "-n",
+            SIM_CARD_MGR_COMPONENT,
+            "-e",
+            "rootKey",
+            "SIMCARD_ESIM_ADD_MOBILE_PLAN",
+            # A previous session may have left SimCardMgrActivity on a
+            # subscreen; clear the task so the walk always starts at the root.
+            "--activity-clear-task",
+        ],
+    )
+    launch_deadline = clock() + float(step_timeout_seconds)
+    ui_xml = ""
+    while clock() < launch_deadline:
+        sleep_fn(float(poll_interval_seconds))
+        try:
+            ui_xml = ui.dump()
+        except AdbCommandError:
+            continue
+        if ui_contains(ui_xml, "Add eSIM"):
+            break
+    if not ui_contains(ui_xml, "Add eSIM"):
+        return "open_sim_manager", "SIM manager screen did not show Add eSIM"
+    steps_done.append("open_sim_manager")
+
+    for step in _samsung_ui_flow_steps():
+        target = step.locate(ui_xml)
+        if target is None:
+            # One more fresh dump: the previous screen may still be settling.
+            try:
+                ui_xml = ui.dump()
+            except AdbCommandError:
+                ui_xml = ""
+            target = step.locate(ui_xml)
+        if target is None and step.skip_markers and ui_contains(ui_xml, *step.skip_markers):
+            # Some One UI variants skip this screen (e.g. no carrier list);
+            # the next screen's markers are already visible, so move on.
+            steps_done.append(f"{step.name}:skipped")
+            continue
+        if target is None:
+            if ui_failure_marker(ui_xml):
+                return step.name, "failure dialog visible"
+            return step.name, "target control not found"
+        ui.tap(target[0], target[1])
+        taps.append(step.name)
+        steps_done.append(step.name)
+        if not step.done_markers:
+            return None  # terminal step tapped; monitor phase takes over
+        deadline = clock() + float(step_timeout_seconds)
+        advanced = False
+        while clock() < deadline:
+            sleep_fn(float(poll_interval_seconds))
+            try:
+                ui_xml = ui.dump()
+            except AdbCommandError:
+                continue
+            if ui_failure_marker(ui_xml):
+                return step.name, "failure dialog visible"
+            if ui_contains(ui_xml, *step.done_markers):
+                advanced = True
+                break
+        if not advanced:
+            return step.name, "next screen did not appear"
+    return None
