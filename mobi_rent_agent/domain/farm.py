@@ -10,6 +10,9 @@ from enum import Enum
 
 EXPECTED_PRODUCTION_SLOT_COUNT = 20
 EXPECTED_PRODUCTION_SLOT_IDS = frozenset(range(1, EXPECTED_PRODUCTION_SLOT_COUNT + 1))
+# Physical Farm/GADS bays allowed in slot_map (Pixels 1–20 plus extra devices).
+MAX_FARM_SLOT_ID = 32
+ALLOWED_FARM_SLOT_IDS = frozenset(range(1, MAX_FARM_SLOT_ID + 1))
 # Isolated Pixel 7a prototype. Never assign this serial to a farm bay.
 ISOLATED_PROTOTYPE_SERIALS = frozenset({"3C071JEHN14705"})
 PROTOTYPE_VOIDFIX_DEVICE_ID = "1385"

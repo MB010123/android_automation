@@ -21,6 +21,7 @@ from application.in_app_control_policy import (
     decide_control,
 )
 from application.vps_api_contract import error_body
+from domain.farm import MAX_FARM_SLOT_ID
 from domain.remote_access import RemoteAccessPlatformError
 from infrastructure.admin_live_access_store import (
     STATUS_ACTIVE,
@@ -33,7 +34,7 @@ from infrastructure.gads_remote_access import GADS_HUB_ADMIN_USERNAME
 logger = logging.getLogger("vps_backend.admin_live_access")
 
 MIN_SLOT = 1
-MAX_SLOT = 20
+MAX_SLOT = MAX_FARM_SLOT_ID
 _MAX_TTL_MINUTES = 60
 _MIN_TTL_MINUTES = 5
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (

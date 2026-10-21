@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from domain.farm import MAX_FARM_SLOT_ID
 from domain.provisioning_state import ActivationVerdict
 
 
@@ -28,8 +29,8 @@ class SlotState:
     """Represents the current observed state of a single physical slot.
 
     Attributes:
-        slot_id: Target slot number, 1-20, fixed per physical position
-            (not dependent on USB/ADB connection order).
+        slot_id: Target slot number, 1–MAX_FARM_SLOT_ID, fixed per physical
+            position (not dependent on USB/ADB connection order).
         status: Current lifecycle status of the slot.
     """
 
@@ -37,8 +38,10 @@ class SlotState:
     status: SlotStatus
 
     def __post_init__(self) -> None:
-        if not (1 <= self.slot_id <= 20):
-            raise ValueError(f"slot_id must be between 1 and 20, got {self.slot_id}")
+        if not (1 <= self.slot_id <= MAX_FARM_SLOT_ID):
+            raise ValueError(
+                f"slot_id must be between 1 and {MAX_FARM_SLOT_ID}, got {self.slot_id}"
+            )
 
 
 @dataclass(frozen=True)

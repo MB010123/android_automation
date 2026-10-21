@@ -26,6 +26,13 @@ def test_twenty_unique_workspaces_are_kept():
     assert len(set(cleaned.values())) == 20
 
 
+def test_slot_21_workspace_is_kept():
+    mapping = {bay: f"ws-{bay:02d}" for bay in range(1, 22)}
+    cleaned = unique_workspace_map(mapping)
+    assert cleaned[21] == "ws-21"
+    assert len(cleaned) == 21
+
+
 def test_merge_uses_slot1_fallback_when_file_omits_bay1():
     merged = merge_workspace_map({8: "ws-8"}, fallback_slot1="ws-1")
     assert merged == {1: "ws-1", 8: "ws-8"}
@@ -38,8 +45,8 @@ def test_merge_does_not_let_slot8_reuse_slot1_workspace():
 
 def test_load_gads_workspace_map(tmp_path: Path):
     path = tmp_path / "gads_workspaces.json"
-    path.write_text(json.dumps({"1": "ws-a", "8": "ws-b"}), encoding="utf-8")
-    assert load_gads_workspace_map(path) == {1: "ws-a", 8: "ws-b"}
+    path.write_text(json.dumps({"1": "ws-a", "8": "ws-b", "21": "ws-s20"}), encoding="utf-8")
+    assert load_gads_workspace_map(path) == {1: "ws-a", 8: "ws-b", 21: "ws-s20"}
 
 
 def test_missing_workspace_map_path_is_empty():

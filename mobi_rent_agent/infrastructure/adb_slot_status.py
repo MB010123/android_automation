@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+from domain.farm import MAX_FARM_SLOT_ID
 from domain.models import SlotState, SlotStatus
 from domain.ports import SlotStatusProvider
 from infrastructure.redact import redact_serial
@@ -58,8 +59,10 @@ def load_slot_map(path: str | Path) -> dict[int, str]:
 def _validate_slot_map(mapping: dict[int, str], path: str | Path) -> dict[int, str]:
     seen: dict[str, int] = {}
     for slot_id, serial in mapping.items():
-        if not 1 <= slot_id <= 20:
-            raise SlotMapError(f"Slot map {path} slot must be 1-20, got {slot_id}")
+        if not 1 <= slot_id <= MAX_FARM_SLOT_ID:
+            raise SlotMapError(
+                f"Slot map {path} slot must be 1-{MAX_FARM_SLOT_ID}, got {slot_id}"
+            )
         if not serial:
             raise SlotMapError(f"Slot map {path} slot {slot_id} has an empty serial")
         previous = seen.get(serial)

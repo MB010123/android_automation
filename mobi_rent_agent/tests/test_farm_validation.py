@@ -12,6 +12,7 @@ from domain.farm import (
     ISOLATED_PROTOTYPE_SERIALS,
     SmsRetryPolicy,
 )
+from infrastructure.slot_public_id import farm_slot_for_public_id, public_id_for_farm_slot
 from infrastructure.farm_validation import (
     extra_unmapped_serials,
     validate_proxy_uniqueness,
@@ -31,6 +32,20 @@ def test_all_20_slots_configured_correctly():
     result = validate_slot_map(PRODUCTION_MAP)
     assert result.ok is True
     assert EXPECTED_PRODUCTION_SLOT_COUNT == 20
+
+
+def test_slot_21_extra_bay_is_allowed():
+    expanded = dict(PRODUCTION_MAP)
+    expanded[21] = "RFCNB056WEV"
+    result = validate_slot_map(expanded)
+    assert result.ok is True
+    assert any(check.name == "extra_bays" for check in result.checks)
+
+
+def test_public_id_covers_slot_21():
+    slot21 = public_id_for_farm_slot(21)
+    assert farm_slot_for_public_id(slot21) == 21
+    assert public_id_for_farm_slot(1) != slot21
 
 
 def test_missing_device_in_slot_map():

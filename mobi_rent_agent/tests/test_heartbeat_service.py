@@ -169,3 +169,8 @@ def test_provider_exception_does_not_crash_run_once():
 
     results = service.run_once()
     assert results == []
+
+
+def test_slot_state_accepts_slot_21():
+    state = SlotState(21, SlotStatus.ONLINE)
+    assert state.slot_id == 21

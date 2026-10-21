@@ -14,6 +14,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     load_dotenv = None
 
+from domain.farm import MAX_FARM_SLOT_ID
+
 
 class ConfigError(RuntimeError):
     """Raised when required configuration is missing or invalid."""
@@ -318,8 +320,8 @@ def parse_allowed_slot_ids(
             slot_id = int(token)
         except ValueError as exc:
             raise ValueError(f"{name} contains a non-integer: {token}") from exc
-        if not 1 <= slot_id <= 20:
-            raise ValueError(f"{name} slot must be 1-20, got {slot_id}")
+        if not 1 <= slot_id <= MAX_FARM_SLOT_ID:
+            raise ValueError(f"{name} slot must be 1-{MAX_FARM_SLOT_ID}, got {slot_id}")
         if slot_id not in ids:
             ids.append(slot_id)
     return tuple(ids)

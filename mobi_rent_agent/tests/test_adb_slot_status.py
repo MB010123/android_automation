@@ -73,6 +73,19 @@ def test_load_slot_map_rejects_empty_serial(tmp_path):
         load_slot_map(path)
 
 
+def test_load_slot_map_accepts_slot_21(tmp_path):
+    path = tmp_path / "slot_map.json"
+    path.write_text(json.dumps({"1": "PIXEL1", "21": "RFCNB056WEV"}))
+    assert load_slot_map(path) == {1: "PIXEL1", 21: "RFCNB056WEV"}
+
+
+def test_load_slot_map_rejects_slot_above_max(tmp_path):
+    path = tmp_path / "slot_map.json"
+    path.write_text(json.dumps({"33": "TOO-HIGH"}))
+    with pytest.raises(SlotMapError, match="1-32"):
+        load_slot_map(path)
+
+
 def _patch_adb(monkeypatch, devices_output: str, probe_ok_serials: set[str]):
     def fake_run(command, capture_output, text, timeout, check):
         assert command[0] == "adb"

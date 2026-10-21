@@ -6,8 +6,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from domain.farm import (
+    ALLOWED_FARM_SLOT_IDS,
     EXPECTED_PRODUCTION_SLOT_COUNT,
     EXPECTED_PRODUCTION_SLOT_IDS,
+    MAX_FARM_SLOT_ID,
     FarmCheck,
     FarmCheckStatus,
     ISOLATED_PROTOTYPE_SERIALS,
@@ -36,13 +38,14 @@ def validate_slot_map(
     if require_complete_farm:
         missing = sorted(EXPECTED_PRODUCTION_SLOT_IDS - ids)
         extra = sorted(ids - EXPECTED_PRODUCTION_SLOT_IDS)
-        if missing or extra or len(ids) != EXPECTED_PRODUCTION_SLOT_COUNT:
+        illegal = sorted(sid for sid in extra if sid not in ALLOWED_FARM_SLOT_IDS)
+        extra_ok = sorted(sid for sid in extra if sid in ALLOWED_FARM_SLOT_IDS)
+        if missing or illegal:
             checks.append(
                 FarmCheck(
                     "slot_count",
                     FarmCheckStatus.FAIL,
-                    f"expected exactly {EXPECTED_PRODUCTION_SLOT_COUNT} slots "
-                    f"1-20; missing={missing} extra={extra}",
+                    f"expected slots 1-20 present; missing={missing} extra={illegal or extra}",
                 )
             )
         else:
@@ -50,17 +53,35 @@ def validate_slot_map(
                 FarmCheck(
                     "slot_count",
                     FarmCheckStatus.PASS,
-                    f"{EXPECTED_PRODUCTION_SLOT_COUNT} unique slot numbers",
+                    f"{EXPECTED_PRODUCTION_SLOT_COUNT} production slots 1-20 present",
                 )
             )
+            if extra_ok:
+                checks.append(
+                    FarmCheck(
+                        "extra_bays",
+                        FarmCheckStatus.WARN,
+                        f"additional mapped bays {extra_ok} (allowed through {MAX_FARM_SLOT_ID})",
+                    )
+                )
     else:
-        bad = sorted(sid for sid in ids if sid not in EXPECTED_PRODUCTION_SLOT_IDS)
+        bad = sorted(sid for sid in ids if sid not in ALLOWED_FARM_SLOT_IDS)
         if bad:
             checks.append(
-                FarmCheck("slot_ids", FarmCheckStatus.FAIL, f"slot ids outside 1-20: {bad}")
+                FarmCheck(
+                    "slot_ids",
+                    FarmCheckStatus.FAIL,
+                    f"slot ids outside 1-{MAX_FARM_SLOT_ID}: {bad}",
+                )
             )
         else:
-            checks.append(FarmCheck("slot_ids", FarmCheckStatus.PASS, "slot ids are in 1-20"))
+            checks.append(
+                FarmCheck(
+                    "slot_ids",
+                    FarmCheckStatus.PASS,
+                    f"slot ids are in 1-{MAX_FARM_SLOT_ID}",
+                )
+            )
 
     empty = [sid for sid, serial in slot_map.items() if not str(serial).strip()]
     if empty:

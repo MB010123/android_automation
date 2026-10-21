@@ -9,6 +9,8 @@ import json
 import logging
 from pathlib import Path
 
+from domain.farm import MAX_FARM_SLOT_ID
+
 logger = logging.getLogger("vps_backend.gads_workspaces")
 
 
@@ -34,9 +36,13 @@ def load_gads_workspace_map(path: str | Path | None) -> dict[int, str]:
         try:
             slot_id = int(key)
         except (TypeError, ValueError) as exc:
-            raise GadsWorkspaceMapError("GADS workspace map keys must be bay numbers 1-20") from exc
-        if not 1 <= slot_id <= 20:
-            raise GadsWorkspaceMapError(f"GADS workspace map bay must be 1-20, got {slot_id}")
+            raise GadsWorkspaceMapError(
+                f"GADS workspace map keys must be bay numbers 1-{MAX_FARM_SLOT_ID}"
+            ) from exc
+        if not 1 <= slot_id <= MAX_FARM_SLOT_ID:
+            raise GadsWorkspaceMapError(
+                f"GADS workspace map bay must be 1-{MAX_FARM_SLOT_ID}, got {slot_id}"
+            )
         text = str(value or "").strip()
         if not text:
             continue
@@ -54,7 +60,7 @@ def unique_workspace_map(mapping: dict[int, str]) -> dict[int, str]:
         if not text:
             continue
         bay = int(slot_id)
-        if not 1 <= bay <= 20:
+        if not 1 <= bay <= MAX_FARM_SLOT_ID:
             continue
         by_workspace.setdefault(text, []).append(bay)
     unique: dict[int, str] = {}

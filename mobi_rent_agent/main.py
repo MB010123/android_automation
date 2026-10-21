@@ -18,6 +18,7 @@ from application.provisioning_service import ProvisioningService, ProvisioningSe
 from application.proxy_service import ProxyService, ProxyServiceConfig
 from application.retry_policy import RetryPolicy
 from application.slot_coordinator import SlotOperationCoordinator
+from domain.farm import EXPECTED_PRODUCTION_SLOT_IDS
 from domain.slot_isolation import SlotIsolationError, SlotIsolationPolicy
 from infrastructure.activation_payload import QrActivationPayloadResolver
 from infrastructure.adb_companion import AdbCommandRunner, AdbForwardedJsonClient
@@ -153,7 +154,12 @@ def build_proxy_service(
 ) -> ProxyService | None:
     if not config.proxy_routes_path:
         return None
-    routes = load_proxy_routes(config.proxy_routes_path, set(slot_map))
+    proxy_map = {
+        slot_id: serial
+        for slot_id, serial in slot_map.items()
+        if slot_id in EXPECTED_PRODUCTION_SLOT_IDS
+    }
+    routes = load_proxy_routes(config.proxy_routes_path, set(proxy_map))
     runner = AdbCommandRunner(config.adb_path, config.request_timeout_seconds)
     client = AdbForwardedJsonClient(
         runner,
@@ -165,7 +171,7 @@ def build_proxy_service(
             reconcile_interval_seconds=config.proxy_reconcile_interval_seconds,
         ),
         configurator=AdbVpnProxyConfigurator(client),
-        slot_map=slot_map,
+        slot_map=proxy_map,
         routes=routes,
         coordinator=coordinator,
     )
