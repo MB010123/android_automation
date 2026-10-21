@@ -14,7 +14,11 @@ from typing import Any, Callable
 from uuid import UUID
 
 from application.admin_identity import is_admin_user
-from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
+from application.device_display_size import (
+    DEVICE_DISPLAY_SIZE_TASK,
+    attach_native_resolution,
+    parse_display_size_payload,
+)
 from application.in_app_control_policy import (
     NAV_ACTIONS,
     ControlCommand,
@@ -336,24 +340,42 @@ class AdminLiveAccessService:
                 "or mark cleanup complete."
             )
         native, unavailable = self._native_resolution_for_slot(slot_id)
-        if native is not None:
-            body["native_resolution"] = native_resolution_body(native[0], native[1])
-        else:
-            body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
+        attach_native_resolution(body, native, unavailable)
         return body
 
     def _native_resolution_for_slot(self, slot_id: int) -> tuple[tuple[int, int] | None, str | None]:
-        """Physical panel size from Farm ``wm size``. Never uses the MJPEG frame size."""
+        """Active input size: Farm ``wm size``, then GADS registered screen size.
+
+        VPS has no ADB. Never uses the MJPEG frame size.
+        """
         bay = int(slot_id)
         cached = self._native_resolution_cache.get(bay)
         if cached is not None:
             return cached, None
-        if self._farm is None:
+        size = self._farm_wm_size(bay)
+        source = "wm_size"
+        if size is None:
+            size = self._gads_registered_size(bay)
+            source = "gads_device"
+        if size is None:
             logger.info(
                 "admin_live_access_native_resolution slot=%s unavailable=wm_size_unavailable",
                 bay,
             )
             return None, "wm_size_unavailable"
+        self._native_resolution_cache[bay] = size
+        logger.info(
+            "admin_live_access_native_resolution slot=%s width=%s height=%s source=%s",
+            bay,
+            size[0],
+            size[1],
+            source,
+        )
+        return size, None
+
+    def _farm_wm_size(self, bay: int) -> tuple[int, int] | None:
+        if self._farm is None:
+            return None
         try:
             response = self._farm.run_task(
                 task_type=DEVICE_DISPLAY_SIZE_TASK,
@@ -363,30 +385,37 @@ class AdminLiveAccessService:
             )
         except Exception:
             logger.warning("admin_live_access_native_resolution_failed slot=%s", bay)
-            return None, "wm_size_unavailable"
-        details = response.body.get("details") if isinstance(getattr(response, "body", None), dict) else None
-        if not getattr(response, "ok", False) or not isinstance(details, dict):
-            logger.info(
-                "admin_live_access_native_resolution slot=%s unavailable=wm_size_unavailable",
-                bay,
-            )
-            return None, "wm_size_unavailable"
+            return None
+        body = getattr(response, "body", None)
+        return parse_display_size_payload(body if isinstance(body, dict) else None)
+
+    def _gads_registered_size(self, bay: int) -> tuple[int, int] | None:
+        if self._platform is None:
+            return None
+        device_id = str(self._slots.get(int(bay)) or "").strip()
+        if not device_id:
+            return None
+        getter = getattr(self._platform, "device_status", None)
+        if not callable(getter):
+            return None
         try:
-            width = int(details.get("width"))
-            height = int(details.get("height"))
+            status = getter(
+                slot_id=int(bay),
+                device_id=device_id,
+                workspace_id=self._workspace_for(bay),
+                require_workspace=False,
+            )
+        except Exception:
+            logger.warning("admin_live_access_gads_size_failed slot=%s", bay)
+            return None
+        try:
+            width = int(getattr(status, "screen_width", None))
+            height = int(getattr(status, "screen_height", None))
         except (TypeError, ValueError):
-            return None, "wm_size_unreported"
+            return None
         if width <= 0 or height <= 0:
-            return None, "wm_size_unreported"
-        size = (width, height)
-        self._native_resolution_cache[bay] = size
-        logger.info(
-            "admin_live_access_native_resolution slot=%s width=%s height=%s",
-            bay,
-            width,
-            height,
-        )
-        return size, None
+            return None
+        return width, height
 
     def _workspace_for(self, slot_id: int) -> str | None:
         return self._workspaces.get(int(slot_id)) or None

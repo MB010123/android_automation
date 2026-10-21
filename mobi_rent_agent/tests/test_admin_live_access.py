@@ -516,6 +516,8 @@ def test_admin_live_access_returns_farm_wm_size_not_stream_frame(tmp_path: Path)
     assert created.http_status == 201
     assert created.body["coordinate_space"] == "native_device_pixels"
     assert created.body["native_resolution"] == {"width": 1344, "height": 2992}
+    assert created.body["screen_width"] == 1344
+    assert created.body["screen_height"] == 2992
     assert created.body["native_resolution"] != {"width": 720, "height": 1480}
     assert created.body["native_resolution"] != {"width": 720, "height": 1600}
     assert "native_resolution_unavailable" not in created.body
@@ -526,6 +528,20 @@ def test_admin_live_access_returns_farm_wm_size_not_stream_frame(tmp_path: Path)
     assert reused.http_status == 200
     assert reused.body["native_resolution"] == {"width": 1344, "height": 2992}
     assert len([t for t in farm.tasks if t["type"] == "device_display_size"]) == 1
+
+
+def test_admin_live_access_uses_gads_screen_when_farm_wm_size_missing(tmp_path: Path):
+    farm = FakeFarm()
+    farm.fail_types.add("device_display_size")
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
+    platform.screen_size[SLOT1_SERIAL] = (1080, 2400)
+    svc, _, _, _ = _admin_service(tmp_path, farm=farm, platform=platform)
+    created = svc.create_session(_admin(), 1)
+    assert created.http_status == 201
+    assert created.body["native_resolution"] == {"width": 1080, "height": 2400}
+    assert created.body["screen_width"] == 1080
+    assert created.body["screen_height"] == 2400
+    assert "native_resolution_unavailable" not in created.body
 
 
 def test_admin_live_access_omits_invented_resolution_when_wm_size_missing(tmp_path: Path):

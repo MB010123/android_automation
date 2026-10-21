@@ -50,6 +50,38 @@ def native_resolution_body(width: int, height: int) -> dict[str, int]:
     return {"width": int(width), "height": int(height)}
 
 
+def parse_display_size_payload(payload: dict[str, Any] | None) -> tuple[int, int] | None:
+    """Read width/height from a Farm task body or nested ``details`` object."""
+    if not isinstance(payload, dict):
+        return None
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else payload
+    if not isinstance(details, dict):
+        return None
+    try:
+        width = int(details.get("width"))
+        height = int(details.get("height"))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def attach_native_resolution(
+    body: dict[str, Any],
+    native: tuple[int, int] | None,
+    unavailable: str | None,
+) -> None:
+    """Publish live-access size as ``native_resolution`` and screen_width/height."""
+    if native is not None:
+        width, height = int(native[0]), int(native[1])
+        body["native_resolution"] = native_resolution_body(width, height)
+        body["screen_width"] = width
+        body["screen_height"] = height
+        return
+    body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
+
+
 def run_device_display_size(
     *,
     adb_path: str,
@@ -63,7 +95,8 @@ def run_device_display_size(
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
     try:
         if command_runner is not None:
-            output = command_runner.run(serial, ["shell", "wm", "size"]).stdout or ""
+            result = command_runner.run(serial, ["shell", "wm", "size"])
+            output = f"{result.stdout or ''}\n{getattr(result, 'stderr', '') or ''}"
         else:
             completed = subprocess.run(
                 [adb_path, "-s", serial, "shell", "wm", "size"],
@@ -72,7 +105,7 @@ def run_device_display_size(
                 timeout=15,
                 check=False,
             )
-            output = completed.stdout or ""
+            output = f"{completed.stdout or ''}\n{completed.stderr or ''}"
     except (AdbCommandError, OSError, subprocess.TimeoutExpired):
         logger.warning("device_display_size_adb_failed slot=%s", request.farm_slot_id)
         return FarmTaskResult(ok=False, http_status=422, error="wm_size_unavailable")

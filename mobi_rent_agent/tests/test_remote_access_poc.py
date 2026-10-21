@@ -105,6 +105,7 @@ class FakePlatform:
         self.gads_swipe_available = True
         self.tap_error: str | None = None
         self.status_error: str | None = None
+        self.screen_size: dict[str, tuple[int, int]] = {}
 
     def _require_control_user(self, device_id: str, platform_username: str) -> None:
         if platform_username == GADS_HUB_ADMIN_USERNAME:
@@ -166,6 +167,7 @@ class FakePlatform:
             if expected is not None and str(workspace_id or "") != expected:
                 registered = False
         online = registered and self.online.get(device_id, False)
+        screen = self.screen_size.get(device_id)
         return RemoteDeviceStatus(
             slot_id=slot_id,
             device_id=device_id,
@@ -173,6 +175,8 @@ class FakePlatform:
             online=online,
             available=online,
             in_use_by=self.leases.get(device_id),
+            screen_width=None if screen is None else int(screen[0]),
+            screen_height=None if screen is None else int(screen[1]),
         )
 
     def tap(self, *, device_id: str, platform_username: str, platform_password: str, x: int, y: int) -> bool:

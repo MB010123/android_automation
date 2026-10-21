@@ -353,8 +353,10 @@ class GadsRemoteAccessPlatform:
         workspace = str(workspace_id or self._workspace_id or "").strip()
         registered = False
         device_workspace = ""
+        registered_raw: dict[str, Any] = {}
         for device in self._client.registered_devices():
             if str(device.get("udid") or "") == device_id:
+                registered_raw = device
                 device_workspace = str(device.get("workspace_id") or "").strip()
                 if require_workspace:
                     registered = device_workspace == workspace
@@ -411,7 +413,9 @@ class GadsRemoteAccessPlatform:
             require_workspace,
             bool(workspace or device_workspace),
         )
-        width, height = _screen_size(raw)
+        width, height = _screen_size(registered_raw)
+        if width is None or height is None:
+            width, height = _screen_size(raw)
         return RemoteDeviceStatus(
             slot_id=slot_id,
             device_id=device_id,
