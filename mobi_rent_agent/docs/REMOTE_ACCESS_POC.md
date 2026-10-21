@@ -1,7 +1,11 @@
-# Remote-access — customer in-app setup (bays 1–20) and Slot-1 legacy notes
+# Remote-access — customer in-app setup (bays 1–21) and Slot-1 legacy notes
 
 Status: Customer in-app setup (stream, restricted controls, QR upload, eSIM
-observation, VoidFix verify, complete) is **all unique-workspace bays 1–20**.
+observation, VoidFix verify, complete) is **every unique-workspace bay in
+`gads_workspaces.json`** — Pixels on bays 1–20 plus the Samsung S20 on bay 21
+(workspace `mobirent-poc-slot21`). A bay missing from that map returns
+`phone_unavailable` on every remote-access route even when the GADS hub has
+the device registered in the right workspace.
 Companion `provision_esim` / `PROVISIONING_ALLOWED_SLOT_IDS` remains Slot 1.
 Feature flag is OFF by default.
 
@@ -85,7 +89,7 @@ This in-app flow does **not**:
 - install eSIM profiles silently, call `EuiccManager`, or send `provision_esim`;
 - use or request `WRITE_EMBEDDED_SUBSCRIPTIONS`, carrier privileges, Device Owner,
   factory reset, or any privileged Android image change;
-- share one GADS workspace across bays (unique workspace per bay 1–20);
+- share one GADS workspace across bays (unique workspace per bay, 1–21);
 - replace the Mobi-Rent backend for rentals, customers, slot ownership, QR upload,
   billing, or auth. The platform only provides physical access.
 
@@ -218,7 +222,7 @@ REMOTE_ACCESS_ADMIN_USERNAME=<dedicated backend admin>
 REMOTE_ACCESS_ADMIN_PASSWORD=<secret; VPS .env only>
 REMOTE_ACCESS_WORKSPACE_ID=<Slot 1 fallback if the map omits bay 1>
 REMOTE_ACCESS_WORKSPACE_MAP_PATH=/opt/mobi-rent-agent/gads_workspaces.json
-# Unset PREPARE/OBSERVE so complete/observe follow unique workspaces 1–20.
+# Unset PREPARE/OBSERVE so complete/observe follow every unique-workspace bay.
 # If these remain 1, only Slot 1 can prepare-esim / activation-status.
 REMOTE_ACCESS_PREPARE_SLOT_IDS=
 REMOTE_ACCESS_OBSERVE_SLOT_IDS=

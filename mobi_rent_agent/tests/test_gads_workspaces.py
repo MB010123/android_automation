@@ -49,6 +49,16 @@ def test_load_gads_workspace_map(tmp_path: Path):
     assert load_gads_workspace_map(path) == {1: "ws-a", 8: "ws-b", 21: "ws-s20"}
 
 
+def test_example_template_covers_every_rentable_bay():
+    """The shipped template must include bay 21 (Samsung S20): a bay missing
+    from gads_workspaces.json returns phone_unavailable on every remote-access
+    route even when the GADS hub has the device registered."""
+    example = Path(__file__).resolve().parents[1] / "gads_workspaces.example.json"
+    mapping = load_gads_workspace_map(example)
+    assert sorted(mapping) == list(range(1, 22))
+    assert len(set(mapping.values())) == 21  # placeholders stay unique per bay
+
+
 def test_missing_workspace_map_path_is_empty():
     assert load_gads_workspace_map(None) == {}
 
