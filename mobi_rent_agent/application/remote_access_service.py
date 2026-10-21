@@ -1174,6 +1174,7 @@ class RemoteAccessService:
                 payload={
                     "image_base64": base64.b64encode(image_bytes).decode("ascii"),
                     "rental_id": auth.rental_id,
+                    "actor": "renter",
                 },
                 job_id=job_id,
             )
@@ -1874,7 +1875,7 @@ class RemoteAccessService:
             response = self._farm.run_task(
                 task_type=REMOTE_ACCESS_PLACE_QR_TASK,
                 farm_slot_id=auth.slot_id,
-                payload={"esim_qr_url": qr_url, "rental_id": auth.rental_id},
+                payload={"esim_qr_url": qr_url, "rental_id": auth.rental_id, "actor": "renter"},
                 job_id=job_id,
             )
         except Exception as exc:  # noqa: BLE001 - background thread must record, not raise

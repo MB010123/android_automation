@@ -10,7 +10,7 @@ import subprocess
 from typing import Any
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
-from application.remote_access_farm_task import DCIM_CAMERA_DIR
+from application.remote_access_farm_task import DCIM_CAMERA_DIR, PICTURES_DIR
 from application.setup_activity_guard import (
     PHASE_VOIDFIX,
     decide_setup_guard,
@@ -255,12 +255,13 @@ def run_setup_session_safe_cleanup(
     runner = command_runner
     removed = False
     try:
-        listing = _shell(runner, adb_path, serial, ["ls", DCIM_CAMERA_DIR])
-        for name in (listing or "").split():
-            if not name.startswith(QR_PREFIX):
-                continue
-            _shell(runner, adb_path, serial, ["rm", "-f", f"{DCIM_CAMERA_DIR}/{name}"])
-            removed = True
+        for directory in (DCIM_CAMERA_DIR, PICTURES_DIR):
+            listing = _shell(runner, adb_path, serial, ["ls", directory])
+            for name in (listing or "").split():
+                if not name.startswith(QR_PREFIX):
+                    continue
+                _shell(runner, adb_path, serial, ["rm", "-f", f"{directory}/{name}"])
+                removed = True
     except (AdbCommandError, OSError, subprocess.TimeoutExpired):
         logger.warning("setup_session_safe_cleanup_failed slot=%s", request.farm_slot_id)
         return FarmTaskResult(

@@ -1,9 +1,12 @@
-"""Farm Agent task: place a validated eSIM QR image in /sdcard/DCIM/Camera/.
+"""Farm Agent task: place a validated eSIM QR image on the phone.
 
-Any Farm-mapped bay. Customer authorization (ownership + mapped bay) is
-enforced on the VPS. This task resolves ``farm_slot_id`` through
-``slot_map.json`` and ``adb push``es the picture so the customer can open
-it in the Android eSIM UI. GADS POC allowlists are not applied here.
+Pixel renters get ``/sdcard/DCIM/Camera/``. Samsung S20 renters (Slot 21 /
+``RFCNB056WEV`` / manufacturer Samsung) get ``/sdcard/Pictures/``. Admin
+payloads may keep DCIM or pick an allowlisted directory. Customer
+authorization is enforced on the VPS. This task resolves ``farm_slot_id``
+through ``slot_map.json`` and ``adb push``es the picture so the customer
+can open it in the Android eSIM UI. GADS POC allowlists are not applied
+here.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
@@ -66,10 +69,54 @@ def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | 
     return None
 
 DCIM_CAMERA_DIR = "/sdcard/DCIM/Camera"
+PICTURES_DIR = "/sdcard/Pictures"
+ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR})
+SAMSUNG_S20_SERIAL = "RFCNB056WEV"
+SAMSUNG_USER_QR_SLOT = 21
 MAX_QR_IMAGE_BYTES = 5 * 1024 * 1024
 _RENTAL_TOKEN_RE = re.compile(r"[^a-z0-9]")
 
 Downloader = Callable[[str, float], bytes]
+
+
+def _is_samsung_renter_device(slot_id: int, serial: str, manufacturer: str | None) -> bool:
+    if int(slot_id) == SAMSUNG_USER_QR_SLOT:
+        return True
+    if str(serial or "").strip().upper() == SAMSUNG_S20_SERIAL:
+        return True
+    brand = str(manufacturer or "").strip().lower()
+    return brand == "samsung" or brand.startswith("samsung")
+
+
+def qr_placement_dir(
+    *,
+    slot_id: int,
+    serial: str,
+    payload: dict[str, Any] | None,
+    manufacturer: str | None = None,
+) -> str:
+    """Directory for the QR file. Renters cannot override; admins may.
+
+    Admin ``actor=admin`` keeps Pixel DCIM unless ``qr_dir`` is an allowlisted
+    path. Renter Samsung devices always use Pictures.
+    """
+    body = payload if isinstance(payload, dict) else {}
+    actor = str(body.get("actor") or "renter").strip().lower()
+    requested = str(body.get("qr_dir") or "").strip().rstrip("/")
+    if actor == "admin":
+        if requested in ALLOWED_QR_DIRS:
+            return requested
+        return DCIM_CAMERA_DIR
+    if _is_samsung_renter_device(int(slot_id), serial, manufacturer):
+        return PICTURES_DIR
+    return DCIM_CAMERA_DIR
+
+
+def _manufacturer_from_adb(runner: AdbCommandRunner, serial: str) -> str:
+    try:
+        return (runner.run(serial, ["shell", "getprop", "ro.product.manufacturer"]).stdout or "").strip()
+    except AdbCommandError:
+        return ""
 
 
 def _default_downloader(url: str, timeout_seconds: float) -> bytes:
@@ -354,7 +401,13 @@ def run_remote_access_place_qr(
         )
 
     remote_name = remote_qr_filename(rental_id, request.job_id, extension)
-    remote_path = f"{DCIM_CAMERA_DIR}/{remote_name}"
+    media_dir = qr_placement_dir(
+        slot_id=slot_id,
+        serial=serial,
+        payload=request.payload,
+        manufacturer=_manufacturer_from_adb(runner, serial),
+    )
+    remote_path = f"{media_dir}/{remote_name}"
     tmp_path: str | None = None
     remote_size: int | None = None
     try:
@@ -376,7 +429,7 @@ def run_remote_access_place_qr(
                 error="qr_push_failed",
                 message="temporary QR file was empty before ADB push",
             )
-        runner.run(serial, ["shell", "mkdir", "-p", DCIM_CAMERA_DIR])
+        runner.run(serial, ["shell", "mkdir", "-p", media_dir])
         runner.run(serial, ["push", tmp_path, remote_path])
         try:
             listed = runner.run(serial, ["shell", "ls", remote_path]).stdout

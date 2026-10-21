@@ -394,6 +394,7 @@ def test_http_authenticated_upload_and_isolation(tmp_path: Path):
         place = [t for t in farm.tasks if t["type"] == REMOTE_ACCESS_PLACE_QR_TASK]
         assert place and place[-1]["slot"] == 1
         assert "image_base64" in place[-1]["payload"]
+        assert place[-1]["payload"].get("actor") == "renter"
 
         bad_body, bad_ctype = _multipart("qr.gif", "image/gif", _gif_bytes())
         status, payload, _ = _http_raw("POST", url, token=token_a, data=bad_body, content_type=bad_ctype)

@@ -158,6 +158,74 @@ def test_successful_push_uses_camera_destination():
     assert result.details["destination"] == push[2]
 
 
+def test_renter_samsung_slot_21_pushes_to_pictures():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    request = _req()
+    request.farm_slot_id = 21
+    request.payload["actor"] = "renter"
+    result = _place(
+        runner,
+        slot_map={21: "RFCNB056WEV"},
+        request=request,
+    )
+    assert result.ok is True
+    push = [args for _, args in runner.calls if args and args[0] == "push"][0]
+    assert push[2].startswith("/sdcard/Pictures/mobirent_esim_qr_")
+    assert result.details["destination"] == push[2]
+    assert any(
+        args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/Pictures"
+        for _, args in runner.calls
+    )
+
+
+def test_renter_cannot_override_samsung_qr_dir():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    request = _req()
+    request.farm_slot_id = 21
+    request.payload["actor"] = "renter"
+    request.payload["qr_dir"] = "/sdcard/DCIM/Camera"
+    result = _place(runner, slot_map={21: "RFCNB056WEV"}, request=request)
+    push = [args for _, args in runner.calls if args and args[0] == "push"][0]
+    assert push[2].startswith("/sdcard/Pictures/")
+
+
+def test_renter_samsung_manufacturer_uses_pictures_on_other_bays():
+    class SamsungRunner(_QrRunner):
+        def run(self, serial: str, arguments: list[str]):
+            if arguments == ["shell", "getprop", "ro.product.manufacturer"]:
+                self.calls.append((serial, list(arguments)))
+                return AdbCommandResult(stdout="samsung\n", stderr="")
+            return super().run(serial, arguments)
+
+    runner = SamsungRunner(remote_size=len(PNG_BYTES))
+    request = _req()
+    request.farm_slot_id = 8
+    result = _place(runner, slot_map={8: "SAMSUNG-OTHER"}, request=request)
+    assert result.ok is True
+    push = [args for _, args in runner.calls if args and args[0] == "push"][0]
+    assert push[2].startswith("/sdcard/Pictures/")
+
+
+def test_admin_samsung_qr_stays_on_dcim_unless_override():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    request = _req()
+    request.farm_slot_id = 21
+    request.payload["actor"] = "admin"
+    result = _place(runner, slot_map={21: "RFCNB056WEV"}, request=request)
+    push = [args for _, args in runner.calls if args and args[0] == "push"][0]
+    assert push[2].startswith("/sdcard/DCIM/Camera/")
+
+    runner2 = _QrRunner(remote_size=len(PNG_BYTES))
+    request2 = _req()
+    request2.farm_slot_id = 21
+    request2.payload["actor"] = "admin"
+    request2.payload["qr_dir"] = "/sdcard/Pictures"
+    result2 = _place(runner2, slot_map={21: "RFCNB056WEV"}, request=request2)
+    push2 = [args for _, args in runner2.calls if args and args[0] == "push"][0]
+    assert result2.ok is True
+    assert push2[2].startswith("/sdcard/Pictures/")
+
+
 def test_tempfile_is_written_to_disk_before_adb_push():
     class Inspect(_QrRunner):
         def __init__(self) -> None:
