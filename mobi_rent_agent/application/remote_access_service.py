@@ -34,7 +34,7 @@ from application.vps_api_contract import (
 )
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
-from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, _image_extension
+from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, SAMSUNG_USER_QR_SLOT, _image_extension
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
 from application.in_app_control_policy import (
     FORBIDDEN_PAYLOAD_KEYS,
@@ -95,6 +95,7 @@ PREPARE_IN_PROGRESS = frozenset(
 
 REMOTE_ACCESS_PLACE_QR_TASK = "remote_access_place_qr"
 REMOTE_ACCESS_ACTIVATION_TASK = "remote_access_activation_status"
+ESIM_AUTO_ACTIVATION_TASK = "esim_auto_activation"
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
     "Airplane Mode cannot be changed through this rental session. "
     "Android 16 does not allow the current Farm/GADS/companion path to toggle it."
@@ -1207,7 +1208,54 @@ class RemoteAccessService:
         self._store.mark_qr_uploaded(auth.rental_id, uploaded_at=self._clock())
         body = public_placement_success(details, job_id=job_id)
         body.update(self._navigate_rental_to_add_esim(auth))
+        if auth.slot_id == SAMSUNG_USER_QR_SLOT:
+            # Samsung One UI bay: run the renter's activation hands-free in the
+            # background via the verified esimmanagerfromqr deep link. Pixel
+            # bays keep the manual GADS scan flow. Admin live access is not
+            # routed through this renter endpoint and stays unrestricted.
+            auto_job_id = str(uuid.uuid4())
+            image_base64 = base64.b64encode(image_bytes).decode("ascii")
+            self._runner(lambda: self._run_auto_activation_flow(auth, image_base64, auto_job_id))
+            body["auto_activation"] = {"started": True, "job_id": auto_job_id}
         return ApiResult(200, body)
+
+    def _run_auto_activation_flow(self, auth: AuthorizedRental, image_base64: str, job_id: str) -> None:
+        """Background zero-touch eSIM activation for Samsung bays (renter flow)."""
+        try:
+            response = self._farm.run_task(
+                task_type=ESIM_AUTO_ACTIVATION_TASK,
+                farm_slot_id=auth.slot_id,
+                payload={
+                    "image_base64": image_base64,
+                    "rental_id": auth.rental_id,
+                    "actor": "renter",
+                },
+                job_id=job_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - background thread must record, not raise
+            logger.warning("esim_auto_activation_farm_exception reason=%s", exc.__class__.__name__)
+            self._record(auth.slot_id, "esim_auto_activation_failed", f"rental_id={auth.rental_id} farm_unreachable")
+            return
+        details = {}
+        if isinstance(getattr(response, "body", None), dict):
+            raw_details = response.body.get("details")
+            if isinstance(raw_details, dict):
+                details = raw_details
+        if getattr(response, "ok", False) and details.get("activated") is True:
+            logger.info("esim_auto_activation_done slot=%s job_id=%s", auth.slot_id, job_id)
+            self._record(
+                auth.slot_id,
+                "esim_auto_activation_done",
+                f"rental_id={auth.rental_id} job_id={job_id} state={details.get('final_state')}",
+            )
+            return
+        error_code = str(details.get("error_code") or getattr(response, "error", None) or "activation_failed")
+        logger.warning("esim_auto_activation_failed slot=%s job_id=%s error=%s", auth.slot_id, job_id, error_code)
+        self._record(
+            auth.slot_id,
+            "esim_auto_activation_failed",
+            f"rental_id={auth.rental_id} job_id={job_id} error={error_code}",
+        )
 
     def _upload_error_from(self, result: ApiResult) -> ApiResult:
         code = "forbidden"

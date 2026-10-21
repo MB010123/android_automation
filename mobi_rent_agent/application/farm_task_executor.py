@@ -100,6 +100,16 @@ def execute_controlled_farm_task(
             agent_config=agent_config,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "esim_auto_activation":
+        from application.esim_auto_activation_farm_task import run_esim_auto_activation
+
+        return run_esim_auto_activation(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            agent_config=agent_config,
+            command_runner=deps.command_runner,
+        )
     if request.task_type == "remote_access_activation_status":
         from application.remote_access_farm_task import run_remote_access_activation_status
 

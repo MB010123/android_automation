@@ -312,6 +312,45 @@ def test_owned_slots_3_to_20_follow_mapped_bay_authorization(tmp_path: Path):
         assert "serial" not in farm.tasks[0]["payload"]
 
 
+def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=FakePlatform(),
+        farm=farm,
+        allowed=(21,),
+        slot_map={21: "RFCNB056WEV"},
+        farm_status=_mapped(21),
+    )
+    rental = _rental(tenant, bay=21, user_id=CUSTOMER_A)
+    result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert result.http_status == 200, result.body
+    assert result.body["placed"] is True
+    assert result.body["auto_activation"]["started"] is True
+    assert result.body["auto_activation"]["job_id"]
+    _assert_safe_body(result.body)
+    auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
+    assert auto and auto[-1]["slot"] == 21
+    assert auto[-1]["payload"]["actor"] == "renter"
+    assert auto[-1]["payload"]["rental_id"] == rental
+    assert "image_base64" in auto[-1]["payload"]
+    assert "serial" not in auto[-1]["payload"]
+    assert "RFCNB056WEV" not in json.dumps(result.body)
+
+
+def test_pixel_bay_upload_does_not_auto_activate(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert result.http_status == 200
+    assert "auto_activation" not in result.body
+    assert [t for t in farm.tasks if t["type"] == "esim_auto_activation"] == []
+
+
 def test_non_owner_slot2_qr_upload_is_forbidden(tmp_path: Path):
     tenant = MemoryTenant()
     farm = FakeFarm()

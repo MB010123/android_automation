@@ -11,6 +11,7 @@ SUPPORTED_TASK_TYPES = {
     "voidfix_repair",
     "remote_access_place_qr",
     "remote_access_activation_status",
+    "esim_auto_activation",
     "setup_session_inspect",
     "setup_session_input",
     "setup_session_voidfix_cycle",
