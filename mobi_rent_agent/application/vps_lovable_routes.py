@@ -16,8 +16,10 @@ RE_SLOT_ESIM = re.compile(rf"^/slots/({_UUID})/esim$")
 RE_SLOT_DETAIL = re.compile(rf"^/slots/({_UUID})$")
 RE_SLOTS_LIST = re.compile(r"^/slots$")
 RE_JOB = re.compile(rf"^/jobs/({_UUID})$")
+RE_FARM_SLOTS = re.compile(r"^/farm/slots$")
 RE_FARM_AVAILABLE = re.compile(r"^/farm/slots/available$")
 RE_FARM_ASSIGN = re.compile(r"^/farm/slots/(\d{1,2})/assign$")
+RE_FARM_AUTO_CLEANUP = re.compile(r"^/farm/slots/(\d{1,2})/auto-cleanup$")
 RE_AUTH_SIGNUP = re.compile(r"^/auth/signup$")
 RE_AUTH_LOGIN = re.compile(r"^/auth/login$")
 RE_AUTH_LOGOUT = re.compile(r"^/auth/logout$")
@@ -47,6 +49,7 @@ RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close)$"
 )
 RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
+RE_WHMCS_SSO = re.compile(r"^/api/public/auth/whmcs-sso$")
 RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
 RE_BILLING_CREDITS = re.compile(r"^/billing/credits$")
 REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
@@ -55,7 +58,14 @@ ADMIN_LIVE_ACCESS_KINDS = frozenset(
 )
 
 PUBLIC_AUTH_POST = frozenset(
-    {"auth_signup", "auth_login", "auth_forgot", "auth_reset", "auth_verify"}
+    {
+        "auth_signup",
+        "auth_login",
+        "auth_forgot",
+        "auth_reset",
+        "auth_verify",
+        "whmcs_sso",
+    }
 )
 USER_OWNED_KINDS = frozenset(
     {
@@ -69,6 +79,7 @@ USER_OWNED_KINDS = frozenset(
     }
 )
 FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign", "rental_end", "cleanup_verified"})
+FARM_OR_ADMIN_KINDS = frozenset({"farm_auto_cleanup"})
 
 
 @dataclass(frozen=True)
@@ -95,8 +106,12 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="remote_access", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS_ACTION.match(path):
         return ParsedRoute(kind="remote_access_action", rental_id=m.group(1), action=m.group(2))
+    if RE_FARM_SLOTS.match(path):
+        return ParsedRoute(kind="farm_slots")
     if m := RE_FARM_AVAILABLE.match(path):
         return ParsedRoute(kind="farm_available")
+    if m := RE_FARM_AUTO_CLEANUP.match(path):
+        return ParsedRoute(kind="farm_auto_cleanup", farm_bay=int(m.group(1)))
     if m := RE_FARM_ASSIGN.match(path):
         return ParsedRoute(kind="farm_assign", farm_bay=int(m.group(1)))
     if m := RE_FARM_CLEANUP_VERIFIED.match(path):
@@ -118,6 +133,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         )
     if RE_WHMCS_WEBHOOK.match(path):
         return ParsedRoute(kind="whmcs_webhook")
+    if RE_WHMCS_SSO.match(path):
+        return ParsedRoute(kind="whmcs_sso")
     if RE_BILLING_CONFIG.match(path):
         return ParsedRoute(kind="billing_config")
     if RE_BILLING_CREDITS.match(path):

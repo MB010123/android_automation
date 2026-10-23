@@ -41,7 +41,7 @@ class RemoteDeviceStatus:
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def to_public_dict(self) -> dict[str, Any]:
-        """Browser-safe view: never includes platform credentials or raw payload."""
+        """Browser-safe view: slot_id + ADB serial, never platform credentials or raw payload."""
         if not self.registered:
             state = "unregistered"
         elif not self.online:
@@ -52,6 +52,7 @@ class RemoteDeviceStatus:
             state = "online"
         body: dict[str, Any] = {
             "slot_id": self.slot_id,
+            "serial": self.device_id,
             "state": state,
             "online": self.online,
             "available": self.online,

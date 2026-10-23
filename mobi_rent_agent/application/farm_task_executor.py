@@ -58,7 +58,10 @@ def execute_controlled_farm_task(
     deps: FarmTaskExecutorDeps | None = None,
 ) -> FarmTaskResult:
     deps = deps or FarmTaskExecutorDeps()
-    reject_forbidden_payload_keys(request.payload)
+    reject_forbidden_payload_keys(
+        request.payload,
+        allowed_keys=_payload_exception_keys(request.task_type),
+    )
 
     if request.task_type == "reboot":
         return _run_reboot(adb_path, slot_map, request, deps.command_runner)
@@ -156,6 +159,15 @@ def execute_controlled_farm_task(
             request=request,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "device_data_cleanup":
+        from application.device_data_cleanup_farm_task import run_device_data_cleanup
+
+        return run_device_data_cleanup(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
     if request.task_type == "device_display_size":
         from application.device_display_size import run_device_display_size
 
@@ -168,9 +180,20 @@ def execute_controlled_farm_task(
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 
-def reject_forbidden_payload_keys(payload: dict[str, Any]) -> None:
+def _payload_exception_keys(task_type: str) -> frozenset[str]:
+    if task_type == "device_data_cleanup":
+        return frozenset({"serial"})
+    return frozenset()
+
+
+def reject_forbidden_payload_keys(
+    payload: dict[str, Any],
+    *,
+    allowed_keys: frozenset[str] | None = None,
+) -> None:
+    extra = allowed_keys or frozenset()
     for key in payload:
-        if key in FORBIDDEN_PAYLOAD_KEYS:
+        if key in FORBIDDEN_PAYLOAD_KEYS and key not in extra:
             raise ValueError(f"payload key {key!r} is not allowed")
 
 

@@ -25,7 +25,6 @@ from tests.fakes_supabase import MemoryTenant
 
 CUSTOMER_BAYS = (1, 2, 8, 15, 20)
 SECRET_MARKERS = (
-    "SERIAL-",
     "udid",
     "workspace",
     "gads",
@@ -77,10 +76,12 @@ def _assert_no_secrets(body: dict) -> None:
     blob = json.dumps(body).lower()
     for marker in SECRET_MARKERS:
         assert marker.lower() not in blob, marker
-    for serial in _all_serials().values():
-        assert serial not in json.dumps(body)
     for workspace in _all_workspaces().values():
         assert workspace not in json.dumps(body)
+    if "slot_id" in body:
+        serials = _all_serials()
+        bay = int(body["slot_id"])
+        assert body.get("serial") == serials.get(bay)
 
 
 def test_twenty_unique_workspace_mappings_resolve(tmp_path: Path):

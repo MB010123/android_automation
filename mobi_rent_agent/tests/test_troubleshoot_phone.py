@@ -57,9 +57,9 @@ def test_diagnostics_ownership_and_cross_rental(tmp_path: Path):
     assert ok.body["ok"] is True
     assert ok.body["slot_id"] == 1
     assert ok.body["phone"]["state"] == "online"
+    assert ok.body["phone"]["serial"] == SLOT1_SERIAL
     assert ok.body["cellular_status"] == "unknown"
     assert "reboot" in ok.body["supported_recovery"]
-    assert SLOT1_SERIAL not in json.dumps(ok.body)
     assert "workspace" not in json.dumps(ok.body)
     other = service.troubleshoot_for_customer(CUSTOMER_B, rental_b, {})
     assert other.http_status == 200
@@ -161,7 +161,8 @@ def test_reboot_uses_existing_farm_reboot_only(tmp_path: Path):
     assert after.prepare_state == before.prepare_state
     blob = json.dumps(result.body)
     assert "factory_reset" in result.body["unsupported"]
-    assert SLOT1_SERIAL not in blob
+    assert result.body["serial"] == SLOT1_SERIAL
+    assert "workspace" not in blob
 
 
 def test_diagnostics_do_not_change_setup_mode_stream_or_phone_ready(tmp_path: Path):

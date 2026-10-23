@@ -361,6 +361,8 @@ class AdminLiveAccessService:
 
     def _session_body(self, session: AdminLiveAccessSession, slot_id: int) -> dict[str, Any]:
         body = session.to_public_dict(self._clock())
+        body["slot_id"] = int(slot_id)
+        body["serial"] = self._slots.get(int(slot_id))
         if self._is_rented(slot_id) or self._cleanup_required(slot_id):
             body["customer_session_warning"] = (
                 "This phone may have an active customer session or cleanup hold. "

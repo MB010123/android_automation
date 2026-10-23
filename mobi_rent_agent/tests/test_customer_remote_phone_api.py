@@ -32,15 +32,15 @@ from tests.test_remote_access_poc import (
     _signup,
 )
 
-SECRET_MARKERS = ("SERIAL-", "workspace_id", "one-time-secret", "admin-jwt", "password")
+SECRET_MARKERS = ("workspace_id", "one-time-secret", "admin-jwt", "password")
 
 
 def _assert_safe(body: dict) -> None:
     blob = json.dumps(body)
     for marker in SECRET_MARKERS:
         assert marker not in blob, marker
-    assert SLOT1_SERIAL not in blob
-    assert SLOT2_SERIAL not in blob
+    if "slot_id" in body:
+        assert "serial" in body
 
 
 def test_create_reuses_session_and_hides_internals(tmp_path: Path):

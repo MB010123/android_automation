@@ -16,6 +16,7 @@ SUPPORTED_TASK_TYPES = {
     "setup_session_input",
     "setup_session_voidfix_cycle",
     "setup_session_safe_cleanup",
+    "device_data_cleanup",
     "device_display_size",
 }
 

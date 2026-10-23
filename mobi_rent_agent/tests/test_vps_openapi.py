@@ -29,8 +29,10 @@ SECRET_PATTERNS = [
 REQUIRED_PATHS = [
     "/health",
     "/farm/status",
+    "/farm/slots",
     "/farm/slots/available",
     "/farm/slots/{bay}/assign",
+    "/farm/slots/{bay}/auto-cleanup",
     "/jobs/{job_id}",
     f"/slots/{{slot_id}}/sms/send",
     "/messages/{message_id}",
@@ -62,6 +64,7 @@ REQUIRED_PATHS = [
     "/admin/devices/{slot_id}/live-access/close",
     "/voidfix/inbound",
     "/api/webhooks/whmcs",
+    "/api/public/auth/whmcs-sso",
     "/billing/config",
     "/billing/credits",
 ]

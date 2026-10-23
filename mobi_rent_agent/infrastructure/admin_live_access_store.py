@@ -42,7 +42,7 @@ class AdminLiveAccessSession:
         return self.status == STATUS_ACTIVE and now < self.expires_at
 
     def to_public_dict(self, now: float) -> dict:
-        """Browser-safe view. Never includes serials, tokens, or GADS URLs."""
+        """Browser-safe view. Never includes tokens or GADS URLs. Serial is attached by the service."""
         active = self.is_active(now)
         status = self.status
         if status == STATUS_ACTIVE and not active:

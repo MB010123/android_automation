@@ -118,7 +118,7 @@ def test_activation_confirmed_transitions_to_phone_ready(tmp_path: Path):
     assert done.body["factory_reset"] is False
     assert not any(t["type"] == "setup_session_voidfix_cycle" for t in farm.tasks)
     blob = json.dumps(done.body)
-    assert SLOT1_SERIAL not in blob
+    assert done.body["serial"] == SLOT1_SERIAL
     assert "EuiccManager" not in blob
 
 

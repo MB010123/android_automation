@@ -173,7 +173,7 @@ def test_status_unknown_without_heartbeat(tmp_path: Path):
     assert body["cellular_status"] == "unknown"
     assert body["imei2"] is None
     assert body["imei2_status"] == "unknown"
-    assert "serial" not in json.dumps(body).lower()
+    assert "serial" in body
 
 
 def test_status_available_when_online_and_unassigned(tmp_path: Path):

@@ -81,6 +81,18 @@ def test_parse_rejects_unknown_task():
         )
 
 
+def test_parse_cleanup_accepts_optional_serial():
+    request = parse_farm_task_body(
+        {
+            "job_id": "j21",
+            "type": "device_data_cleanup",
+            "farm_slot_id": 21,
+            "payload": {"serial": "RFCNB056WEV", "lockdown": True},
+        }
+    )
+    assert request.payload["serial"] == "RFCNB056WEV"
+
+
 def test_parse_rejects_forbidden_serial_in_payload():
     with pytest.raises(ValueError, match="not allowed"):
         parse_farm_task_body(

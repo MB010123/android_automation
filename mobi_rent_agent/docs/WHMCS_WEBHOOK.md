@@ -102,6 +102,19 @@ Those handlers must update `user_credits` atomically (idempotent by rental id).
 - Or poll `GET /billing/credits` with the user JWT (returns the same columns)
 - Upgrade button: `GET /billing/config` → `upgrade_url`
 
+## Dashboard SSO
+
+WHMCS `includes/hooks/mobi_rent_sso.php` redirects paid phone customers to
+the dashboard with `payload` (Base64URL JSON) and `sig` (HMAC-SHA256 **hex of
+that raw payload string**). The VPS redeems it at:
+
+```
+GET|POST /api/public/auth/whmcs-sso
+```
+
+`MOBI_RENT_SSO_SECRET` must match on WHMCS and the VPS. The same nonce plus
+IP/User-Agent may replay for 10 seconds so React StrictMode does not 401.
+
 ## PHP HMAC
 
 ```php

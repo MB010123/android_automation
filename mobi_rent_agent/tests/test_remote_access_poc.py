@@ -349,6 +349,17 @@ class FakeFarm:
             }
         if task_type == "setup_session_safe_cleanup":
             body["details"] = {"removed_qr_artifacts": True, "factory_reset": False, "esim_deleted": False}
+        if task_type == "device_data_cleanup":
+            body["details"] = {
+                "ok": True,
+                "slot_id": farm_slot_id,
+                "serial": f"SERIAL-SLOT{farm_slot_id}-TEST",
+                "status": "cleanup_completed",
+                "esim_preserved": True,
+                "rebooted": False,
+                "cleared": ["files", "call_log", "contacts", "sms_mms", "browsers"],
+                "lockdown_applied": bool(payload.get("lockdown", True)),
+            }
         if task_type == "setup_session_input":
             body["details"] = {"ok": True}
         if task_type == "device_display_size":
@@ -540,7 +551,8 @@ def test_b_customer_a_gets_slot1_access(tmp_path: Path):
     got = service.get_remote_access(CUSTOMER_A, None, rental)
     assert got.http_status == 200 and got.body["active"] is True
     assert "platform_login" not in got.body
-    assert SLOT1_SERIAL not in json.dumps(got.body)
+    assert got.body["serial"] == SLOT1_SERIAL
+    assert got.body["slot_id"] == 1
 
     session = store.get(rental)
     assert session is not None and session.status == STATUS_ACTIVE and session.device_id == SLOT1_SERIAL
@@ -795,7 +807,7 @@ def test_h_reboot_timeout_is_reported(tmp_path: Path):
 def test_i_admin_credentials_and_serial_never_leak(tmp_path: Path):
     server, port, tenant, platform, _ = _start_http(tmp_path)
     base = f"http://127.0.0.1:{port}"
-    admin_markers = ("gads-admin-user", "gads-admin-password", "admin-jwt", SLOT1_SERIAL)
+    admin_markers = ("gads-admin-user", "gads-admin-password", "admin-jwt")
     try:
         token_a, user_a = _signup(base, "a@example.com")
         rental = _rental(tenant, bay=1, user_id=user_a)
@@ -810,6 +822,8 @@ def test_i_admin_credentials_and_serial_never_leak(tmp_path: Path):
             for marker in admin_markers:
                 assert marker not in raw, (status, marker)
         created = responses[0][1]
+        assert created["serial"] == SLOT1_SERIAL
+        assert created["slot_id"] == 1
         assert created["session_mode"] == "in_app"
         assert "platform_login" not in created
         assert "password" not in json.dumps(created)
@@ -1739,7 +1753,8 @@ def test_phone8_owner_gets_own_gads_workspace(tmp_path: Path):
     assert result.http_status == 201, result.body
     assert result.body["slot_id"] == 8
     blob = json.dumps(result.body)
-    assert SLOT8_SERIAL not in blob
+    assert result.body["serial"] == SLOT8_SERIAL
+    assert result.body["slot_id"] == 8
     grants = [c for c in service._platform.calls if c[0] == "grant"]  # type: ignore[union-attr]
     assert grants[-1][1]["device_id"] == SLOT8_SERIAL
     assert grants[-1][1]["workspace_id"] == "ws-8"
@@ -1875,7 +1890,7 @@ def test_phone8_gads_enables_prepare_and_observe(tmp_path: Path):
     assert observed.http_status == 200, observed.body
     assert any(t["type"] == "remote_access_activation_status" and t["slot"] == 8 for t in farm.tasks)
     blob = json.dumps(observed.body)
-    assert SLOT8_SERIAL not in blob
+    assert observed.body["serial"] == SLOT8_SERIAL
     assert "ws-8" not in blob
 
 

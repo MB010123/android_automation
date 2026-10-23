@@ -75,7 +75,13 @@ def parse_farm_task_body(data: dict[str, Any]) -> FarmTaskRequest:
 
         raise ValueError("payload must be object")
 
-    reject_forbidden_payload_keys(payload)
+    reject_forbidden_payload_keys(
+
+        payload,
+
+        allowed_keys=frozenset({"serial"}) if task_type == "device_data_cleanup" else frozenset(),
+
+    )
 
     return FarmTaskRequest(
 

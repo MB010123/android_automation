@@ -93,7 +93,7 @@ def test_reserve_one_bay_successfully(tmp_path: Path):
     assert result.body["reserved"] is True
     assert result.body["bay"] == 1
     assert result.body["rental_id"] == rental
-    assert "serial" not in result.body
+    assert "serial" in result.body
     assert reservations.is_reserved(1)
     assert assign.is_assigned(1) is False
     assert 1 not in _available(svc)

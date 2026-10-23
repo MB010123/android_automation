@@ -66,7 +66,8 @@ def test_reconnect_does_not_grant_or_lock_again(tmp_path: Path):
     assert reused.body.get("active") is True
     assert [c for c in platform.calls if c[0] == "grant"] == grants
     assert [c for c in platform.calls if c[0] == "revoke"] == []
-    assert SLOT1_SERIAL not in str(reused.body)
+    assert reused.body["serial"] == SLOT1_SERIAL
+    assert reused.body["slot_id"] == 1
 
 
 def test_customer_can_view_screen_and_use_approved_controls(tmp_path: Path):

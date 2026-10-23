@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from domain.farm import FarmSlotState, ISOLATED_PROTOTYPE_SERIALS
 from infrastructure.redact import redact_serial
@@ -84,3 +85,71 @@ class SlotIdentityGuard:
         if self._list_states is not None:
             return self._list_states()
         return self._adb_states
+
+
+def serial_for_slot(slot_map: Mapping[int, str] | None, bay: int) -> str | None:
+    if not slot_map:
+        return None
+    try:
+        slot = int(bay)
+    except (TypeError, ValueError):
+        return None
+    serial = str(slot_map.get(slot) or "").strip()
+    return serial or None
+
+
+def farm_slot_entries(
+    slot_map: Mapping[int, str],
+    *,
+    offline_slots: set[int] | None = None,
+    adb_states: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Per-bay identity list for Farm health / GET /farm/status."""
+    offline = {int(s) for s in (offline_slots or set())}
+    slots: list[dict[str, Any]] = []
+    for bay, serial in sorted((int(k), str(v).strip()) for k, v in slot_map.items()):
+        if not serial:
+            continue
+        if adb_states is not None:
+            state = str(adb_states.get(serial) or "missing")
+        elif bay in offline:
+            state = "offline"
+        else:
+            state = "device"
+        slots.append({"slot_id": bay, "serial": serial, "adb_state": state})
+    return slots
+
+
+def overlay_farm_slot_identity(
+    farm: dict[str, Any],
+    slot_map: Mapping[int, str] | None,
+) -> dict[str, Any]:
+    """Ensure Farm health JSON includes integer slot_id + serial per mapped bay."""
+    body = dict(farm)
+    existing = body.get("slots")
+    if isinstance(existing, list) and existing:
+        return body
+    mapped: dict[int, str] = {}
+    for key, value in (slot_map or {}).items():
+        try:
+            mapped[int(key)] = str(value).strip()
+        except (TypeError, ValueError):
+            continue
+    if not mapped:
+        raw = body.get("mapped_slots") or []
+        if isinstance(raw, list):
+            for item in raw:
+                try:
+                    mapped[int(item)] = ""
+                except (TypeError, ValueError):
+                    continue
+    offline_raw = body.get("offline_slots") or []
+    offline: set[int] = set()
+    if isinstance(offline_raw, list):
+        for item in offline_raw:
+            try:
+                offline.add(int(item))
+            except (TypeError, ValueError):
+                continue
+    body["slots"] = farm_slot_entries(mapped, offline_slots=offline)
+    return body

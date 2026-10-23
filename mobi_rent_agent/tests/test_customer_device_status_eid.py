@@ -34,7 +34,6 @@ from tests.test_remote_access_poc import (
 
 FARM_MSISDN_FIXTURE = {slot: f"+1555123{slot:04d}" for slot in range(1, 21)}
 INTERNAL_LEAK_KEYS = (
-    "serial",
     "adb_serial",
     "device_serial",
     "udid",
@@ -193,7 +192,8 @@ def test_assigned_rental_reads_stored_eid_only(tmp_path: Path):
     assert status.body["phone_number_status"] == "unknown"
     assert status.body["cellular_status"] == "unknown"
     assert "imei1" not in status.body
-    assert SLOT1_SERIAL not in json.dumps(status.body)
+    assert status.body["serial"] == SLOT1_SERIAL
+    assert status.body["slot_id"] == 1
     assert _farm_types(farm) == ["device_display_size"]
     assert not any(t in MUTATING_FARM_TYPES for t in _farm_types(farm))
     assert [c for c in platform.calls if c[0] == "grant"] == grants_before
@@ -428,7 +428,7 @@ def test_imei2_carrier_phone_known_from_owned_slot(tmp_path: Path):
     assert "imei1" not in status.body
     assert "carrier_name" not in status.body
     blob = json.dumps(status.body)
-    assert SLOT1_SERIAL not in blob
+    assert status.body["serial"] == SLOT1_SERIAL
     assert FAKE_IMEI not in blob
     assert FAKE_PLACEHOLDER not in blob
     assert _farm_types(farm) == ["device_display_size"]
@@ -599,7 +599,7 @@ def test_device_status_keeps_existing_phone_fields(tmp_path: Path):
     assert "native_resolution_unavailable" not in status.body
     assert isinstance(status.body["requires_manual_action"], bool)
     assert "imei1" not in status.body
-    assert "serial" not in status.body
+    assert status.body["serial"] == SLOT1_SERIAL
     assert "udid" not in status.body
     assert "workspace_id" not in status.body
     assert "device_id" not in status.body
@@ -680,8 +680,9 @@ def test_device_status_phone_from_farm_map_for_every_mapped_slot(tmp_path: Path)
         assert status.body["adb_online"] is True
         assert "native_resolution" in status.body or "native_resolution_unavailable" in status.body
         blob = json.dumps(status.body)
-        assert SLOT1_SERIAL not in blob
-        assert f"SERIAL-SLOT{bay}-TEST" not in blob
+        assert status.body["slot_id"] == bay
+        if bay in {1, 2}:
+            assert status.body["serial"] == f"SERIAL-SLOT{bay}-TEST"
         assert f"ws-{bay}" not in blob
         for key in INTERNAL_LEAK_KEYS:
             assert key not in status.body
@@ -749,7 +750,7 @@ def test_http_device_status_farm_phone_ignores_forbidden_payload(tmp_path: Path)
         assert body["phone_number_status"] == "known"
         assert body["imei2_status"] == "known"
         assert body["cellular_status"] == "unknown"
-        assert SLOT1_SERIAL not in json.dumps(body)
+        assert body["serial"] == SLOT1_SERIAL
         for key in INTERNAL_LEAK_KEYS:
             assert key not in body
         stolen = _http("GET", url, token=token_b)

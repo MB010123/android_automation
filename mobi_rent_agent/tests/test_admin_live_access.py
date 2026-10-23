@@ -272,9 +272,9 @@ def test_admin_can_open_available_cleanup_and_rented_phones_without_rental_side_
     available = admin_svc.create_session(_admin(), 2)
     assert available.http_status == 201
     assert available.body["slot_id"] == 2
+    assert available.body["serial"] == SLOT2_SERIAL
     assert available.body["rental_unchanged"] is True
     assert "platform_login" not in available.body
-    assert SLOT2_SERIAL not in json.dumps(available.body)
 
     cleanup.mark_required(2, rental, detail="awaiting_operator")
     cleanup_view = admin_svc.create_session(_admin(), 2)
@@ -505,7 +505,8 @@ def test_admin_opens_bay_outside_customer_workspace_and_slot_filter(tmp_path: Pa
     status_calls = [c for c in platform.calls if c[0] == "status"]
     assert status_calls[-1][1]["require_workspace"] is False
     assert status_calls[-1][1]["workspace_id"] == "ws-bay-20"
-    assert serial20 not in json.dumps(created.body)
+    assert created.body["serial"] == serial20
+    assert created.body["slot_id"] == 20
 
 
 def test_admin_live_access_returns_farm_wm_size_not_stream_frame(tmp_path: Path):
@@ -892,7 +893,7 @@ def test_http_admin_live_access_by_uuid_and_serial(tmp_path: Path):
         )
         assert status == 201, live
         assert live["slot_id"] == 21
-        assert SLOT21_SERIAL not in json.dumps(live)
+        assert live["serial"] == SLOT21_SERIAL
 
         # Same bay by serial reuses the session; by bay number too.
         status, by_serial, _ = _http(

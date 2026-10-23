@@ -42,8 +42,11 @@ from application.auth_service import AuthContext, AuthService
 from application.admin_live_access_service import AdminLiveAccessService
 from application.whmcs_billing_service import LovableCreditWallet, WhmcsBillingService
 from application.whmcs_webhook import IDENTIFIER_HEADER, SIGNATURE_HEADER
+from application.admin_identity import is_admin_user
+from application.slot_identity import overlay_farm_slot_identity
 from application.vps_lovable_routes import (
     ADMIN_LIVE_ACCESS_KINDS,
+    FARM_OR_ADMIN_KINDS,
     FARM_SERVICE_ONLY,
     PUBLIC_AUTH_POST,
     REMOTE_ACCESS_KINDS,
@@ -178,6 +181,7 @@ class Handler(BaseHTTPRequestHandler):
     farm_service_token: str | None = None
     slot_sms_service: VpsSlotSmsService | None = None
     farm_management_service: VpsFarmManagementService | None = None
+    slot_serial_map: dict[int, str] = {}
     auth_service: AuthService | None = None
     auth_rate_limiter: AuthRateLimiter | None = None
     allowed_origins: frozenset[str] = frozenset()
@@ -191,6 +195,7 @@ class Handler(BaseHTTPRequestHandler):
     admin_live_access_service: AdminLiveAccessService | None = None
     admin_live_access_rate_limiter: VpsRateLimiter | None = None
     whmcs_billing_service: WhmcsBillingService | None = None
+    whmcs_sso_service: Any = None
 
     def log_message(self, fmt: str, *args) -> None:
         rendered = fmt % args if args else str(fmt)
@@ -325,6 +330,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"error": "unauthorized"})
                 return None
             return ctx
+        if kind in FARM_OR_ADMIN_KINDS:
+            if ctx is None:
+                self._send_json(401, {"error": "unauthorized"})
+                return None
+            if ctx.kind == "farm_service":
+                return ctx
+            if ctx.kind == "user" and is_admin_user(ctx.user):
+                return ctx
+            self._send_json(403, error_body("admin_forbidden"))
+            return None
         if kind == "rental_cancel":
             if ctx is None or ctx.kind != "user":
                 self._send_json(401, {"error": "unauthorized"})
@@ -399,6 +414,32 @@ class Handler(BaseHTTPRequestHandler):
             raw,
             identifier=self.headers.get(IDENTIFIER_HEADER),
             signature=self.headers.get(SIGNATURE_HEADER),
+        )
+        self._send_json(result.http_status, result.body)
+
+    def _handle_whmcs_sso(self, payload: dict[str, Any] | None) -> None:
+        service = self.whmcs_sso_service
+        if service is None:
+            self._send_json(503, error_body("auth_not_configured"))
+            return
+        query = parse_qs(urlparse(self.path).query)
+        body = payload if isinstance(payload, dict) else {}
+        payload_b64 = (
+            body.get("payload")
+            or (query.get("payload") or [None])[0]
+        )
+        signature = (
+            body.get("sig")
+            or body.get("signature")
+            or (query.get("sig") or [None])[0]
+            or (query.get("signature") or [None])[0]
+        )
+        ip = self.client_address[0] if self.client_address else None
+        result = service.redeem(
+            payload_b64=str(payload_b64) if payload_b64 is not None else None,
+            signature=str(signature) if signature is not None else None,
+            ip=ip,
+            user_agent=self.headers.get("User-Agent"),
         )
         self._send_json(result.http_status, result.body)
 
@@ -637,12 +678,46 @@ class Handler(BaseHTTPRequestHandler):
                 continue
         return None
 
+    def _integer_slot_list(self, body: dict[str, Any]) -> dict[str, Any]:
+        """GET /farm/slots uses integer bay as slot_id; UUID stays as public_slot_id."""
+        out = dict(body)
+        slots = []
+        for item in body.get("slots") or []:
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            try:
+                bay = int(row.get("bay") or row.get("slot_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not 1 <= bay <= MAX_FARM_SLOT_ID:
+                continue
+            public_id = row.get("slot_id")
+            row["public_slot_id"] = public_id
+            row["slot_id"] = bay
+            if "serial" not in row:
+                row["serial"] = (self.slot_serial_map or {}).get(bay)
+            slots.append(row)
+        out["slots"] = slots
+        out["count"] = len(slots)
+        return out
+
     def _handle_service_get(self, route) -> bool:
         query = parse_qs(urlparse(self.path).query)
         if route.kind == "farm_available":
             assert self.farm_management_service is not None
             result = self.farm_management_service.list_available_slots()
             self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "farm_slots":
+            assert self.farm_management_service is not None
+            ctx = self._auth_context()
+            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
+                result = self.farm_management_service.list_slots_for_user(ctx.user.user_id)
+            else:
+                result = self.farm_management_service.list_all_slots()
+            body = result.body if result.http_status != 200 else self._integer_slot_list(result.body)
+            self._send_json(result.http_status, body)
             return True
         if route.kind == "job" and route.job_id:
             assert self.farm_management_service is not None
@@ -785,7 +860,14 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if route.kind == "cleanup_verified" and route.farm_bay is not None:
             assert self.farm_management_service is not None
-            result = self.farm_management_service.verify_cleanup(route.farm_bay)
+            result = self.farm_management_service.verify_cleanup(route.farm_bay, payload)
+            self._send_json(result.http_status, result.body)
+            return True
+        if route.kind == "farm_auto_cleanup" and route.farm_bay is not None:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.run_device_data_cleanup(
+                route.farm_bay, payload, require_farm=True
+            )
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "rental_cancel" and route.rental_id:
@@ -896,6 +978,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         route = parse_route(path)
         if route is not None:
+            if route.kind == "whmcs_sso":
+                self._handle_whmcs_sso(payload=None)
+                return
             if route.kind in PUBLIC_AUTH_POST or route.kind in {"auth_logout", "auth_resend"}:
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return
@@ -956,6 +1041,7 @@ class Handler(BaseHTTPRequestHandler):
             except requests.RequestException as exc:
                 self._send_json(502, {"ok": False, "error": "farm_unreachable", "detail": str(exc)})
                 return
+            farm = overlay_farm_slot_identity(farm, self.slot_serial_map)
             self._send_json(200, {"ok": True, "role": "vps", "farm": farm})
             return
         if path == self.webhook_path:
@@ -975,6 +1061,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if route.kind == "whmcs_webhook":
                 self._handle_whmcs_webhook()
+                return
+            if route.kind == "whmcs_sso":
+                payload = self._read_json_body()
+                if payload is None:
+                    self._send_json(400, {"error": "invalid_json"})
+                    return
+                self._handle_whmcs_sso(payload=payload)
                 return
             ctx: AuthContext | None = None
             if route.kind not in PUBLIC_AUTH_POST:
@@ -1185,12 +1278,14 @@ def main() -> int:
     # treat only VoidFix keys as known, so cleanup/assign for bay 21 returned
     # slot_not_found ("Farm bay or public slot ID is not configured").
     slot_map_slots: set[int] = set()
+    slot_serial_map: dict[int, str] = {}
     slot_map_path = Path(config.slot_map_path) if getattr(config, "slot_map_path", None) else ROOT / "slot_map.json"
     if slot_map_path.exists():
         from infrastructure.adb_slot_status import SlotMapError, load_slot_map
 
         try:
-            slot_map_slots = set(load_slot_map(slot_map_path))
+            slot_serial_map = dict(load_slot_map(slot_map_path))
+            slot_map_slots = set(slot_serial_map)
         except SlotMapError as exc:
             logger.warning("known_slots: farm slot map unavailable (%s)", exc)
     known_slots = configured_static_slots(
@@ -1279,6 +1374,7 @@ def main() -> int:
         esim_url_prefixes=auth_prefixes,
         cleanup_store=cleanup_store,
         farm_task_client=farm_task_client,
+        slot_serial_map=slot_serial_map,
     )
 
     sms_rate_limiter = VpsRateLimiter(
@@ -1341,6 +1437,7 @@ def main() -> int:
     Handler.farm_service_token = os.getenv("FARM_SERVICE_TOKEN") or None
     Handler.slot_sms_service = slot_sms_service
     Handler.farm_management_service = farm_management_service
+    Handler.slot_serial_map = slot_serial_map
     Handler.auth_service = auth_service
     Handler.tenant_store = tenant_store
     Handler.remote_access_service = remote_access_service
@@ -1377,6 +1474,12 @@ def main() -> int:
         wallet=billing_wallet,
         store_url=config.whmcs_store_url,
         cart_url=config.whmcs_store_cart_url,
+    )
+    from application.whmcs_sso import WhmcsSsoService
+
+    Handler.whmcs_sso_service = WhmcsSsoService(
+        secret=getattr(config, "mobi_rent_sso_secret", None),
+        tenant_store=tenant_store,
     )
     # Phone activate/terminate mutate live Supabase user_credits via Lovable only.
     if lovable_billing_client is not None:

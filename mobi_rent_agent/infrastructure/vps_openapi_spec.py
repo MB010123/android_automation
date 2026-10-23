@@ -133,9 +133,56 @@ def _schemas() -> dict[str, Any]:
             "properties": {
                 "ok": {"type": "boolean"},
                 "role": {"type": "string"},
-                "farm": {"type": "object", "additionalProperties": True},
+                "farm": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "slots": {
+                            "type": "array",
+                            "items": {"$ref": "#/components/schemas/FarmSlotIdentity"},
+                        }
+                    },
+                },
                 "error": {"type": "string"},
                 "detail": {"type": "string"},
+            },
+        },
+        "FarmSlotIdentity": {
+            "type": "object",
+            "required": ["slot_id", "serial"],
+            "properties": {
+                "slot_id": {"type": "integer", "minimum": 1, "maximum": 32, "example": 21},
+                "serial": {"type": "string", "example": "RFCNB056WEV"},
+                "adb_state": {"type": "string", "example": "device"},
+            },
+        },
+        "DeviceDataCleanupResponse": {
+            "type": "object",
+            "required": ["ok", "slot_id", "serial", "status", "esim_preserved", "rebooted"],
+            "properties": {
+                "ok": {"type": "boolean"},
+                "slot_id": {"type": "integer", "minimum": 1, "maximum": 32, "example": 21},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
+                "status": {"type": "string", "example": "cleanup_completed"},
+                "esim_preserved": {"type": "boolean", "enum": [True]},
+                "rebooted": {"type": "boolean", "enum": [False]},
+                "cleared": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "example": ["files", "call_log", "contacts", "sms_mms", "browsers"],
+                },
+                "lockdown_applied": {"type": "boolean"},
+                "cleanup": {"type": "string", "enum": ["cleared", "not_required"]},
+                "available": {"type": "boolean"},
+                "bay": {"type": "integer"},
+                "public_slot_id": {"type": "string", "format": "uuid"},
+            },
+        },
+        "DeviceDataCleanupRequest": {
+            "type": "object",
+            "properties": {
+                "serial": {"type": "string", "example": "RFCNB056WEV"},
+                "lockdown": {"type": "boolean", "default": True},
             },
         },
         "SlotAvailabilityList": {
@@ -152,9 +199,10 @@ def _schemas() -> dict[str, Any]:
         "SlotAvailability": {
             "type": "object",
             "properties": {
-                "bay": {"type": "integer", "minimum": 1, "maximum": 20},
+                "bay": {"type": "integer", "minimum": 1, "maximum": 32},
                 "box": {"type": "string", "example": "POD_01"},
                 "slot_id": {"type": "string", "format": "uuid"},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
             },
             "required": ["bay", "box", "slot_id"],
         },
@@ -184,6 +232,7 @@ def _schemas() -> dict[str, Any]:
                 "job_id": {"type": "string", "format": "uuid", "example": EXAMPLE_JOB_ID},
                 "bay": {"type": "integer", "example": 4},
                 "slot_id": {"type": "string", "format": "uuid", "example": EXAMPLE_SLOT_ID},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
                 "status": {"type": "string", "example": "pending"},
                 "action": {"type": "string", "description": "Present for device actions only."},
             },
@@ -307,6 +356,7 @@ def _schemas() -> dict[str, Any]:
                 "ok": {"type": "boolean"},
                 "slot_id": {"type": "string", "format": "uuid"},
                 "bay": {"type": "integer"},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
                 "box": {"type": "string"},
                 "status": {
                     "type": "string",
@@ -545,7 +595,8 @@ def _schemas() -> dict[str, Any]:
                 "`public.slots.phone_number`. Empty inventory is `null` / `unknown` "
                 "(never a placeholder). `cellular_status` is always `unknown` (no approved "
                 "live radio reader; not inferred from Wi-Fi/ADB). IMEI1 is not returned. "
-                "No GADS URLs, tokens, serials, or workspace IDs."
+                "Includes integer `slot_id` and ADB `serial` from slot_map. "
+                "No GADS URLs, tokens, or workspace IDs."
             ),
             "properties": {
                 "ok": {"type": "boolean"},
@@ -559,6 +610,7 @@ def _schemas() -> dict[str, Any]:
                 "busy": {"type": "boolean"},
                 "available": {"type": "boolean"},
                 "slot_id": {"type": "integer"},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
                 "coordinate_space": {"type": "string", "enum": ["native_device_pixels"]},
                 "native_resolution": {
                     "type": "object",
@@ -640,6 +692,7 @@ def _schemas() -> dict[str, Any]:
                 "ok": {"type": "boolean", "enum": [True]},
                 "session_id": {"type": "string", "format": "uuid"},
                 "slot_id": {"type": "integer", "minimum": 1, "maximum": 32},
+                "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
                 "status": {"type": "string", "enum": ["active", "closed", "expired"]},
                 "active": {"type": "boolean"},
                 "expires_at": {"type": "number"},
@@ -822,7 +875,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "name": "bay",
         "in": "path",
         "required": True,
-        "schema": {"type": "integer", "minimum": 1, "maximum": 20},
+        "schema": {"type": "integer", "minimum": 1, "maximum": 32},
         "example": 4,
     }
     action_param = {
@@ -1358,6 +1411,66 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/api/public/auth/whmcs-sso": {
+            "get": {
+                "tags": ["Auth"],
+                "summary": "Redeem a WHMCS dashboard SSO token (query payload+sig)",
+                "description": (
+                    "HMAC-SHA256 is over the raw Base64URL `payload` string, not decoded JSON. "
+                    "The same nonce + IP/User-Agent may replay for 10 seconds (React StrictMode). "
+                    "Secret is `MOBI_RENT_SSO_SECRET` on the VPS only."
+                ),
+                "security": [],
+                "parameters": [
+                    {
+                        "name": "payload",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "sig",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Verified (replayed=true on same nonce+fingerprint)"},
+                    "401": {"description": "unauthorized"},
+                    "503": {"description": "auth_not_configured"},
+                },
+            },
+            "post": {
+                "tags": ["Auth"],
+                "summary": "Redeem a WHMCS dashboard SSO token",
+                "description": (
+                    "HMAC-SHA256 is over the raw Base64URL `payload` string, not decoded JSON. "
+                    "The same nonce + IP/User-Agent may replay for 10 seconds (React StrictMode)."
+                ),
+                "security": [],
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["payload", "sig"],
+                                "properties": {
+                                    "payload": {"type": "string"},
+                                    "sig": {"type": "string"},
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {"description": "Verified"},
+                    "401": {"description": "unauthorized"},
+                    "503": {"description": "auth_not_configured"},
+                },
+            },
+        },
         "/billing/config": {
             "get": {
                 "tags": ["Billing"],
@@ -1440,6 +1553,35 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                             }
                         },
                     },
+                },
+            }
+        },
+        "/farm/slots": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "List farm bays with integer slot_id and ADB serial",
+                "security": bearer,
+                "responses": {
+                    "200": {
+                        "description": "Inventory with slot_id (bay 1–32) and serial",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {"type": "boolean"},
+                                        "count": {"type": "integer"},
+                                        "slots": {
+                                            "type": "array",
+                                            "items": {"$ref": "#/components/schemas/SlotStatusResponse"},
+                                        },
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "503": {"$ref": "#/components/responses/FarmUnreachable"},
                 },
             }
         },
@@ -1529,19 +1671,71 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
-        "/farm/slots/{bay}/cleanup-verified": {
+        "/farm/slots/{bay}/auto-cleanup": {
             "post": {
                 "tags": ["Farm management"],
-                "summary": "Admin: CLEANUP REQUIRED → available",
+                "summary": "Wipe renter data over ADB without reboot or eSIM changes",
                 "description": (
-                    "Farm-service only. After Niaozun/GADS/ADB physical verification, clear the durable "
-                    "CLEANUP REQUIRED hold so the bay can be assigned again. Rejected while the bay is "
-                    "still reserved or assigned. Never performed by a customer session."
+                    "Farm-service token or admin JWT. Resolves the ADB serial from `slot_map.json`. "
+                    "Optional body `serial` is verified against that map. Optional `lockdown` "
+                    "(default true) disables Play Store, Galaxy Store, browsers, and file managers. "
+                    "Never reboots and never deletes eSIM profiles. Gallery and Settings stay enabled."
                 ),
                 "security": bearer,
                 "parameters": [bay_param],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/DeviceDataCleanupRequest"},
+                        }
+                    },
+                },
                 "responses": {
-                    "200": {"description": "cleanup cleared or already not required"},
+                    "200": {
+                        "description": "Cleanup completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceDataCleanupResponse"},
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "serial_mismatch | device_offline"},
+                },
+            }
+        },
+        "/farm/slots/{bay}/cleanup-verified": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Admin: ADB wipe then CLEANUP REQUIRED → available",
+                "description": (
+                    "Farm-service only. Runs `device_data_cleanup` on the Farm Agent, then clears the "
+                    "durable CLEANUP REQUIRED hold so the bay can be assigned again. Rejected while the "
+                    "bay is still reserved or assigned. If ADB wipe fails, the hold stays. Never "
+                    "performed by a customer session."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/DeviceDataCleanupRequest"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "cleanup cleared or already not required",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceDataCleanupResponse"},
+                            }
+                        },
+                    },
                     "401": {"$ref": "#/components/responses/Unauthorized"},
                     "404": {"description": "slot_not_found"},
                     "409": {"description": "slot_unavailable"},

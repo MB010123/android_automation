@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 from application.farm_agent_tasks import execute_farm_task, parse_farm_task_body
 from application.farm_sms_command import execute_farm_sms_send, parse_farm_sms_send_body
+from application.slot_identity import farm_slot_entries
 from infrastructure.config import AgentConfig
 from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
 from infrastructure.farm_job_result_cache import FarmJobResultCache, should_reuse_assign_result
@@ -62,14 +63,16 @@ def _adb_device_states(adb_path: str) -> dict[str, str]:
 def build_farm_status(*, adb_path: str, slot_map: dict[int, str]) -> dict[str, Any]:
     states = _adb_device_states(adb_path)
     if "__error__" in states:
+        mapped = sorted(int(slot_id) for slot_id in slot_map)
         return {
             "ok": False,
             "role": "farm",
             "error": "adb_unavailable",
             "detail": states["__error__"],
             "slot_count": len(slot_map),
-            "mapped_slots": sorted(int(slot_id) for slot_id in slot_map),
-            "offline_slots": sorted(int(slot_id) for slot_id in slot_map),
+            "mapped_slots": mapped,
+            "offline_slots": mapped,
+            "slots": farm_slot_entries(slot_map, offline_slots=set(mapped)),
         }
     online = 0
     offline_slots: list[int] = []
@@ -87,6 +90,7 @@ def build_farm_status(*, adb_path: str, slot_map: dict[int, str]) -> dict[str, A
         "adb_online": online,
         "mapped_slots": mapped_slots,
         "offline_slots": offline_slots,
+        "slots": farm_slot_entries(slot_map, adb_states=states),
     }
 
 

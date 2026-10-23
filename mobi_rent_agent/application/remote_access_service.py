@@ -719,6 +719,8 @@ class RemoteAccessService:
         ended = self._end_session(auth.rental_id, auth.slot_id, status=STATUS_REVOKED)
         body = {
             "ok": True,
+            "slot_id": int(auth.slot_id),
+            "serial": self._devices.get(int(auth.slot_id)),
             "setup_complete": setup_complete,
             "ui_state": ui_state,
             "remote_session": "closed",
@@ -806,7 +808,13 @@ class RemoteAccessService:
         if not response.ok:
             return ApiResult(502, {**error_body("action_not_supported"), "detail": response.error, "job_id": job_id})
         self._record(slot, "remote_access_reboot", f"job_id={job_id}")
-        body: dict[str, Any] = {"ok": True, "slot_id": slot, "job_id": job_id, "rebooted": True}
+        body: dict[str, Any] = {
+            "ok": True,
+            "slot_id": slot,
+            "serial": self._devices.get(slot),
+            "job_id": job_id,
+            "rebooted": True,
+        }
         if wait:
             body["adb_online"] = self._wait_adb_online(slot)
             body["platform_online"] = self._wait_platform_online(slot) if body["adb_online"] else False
@@ -862,6 +870,7 @@ class RemoteAccessService:
             "busy": busy,
             "available": state == "online" and not busy,
             "slot_id": auth.slot_id,
+            "serial": self._devices.get(int(auth.slot_id)),
             "coordinate_space": "native_device_pixels",
         }
         native, unavailable = self._native_resolution_for_slot(auth.slot_id)
@@ -1042,6 +1051,8 @@ class RemoteAccessService:
                 "adb_online": adb_online,
                 "session_active": phone_body.get("session_active"),
                 "remote_access_busy": phone_body.get("remote_access_busy"),
+                "slot_id": phone_body.get("slot_id") or auth.slot_id,
+                "serial": phone_body.get("serial") or self._devices.get(int(auth.slot_id)),
             }
         else:
             phone_state = {
@@ -1056,6 +1067,7 @@ class RemoteAccessService:
             "ok": True,
             "rental_id": auth.rental_id,
             "slot_id": auth.slot_id,
+            "serial": self._devices.get(int(auth.slot_id)),
             "mode": "diagnostics",
             "phone": phone_state,
             "activation_state": public.get("activation_state"),
@@ -1565,10 +1577,13 @@ class RemoteAccessService:
         )
 
     def _session_public(self, session: RemoteAccessSession, now: float | None = None) -> dict:
-        return session.to_public_dict(
+        body = session.to_public_dict(
             self._clock() if now is None else now,
             session_restrictions=self._session_restrictions,
         )
+        body["slot_id"] = int(session.slot_id)
+        body["serial"] = self._devices.get(int(session.slot_id))
+        return body
 
     def _forward_restricted_control(
         self,

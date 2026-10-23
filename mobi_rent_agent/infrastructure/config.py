@@ -113,6 +113,8 @@ class AgentConfig:
     whmcs_webhook_secret: str | None = None
     whmcs_store_url: str | None = None
     whmcs_store_cart_url: str | None = None
+    # HMAC secret for WHMCS → dashboard SSO. Never commit the live value.
+    mobi_rent_sso_secret: str | None = None
 
     @property
     def sms_enabled(self) -> bool:
@@ -289,6 +291,7 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
             whmcs_webhook_secret=(os.getenv("WHMCS_WEBHOOK_SECRET") or "").strip() or None,
             whmcs_store_url=(os.getenv("WHMCS_STORE_URL") or "").strip() or None,
             whmcs_store_cart_url=(os.getenv("WHMCS_STORE_CART_URL") or "").strip() or None,
+            mobi_rent_sso_secret=(os.getenv("MOBI_RENT_SSO_SECRET") or "").strip() or None,
         )
     except ValueError as exc:
         raise ConfigError(f"Invalid numeric or boolean configuration: {exc}") from exc

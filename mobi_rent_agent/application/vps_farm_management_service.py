@@ -12,6 +12,7 @@ from typing import Any, Callable
 import requests
 
 from application.vps_api_contract import (
+    ERROR_MESSAGES,
     action_acceptance_body,
     assign_acceptance_body,
     error_body,
@@ -19,6 +20,7 @@ from application.vps_api_contract import (
     job_response_body,
     provisioning_phase,
 )
+from application.slot_identity import serial_for_slot
 from application.vps_farm_inventory import (
     farm_agent_unavailable,
     mapped_farm_slots,
@@ -90,6 +92,7 @@ class VpsFarmManagementService:
         cleanup_store: DeviceCleanupStore | None = None,
         farm_task_client: Any = None,
         credit_billing: Any = None,
+        slot_serial_map: dict[int, str] | None = None,
     ) -> None:
         self._jobs = job_store
         self._assignments = assignment_store
@@ -118,6 +121,11 @@ class VpsFarmManagementService:
         self._cleanup = cleanup_store
         self._farm_tasks = farm_task_client
         self._credit_billing = credit_billing
+        self._slot_serial_map = {
+            int(k): str(v).strip()
+            for k, v in (slot_serial_map or {}).items()
+            if str(v).strip()
+        }
 
     def set_remote_access(self, remote_access: Any) -> None:
         self._remote_access = remote_access
@@ -282,6 +290,7 @@ class VpsFarmManagementService:
             tenant_owner=body.get("user_id"),
         )
         body.update(hold)
+        body["serial"] = self._serial_for(farm_slot)
         if hold["hold_reason"] != "none" or hold["connection_reason"] != "none":
             logger.info(
                 "slot_status bay=%s hold=%s occupancy=%s cleanup=%s connection=%s/%s",
@@ -354,6 +363,8 @@ class VpsFarmManagementService:
                 "rented": s.get("rented"),
                 "connection_status": s.get("connection_status"),
                 "connection_reason": s.get("connection_reason"),
+                "serial": s.get("serial"),
+                "bay": s.get("bay"),
             },
         )
 
@@ -426,7 +437,14 @@ class VpsFarmManagementService:
                 continue
             if self._cleanup.is_required(bay):
                 continue
-            available.append({"bay": bay, "box": self._default_box, "slot_id": public_id_for_farm_slot(bay)})
+            available.append(
+                {
+                    "bay": bay,
+                    "box": self._default_box,
+                    "slot_id": public_id_for_farm_slot(bay),
+                    "serial": self._serial_for(bay),
+                }
+            )
         return ApiResult(200, {"ok": True, "available": available})
 
     def reserve_slot(self, bay: int, payload: dict[str, Any]) -> ApiResult:
@@ -456,6 +474,7 @@ class VpsFarmManagementService:
                     "reserved": True,
                     "bay": bay,
                     "slot_id": public_id_for_farm_slot(bay),
+                    "serial": self._serial_for(bay),
                     "rental_id": rental_id,
                 },
             )
@@ -492,6 +511,7 @@ class VpsFarmManagementService:
                 "reserved": True,
                 "bay": bay,
                 "slot_id": public_id_for_farm_slot(bay),
+                "serial": self._serial_for(bay),
                 "rental_id": rental_id,
             },
         )
@@ -587,37 +607,119 @@ class VpsFarmManagementService:
             return ApiResult(403, error_body("rental_not_owned"))
         return self.end_rental(rental, explicit=True)
 
-    def verify_cleanup(self, bay: int) -> ApiResult:
-        """Admin-only: CLEANUP REQUIRED → AVAILABLE after physical verification."""
+    def verify_cleanup(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
+        """Admin-only: ADB wipe then CLEANUP REQUIRED → AVAILABLE."""
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         if self._reservations.is_reserved(bay) or self._assignments.is_assigned(bay):
             return ApiResult(409, error_body("slot_unavailable"))
         if self._slot_has_active_job(bay):
             return ApiResult(409, error_body("slot_unavailable"))
-        if not self._cleanup.is_required(bay):
-            return ApiResult(
-                200,
-                {
-                    "ok": True,
-                    "bay": bay,
-                    "slot_id": public_id_for_farm_slot(bay),
-                    "cleanup": "not_required",
-                    "available": True,
-                },
+        hold_required = self._cleanup.is_required(bay)
+        wipe = self.run_device_data_cleanup(bay, payload or {}, require_farm=False)
+        if wipe.http_status >= 400:
+            return wipe
+        if hold_required:
+            self._cleanup.clear(bay)
+            self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
+        body = dict(wipe.body)
+        body["cleanup"] = "cleared" if hold_required else "not_required"
+        body["available"] = True
+        body["bay"] = bay
+        body["public_slot_id"] = public_id_for_farm_slot(bay)
+        return ApiResult(200, body)
+
+    def run_device_data_cleanup(
+        self,
+        bay: int,
+        payload: dict[str, Any] | None = None,
+        *,
+        require_farm: bool = True,
+    ) -> ApiResult:
+        """Wipe renter data over Farm ADB. Never reboots or touches eSIM profiles."""
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        body = payload if isinstance(payload, dict) else {}
+        mapped = self._serial_for(bay)
+        claimed = str(body.get("serial") or "").strip()
+        if claimed and mapped and claimed != mapped:
+            return ApiResult(409, error_body("serial_mismatch"))
+        if claimed and not mapped:
+            mapped = claimed
+        lockdown = body.get("lockdown", True)
+        if isinstance(lockdown, str):
+            lockdown = lockdown.strip().lower() not in {"0", "false", "no"}
+        else:
+            lockdown = bool(lockdown) if lockdown is not None else True
+        farm_payload = {"lockdown": lockdown}
+        client = self._farm_tasks
+        if client is None:
+            if require_farm:
+                return ApiResult(503, error_body("farm_unreachable"))
+            return ApiResult(200, self._cleanup_completed_body(bay, mapped, lockdown, cleared=[]))
+        try:
+            response = client.run_task(
+                task_type="device_data_cleanup",
+                farm_slot_id=int(bay),
+                payload=farm_payload,
+                job_id=str(uuid.uuid4()),
             )
-        self._cleanup.clear(bay)
-        self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
+        except Exception:
+            logger.warning("device_data_cleanup_farm_failed bay=%s", bay)
+            return ApiResult(503, error_body("farm_unreachable"))
+        if not getattr(response, "ok", False):
+            error = str(getattr(response, "error", None) or "cleanup_adb_failed")
+            status = int(getattr(response, "http_status", 0) or 502)
+            if status < 400:
+                status = 502
+            fail = error_body(error if error in ERROR_MESSAGES else "cleanup_adb_failed")
+            fail["slot_id"] = int(bay)
+            fail["serial"] = mapped
+            fail["status"] = "cleanup_failed"
+            fail["esim_preserved"] = True
+            fail["rebooted"] = False
+            return ApiResult(status, fail)
+        details = {}
+        raw_body = getattr(response, "body", None)
+        if isinstance(raw_body, dict):
+            inner = raw_body.get("details")
+            details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
+        serial = str(details.get("serial") or mapped or "").strip() or mapped
+        cleared = details.get("cleared")
+        if not isinstance(cleared, list):
+            cleared = []
+        lockdown_applied = bool(details.get("lockdown_applied", lockdown))
         return ApiResult(
             200,
-            {
-                "ok": True,
-                "bay": bay,
-                "slot_id": public_id_for_farm_slot(bay),
-                "cleanup": "cleared",
-                "available": True,
-            },
+            self._cleanup_completed_body(
+                bay,
+                serial,
+                lockdown_applied,
+                cleared=[str(item) for item in cleared],
+            ),
         )
+
+    def _cleanup_completed_body(
+        self,
+        bay: int,
+        serial: str | None,
+        lockdown_applied: bool,
+        *,
+        cleared: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "slot_id": int(bay),
+            "serial": serial,
+            "status": "cleanup_completed",
+            "esim_preserved": True,
+            "rebooted": False,
+            "cleared": cleared,
+            "lockdown_applied": lockdown_applied,
+        }
+
+    def _serial_for(self, bay: int) -> str | None:
+        return serial_for_slot(self._slot_serial_map, bay)
 
     def _safe_customer_cleanup(self, bay: int, rental_id: str) -> None:
         client = self._farm_tasks
@@ -675,7 +777,12 @@ class VpsFarmManagementService:
             self._initialize_assigned_rental(bay, rental_id)
             return ApiResult(
                 202,
-                assign_acceptance_body(job_id=existing_job.job_id, bay=bay, status=existing_job.status),
+                assign_acceptance_body(
+                    job_id=existing_job.job_id,
+                    bay=bay,
+                    status=existing_job.status,
+                    serial=self._serial_for(bay),
+                ),
             )
 
         if self._slot_reserved_by_other(bay, rental_id):
@@ -741,7 +848,10 @@ class VpsFarmManagementService:
         self._initialize_assigned_rental(bay, rental_id, customer_id=owner)
         logger.info("assignment_created job_id=%s bay=%s", record.job_id, bay)
         self._worker.enqueue_process(record.job_id)
-        return ApiResult(202, assign_acceptance_body(job_id=record.job_id, bay=bay))
+        return ApiResult(
+            202,
+            assign_acceptance_body(job_id=record.job_id, bay=bay, serial=self._serial_for(bay)),
+        )
 
     def get_job(self, job_id: str) -> ApiResult:
         record = self._jobs.get(job_id)

@@ -36,7 +36,8 @@ def test_customer_opens_assigned_phone_only(tmp_path: Path):
     assert created.http_status == 201
     assert created.body["session_mode"] == "in_app"
     assert "platform_login" not in created.body
-    assert SLOT1_SERIAL not in json.dumps(created.body)
+    assert created.body["serial"] == SLOT1_SERIAL
+    assert created.body["slot_id"] == 1
     secret = store.get(rental_a).platform_secret
     assert secret and "password" not in json.dumps(created.body)
 
