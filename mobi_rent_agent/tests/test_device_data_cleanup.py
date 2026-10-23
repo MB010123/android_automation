@@ -108,24 +108,28 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     assert details["lockdown_applied"] is True
     assert details["cleared"] == ["files", "call_log", "contacts", "sms_mms", "browsers"]
     assert details["warnings"] == []
-    joined = [" ".join(args) for _serial, args in runner.calls]
-    assert any(item == "shell rm -rf /sdcard/Pictures" for item in joined)
-    assert any(item == "shell mkdir -p /sdcard/Pictures" for item in joined)
-    assert all("*" not in item for item in joined)
-    assert all("sh -c" not in item for item in joined)
-    assert any("MEDIA_SCANNER_SCAN_FILE" in item and "file:///sdcard/Pictures" in item for item in joined)
-    assert any("MEDIA_SCANNER_SCAN_FILE" in item and "file:///sdcard/DCIM" in item for item in joined)
-    assert any("content://call_log/calls" in item for item in joined)
-    assert any("pm clear com.android.providers.contacts" in item for item in joined)
-    assert any("content://sms" in item for item in joined)
-    assert any("KEYCODE_HOME" in item for item in joined)
-    assert all("reboot" not in item for item in joined)
-    assert all("euicc" not in item.lower() for item in joined)
-    assert all("lpa" not in item.lower() for item in joined)
+    assert [args[0] for _serial, args in runner.calls] == ["get-state", "shell"]
+    script = runner.calls[1][1][1]
+    assert "rm -rf /sdcard/Pictures; true" in script
+    assert "mkdir -p /sdcard/Pictures; true" in script
+    assert "*" not in script
+    assert "sh -c" not in script
+    assert "MEDIA_SCANNER_SCAN_FILE" in script and "file:///sdcard/Pictures" in script
+    assert "file:///sdcard/DCIM" in script
+    assert "content://call_log/calls" in script
+    assert "pm clear com.android.providers.contacts" in script
+    assert "content://sms" in script
+    assert "KEYCODE_WAKEUP" in script
+    assert "dismiss-keyguard" in script
+    assert "stay_on_while_plugged_in 7" in script
+    assert "KEYCODE_HOME" in script
+    assert "reboot" not in script
+    assert "euicc" not in script.lower()
+    assert "lpa" not in script.lower()
     for package in LOCKDOWN_PACKAGES:
-        assert any(f"pm disable-user --user 0 {package}" in item for item in joined)
+        assert f"pm disable-user --user 0 {package}" in script
     for package in PRESERVED_PACKAGES:
-        assert all(package not in item or "disable-user" not in item for item in joined)
+        assert f"disable-user --user 0 {package}" not in script
 
 
 def test_cleanup_lockdown_false_skips_disable():
@@ -181,7 +185,7 @@ def test_cleanup_file_wipe_failure_is_warning():
     assert result.details["status"] == "cleanup_completed"
     assert result.details["rebooted"] is False
     assert result.details["esim_preserved"] is True
-    assert any("rm /sdcard/" in item for item in result.details["warnings"])
+    assert any("cleanup_script" in item for item in result.details["warnings"])
 
 
 def test_cleanup_offline_device_still_fails():
@@ -318,21 +322,18 @@ def test_cleanup_verified_releases_hold_when_adb_emits_warnings(tmp_path: Path):
     assert svc._cleanup.is_required(21) is False
 
 
-def test_cleanup_verified_offline_keeps_hold_unless_forced(tmp_path: Path):
+def test_cleanup_verified_releases_hold_on_farm_error(tmp_path: Path):
     svc, _farm = _farm_svc(
         tmp_path,
         farm=MockCleanupFarm(fail=True, error="device_offline", http_status=409),
     )
     rental = str(uuid.uuid4())
     svc._cleanup.mark_required(21, rental, detail="awaiting_operator")
-    blocked = svc.verify_cleanup(21)
-    assert blocked.http_status == 409
-    assert blocked.body["error"] == "device_offline"
-    assert svc._cleanup.is_required(21) is True
-    forced = svc.verify_cleanup(21, {"force": True})
-    assert forced.http_status == 200, forced.body
-    assert forced.body["forced"] is True
-    assert forced.body["status"] == "cleanup_completed"
+    verified = svc.verify_cleanup(21)
+    assert verified.http_status == 200, verified.body
+    assert verified.body["cleanup_warning"] == "device_offline"
+    assert verified.body["status"] == "cleanup_completed"
+    assert verified.body["available"] is True
     assert svc._cleanup.is_required(21) is False
 
 
@@ -377,6 +378,67 @@ def test_auto_cleanup_route_parses_slot_21():
     listed = parse_route("/farm/slots")
     assert listed is not None
     assert listed.kind == "farm_slots"
+
+
+def test_device_screen_prepare_resets_display_and_unlocks():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    runner = CleanupRunner()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={2: PIXEL_SERIAL, 21: S20_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep",
+            task_type="device_screen_prepare",
+            farm_slot_id=2,
+            payload={},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    assert result.details["status"] == "screen_prepared"
+    script = runner.calls[-1][1][1]
+    assert "wm size reset; true" in script
+    assert "wm density reset; true" in script
+    assert "stay_on_while_plugged_in 7; true" in script
+    assert "locksettings set-disabled true; true" in script
+    assert "KEYCODE_WAKEUP" in script
+    assert "dismiss-keyguard" in script
+    assert "input swipe 540 1800 540 400 300" in script
+
+
+def test_device_screen_prepare_wait_boot_then_unlock():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    class BootRunner(CleanupRunner):
+        def run(self, serial: str, arguments: list[str]):
+            self.calls.append((serial, arguments))
+            if arguments == ["get-state"]:
+                return AdbCommandResult(stdout="device", stderr="")
+            if arguments == ["wait-for-device"]:
+                return AdbCommandResult(stdout="", stderr="")
+            if arguments[:3] == ["shell", "getprop", "sys.boot_completed"]:
+                return AdbCommandResult(stdout="1", stderr="")
+            return AdbCommandResult(stdout="", stderr="")
+
+    runner = BootRunner()
+    slept: list[float] = []
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep21",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"wait_boot": True},
+        ),
+        command_runner=runner,
+        sleep_fn=slept.append,
+    )
+    assert result.ok is True
+    assert ("RFCNB056WEV", ["wait-for-device"]) in runner.calls
+    assert any(args[:3] == ["shell", "getprop", "sys.boot_completed"] for _s, args in runner.calls)
+    assert slept == []
 
 
 def test_mjpeg_sniffs_samsung_boundary_and_wraps_raw_jpeg():

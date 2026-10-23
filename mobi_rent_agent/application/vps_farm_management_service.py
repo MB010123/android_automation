@@ -616,9 +616,9 @@ class VpsFarmManagementService:
     def verify_cleanup(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
         """Admin-only: ADB wipe then CLEANUP REQUIRED → AVAILABLE.
 
-        Warnings from unrooted ADB steps do not block Enable. ``force=true``
-        releases the hold even when Farm/ADB is unreachable or the phone is
-        offline (operator-verified). Occupied bays still 409.
+        Enable always releases the hold when the bay is free. Farm errors,
+        timeouts, and unrooted ADB denials become ``cleanup_warning``.
+        Occupied bays still 409.
         """
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
@@ -630,18 +630,13 @@ class VpsFarmManagementService:
         force = _truthy(body.get("force"))
         hold_required = self._cleanup.is_required(bay)
         wipe = self.run_device_data_cleanup(bay, body, require_farm=False)
+        cleanup_warning = None
         if wipe.http_status >= 400:
-            error = str(wipe.body.get("error") or "")
+            error = str(wipe.body.get("error") or "cleanup_incomplete")
             if error == "slot_not_found":
                 return wipe
-            if error in {"device_offline", "farm_unreachable"} and not force:
-                return wipe
-            logger.warning(
-                "cleanup_verified_continuing bay=%s error=%s force=%s",
-                bay,
-                error,
-                force,
-            )
+            cleanup_warning = error
+            logger.warning("cleanup_verified_continuing bay=%s error=%s", bay, error)
         if hold_required:
             self._cleanup.clear(bay)
             self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
@@ -650,7 +645,7 @@ class VpsFarmManagementService:
             wipe.body.get("serial") if isinstance(wipe.body, dict) else None,
             bool(body.get("lockdown", True)),
             cleared=[],
-            warnings=[str(wipe.body.get("error") or "cleanup_incomplete")],
+            warnings=[cleanup_warning] if cleanup_warning else [],
         )
         out["ok"] = True
         out["status"] = "cleanup_completed"
@@ -659,6 +654,8 @@ class VpsFarmManagementService:
         out["bay"] = bay
         out["public_slot_id"] = public_id_for_farm_slot(bay)
         out["forced"] = force
+        if cleanup_warning:
+            out["cleanup_warning"] = cleanup_warning
         return ApiResult(200, out)
 
     def run_device_data_cleanup(

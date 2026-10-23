@@ -182,6 +182,10 @@ def _schemas() -> dict[str, Any]:
                 "bay": {"type": "integer"},
                 "public_slot_id": {"type": "string", "format": "uuid"},
                 "forced": {"type": "boolean"},
+                "cleanup_warning": {
+                    "type": "string",
+                    "description": "Farm/ADB error that did not block Enable.",
+                },
             },
         },
         "DeviceDataCleanupRequest": {

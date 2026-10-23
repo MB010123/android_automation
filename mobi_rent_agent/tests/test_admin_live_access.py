@@ -325,6 +325,18 @@ def test_non_admin_invalid_slot_and_cross_slot_control_rejected(tmp_path: Path):
     assert not any(c[0] == "home" for c in platform.calls)
 
 
+def test_live_access_prepares_screen_on_open(tmp_path: Path):
+    farm = FakeFarm()
+    svc, _platform, _clock, _store = _admin_service(tmp_path, farm=farm)
+    created = svc.create_session(_admin(), 1)
+    assert created.http_status == 201
+    assert any(t["type"] == "device_screen_prepare" for t in farm.tasks)
+    stream = svc.open_stream(_admin(), 1, created.body["session_id"])
+    assert getattr(stream, "status_code", None) == 200
+    prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert len(prepares) >= 2
+
+
 def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
     clock = FakeClock()
     svc, platform, clock, _ = _admin_service(tmp_path, clock=clock, ttl_minutes=5)

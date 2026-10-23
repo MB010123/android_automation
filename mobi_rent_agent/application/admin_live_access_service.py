@@ -14,6 +14,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 from application.admin_identity import is_admin_user
+from application.device_screen_prepare import request_device_screen_prepare
 from application.device_display_size import (
     DEVICE_DISPLAY_SIZE_TASK,
     attach_native_resolution,
@@ -174,6 +175,7 @@ class AdminLiveAccessService:
                     parsed,
                     admin.user_id[:8],
                 )
+                request_device_screen_prepare(self._farm, parsed, wait_boot=False)
                 return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
@@ -185,6 +187,7 @@ class AdminLiveAccessService:
         self._audit(parsed, "admin_live_access_opened", admin.user_id)
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
         _ = platform
+        request_device_screen_prepare(self._farm, parsed, wait_boot=False)
         return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
@@ -199,6 +202,7 @@ class AdminLiveAccessService:
         device_id, platform = ready
         if device_id != bound.device_id:
             return ApiResult(409, error_body("phone_unavailable"))
+        request_device_screen_prepare(self._farm, bound.slot_id, wait_boot=False)
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))

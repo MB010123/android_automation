@@ -18,6 +18,7 @@ SUPPORTED_TASK_TYPES = {
     "setup_session_safe_cleanup",
     "device_data_cleanup",
     "device_display_size",
+    "device_screen_prepare",
 }
 
 

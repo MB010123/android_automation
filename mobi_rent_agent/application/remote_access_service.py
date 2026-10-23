@@ -36,6 +36,7 @@ from application.esim_qr_upload import public_placement_success, qr_upload_error
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
 from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, SAMSUNG_USER_QR_SLOT, _image_extension
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
+from application.device_screen_prepare import request_device_screen_prepare
 from application.in_app_control_policy import (
     FORBIDDEN_PAYLOAD_KEYS,
     NAV_ACTIONS,
@@ -530,6 +531,7 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
+            request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -590,6 +592,7 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
+        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -673,6 +676,7 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
+        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
         try:
             return opener(
                 device_id=session.device_id,
@@ -817,6 +821,8 @@ class RemoteAccessService:
         }
         if wait:
             body["adb_online"] = self._wait_adb_online(slot)
+            if body["adb_online"]:
+                request_device_screen_prepare(self._farm, slot, wait_boot=True)
             body["platform_online"] = self._wait_platform_online(slot) if body["adb_online"] else False
             body["ok"] = bool(body["adb_online"] and body["platform_online"])
             if not body["ok"]:
@@ -1971,6 +1977,7 @@ class RemoteAccessService:
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="adb_reconnect_timeout")
             return
         logger.info("device_adb_ready slot=%s", auth.slot_id)
+        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=True)
         self._store.set_prepare_state(auth.rental_id, PREPARE_WAITING_PLATFORM)
         if not self._wait_platform_online(auth.slot_id):
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="platform_reconnect_timeout")

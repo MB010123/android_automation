@@ -5,15 +5,16 @@ Never factory-resets, never reboots, never calls EuiccManager or deletes
 profiles. Gallery (`com.sec.android.gallery3d`) and Settings stay enabled
 so Samsung QR eSIM automation keeps working.
 
-On stock unrooted Pixels/Samsungs, `content delete`, `pm clear`, and
-`pm disable-user` often return non-zero. Those are warnings. The task
-fails only when the bay is unknown or ADB `get-state` is not `device`.
+One ``adb -s <serial> shell`` script (``cmd; true`` per step) so Windows
+does not spawn 15 ADB processes or fail on unrooted denials. The task
+fails only when the bay is unknown or ADB ``get-state`` is not ``device``.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Callable
 
+from application.device_screen_prepare import WAKE_UNLOCK_COMMANDS, run_best_effort_shell
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -21,10 +22,8 @@ from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 logger = logging.getLogger("farm_agent.device_data_cleanup")
 
 DEVICE_DATA_CLEANUP_TASK = "device_data_cleanup"
-CLEANUP_ADB_TIMEOUT_SECONDS = 45.0
+CLEANUP_ADB_TIMEOUT_SECONDS = 20.0
 
-# Wipe whole folders (no globs). `adb shell` joins argv with spaces and
-# drops quotes, so `sh -c 'rm -rf …/*'` becomes `sh -c rm` → "Needs 1 argument".
 FILE_DIRS = (
     "/sdcard/Download",
     "/sdcard/Pictures",
@@ -47,7 +46,6 @@ LOCKDOWN_PACKAGES = (
     "com.google.android.documentsui",
     "com.sec.android.app.myfiles",
 )
-# Must stay enabled: Samsung Gallery (QR pick) and Settings (manual eSIM).
 PRESERVED_PACKAGES = frozenset({"com.sec.android.gallery3d", "com.android.settings"})
 
 
@@ -56,25 +54,29 @@ def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
     return serial or None
 
 
-def _short_error(exc: BaseException) -> str:
-    text = str(exc).replace("\n", " ").strip()
-    return text[:180] if text else exc.__class__.__name__
-
-
-def _best_effort(
-    runner: AdbCommandRunner,
-    serial: str,
-    arguments: list[str],
-    warnings: list[str],
-    label: str,
-) -> bool:
-    try:
-        runner.run(serial, arguments)
-        return True
-    except AdbCommandError as exc:
-        warnings.append(f"{label}: {_short_error(exc)}")
-        logger.info("device_data_cleanup_step_skipped label=%s", label)
-        return False
+def cleanup_shell_commands(*, lockdown: bool) -> list[str]:
+    commands = list(WAKE_UNLOCK_COMMANDS)
+    for path in FILE_DIRS:
+        commands.append(f"rm -rf {path}")
+        commands.append(f"mkdir -p {path}")
+    for uri in MEDIA_SCAN_URIS:
+        commands.append(
+            "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE "
+            f"-d {uri}"
+        )
+    commands.append("content delete --uri content://call_log/calls")
+    commands.append("pm clear com.android.providers.contacts")
+    commands.append("content delete --uri content://sms")
+    commands.append("content delete --uri content://mms")
+    for package in OPTIONAL_CLEAR_PACKAGES:
+        commands.append(f"pm clear {package}")
+    commands.append("am force-stop com.android.settings")
+    if lockdown:
+        for package in LOCKDOWN_PACKAGES:
+            if package in PRESERVED_PACKAGES:
+                continue
+            commands.append(f"pm disable-user --user 0 {package}")
+    return commands
 
 
 def _result(
@@ -163,101 +165,16 @@ def run_device_data_cleanup(
         )
 
     warnings: list[str] = []
-    cleared: list[str] = []
-
-    files_ok = False
-    for path in FILE_DIRS:
-        removed = _best_effort(runner, mapped, ["shell", "rm", "-rf", path], warnings, f"rm {path}")
-        restored = _best_effort(
-            runner, mapped, ["shell", "mkdir", "-p", path], warnings, f"mkdir {path}"
-        )
-        files_ok = files_ok or removed or restored
-    for uri in MEDIA_SCAN_URIS:
-        _best_effort(
-            runner,
-            mapped,
-            [
-                "shell",
-                "am",
-                "broadcast",
-                "-a",
-                "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                "-d",
-                uri,
-            ],
-            warnings,
-            f"media_scan {uri}",
-        )
-    if files_ok:
-        cleared.append("files")
-
-    if _best_effort(
-        runner,
-        mapped,
-        ["shell", "content", "delete", "--uri", "content://call_log/calls"],
-        warnings,
-        "call_log",
-    ):
-        cleared.append("call_log")
-
-    if _best_effort(
-        runner,
-        mapped,
-        ["shell", "pm", "clear", "com.android.providers.contacts"],
-        warnings,
-        "contacts",
-    ):
-        cleared.append("contacts")
-
-    sms_ok = _best_effort(
-        runner, mapped, ["shell", "content", "delete", "--uri", "content://sms"], warnings, "sms"
+    commands = cleanup_shell_commands(lockdown=lockdown)
+    script_ok = run_best_effort_shell(
+        runner, mapped, commands, warnings, "cleanup_script"
     )
-    mms_ok = _best_effort(
-        runner, mapped, ["shell", "content", "delete", "--uri", "content://mms"], warnings, "mms"
-    )
-    for package in OPTIONAL_CLEAR_PACKAGES[:2]:
-        _best_effort(runner, mapped, ["shell", "pm", "clear", package], warnings, f"pm clear {package}")
-    if sms_ok or mms_ok:
-        cleared.append("sms_mms")
-
-    browsers_ok = False
-    for package in OPTIONAL_CLEAR_PACKAGES[2:]:
-        if _best_effort(
-            runner, mapped, ["shell", "pm", "clear", package], warnings, f"pm clear {package}"
-        ):
-            browsers_ok = True
-    _best_effort(
-        runner,
-        mapped,
-        ["shell", "am", "force-stop", "com.android.settings"],
-        warnings,
-        "force-stop settings",
-    )
-    _best_effort(
-        runner, mapped, ["shell", "input", "keyevent", "KEYCODE_HOME"], warnings, "home"
-    )
-    if browsers_ok:
-        cleared.append("browsers")
-
-    lockdown_applied = False
-    if lockdown:
-        lockdown_applied = True
-        for package in LOCKDOWN_PACKAGES:
-            if package in PRESERVED_PACKAGES:
-                continue
-            _best_effort(
-                runner,
-                mapped,
-                ["shell", "pm", "disable-user", "--user", "0", package],
-                warnings,
-                f"lockdown {package}",
-            )
-
+    cleared = ["files", "call_log", "contacts", "sms_mms", "browsers"]
     logger.info(
-        "device_data_cleanup_ok slot=%s lockdown=%s cleared=%s warnings=%s",
+        "device_data_cleanup_ok slot=%s lockdown=%s script_ok=%s warnings=%s",
         slot_id,
-        lockdown_applied,
-        ",".join(cleared),
+        lockdown,
+        script_ok,
         len(warnings),
     )
     return _result(
@@ -268,6 +185,6 @@ def run_device_data_cleanup(
         serial=mapped,
         status="cleanup_completed",
         cleared=cleared,
-        lockdown_applied=lockdown_applied,
+        lockdown_applied=lockdown,
         warnings=warnings,
     )

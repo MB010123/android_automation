@@ -177,6 +177,15 @@ def execute_controlled_farm_task(
             request=request,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "device_screen_prepare":
+        from application.device_screen_prepare import run_device_screen_prepare
+
+        return run_device_screen_prepare(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 
