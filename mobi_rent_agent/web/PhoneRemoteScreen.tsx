@@ -54,6 +54,56 @@ function rectOf(el: HTMLElement): DisplayRect {
   return { left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
+function jpegBlob(blob: Blob): Promise<Blob> {
+  return blob.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let start = 0;
+    for (let i = 0; i < bytes.length - 1; i += 1) {
+      if (bytes[i] === 0xff && bytes[i + 1] === 0xd8) {
+        start = i;
+        break;
+      }
+    }
+    let end = bytes.length;
+    for (let i = bytes.length - 2; i > start; i -= 1) {
+      if (bytes[i] === 0xff && bytes[i + 1] === 0xd9) {
+        end = i + 2;
+        break;
+      }
+    }
+    if (start === 0 && end === bytes.length) return blob;
+    return new Blob([bytes.subarray(start, end)], { type: "image/jpeg" });
+  });
+}
+
+function decodeWithImage(blob: Blob): Promise<ImageBitmap> {
+  return new Promise((resolve, reject) => {
+    const decoded = new Image();
+    const url = URL.createObjectURL(blob);
+    decoded.onload = () => {
+      const width = decoded.naturalWidth;
+      const height = decoded.naturalHeight;
+      URL.revokeObjectURL(url);
+      if (width <= 0 || height <= 0) {
+        reject(new Error("frame_decode_failed"));
+        return;
+      }
+      createImageBitmap(decoded).then(resolve, reject);
+    };
+    decoded.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("frame_decode_failed"));
+    };
+    decoded.src = url;
+  });
+}
+
+function decodeFrame(blob: Blob): Promise<ImageBitmap> {
+  return jpegBlob(blob).then((clean) =>
+    createImageBitmap(clean).catch(() => decodeWithImage(clean).catch(() => decodeWithImage(blob)))
+  );
+}
+
 export function PhoneRemoteScreen({
   connected,
   frameBlob,
@@ -90,23 +140,37 @@ export function PhoneRemoteScreen({
   ]);
 
   useEffect(() => {
-    if (!frameBlob || !canvasRef.current) return;
+    if (!frameBlob) return;
     let cancelled = false;
-    createImageBitmap(frameBlob).then((bmp) => {
-      if (cancelled || !canvasRef.current) {
-        bmp.close();
-        return;
-      }
-      const canvas = canvasRef.current;
-      if (canvas.width !== bmp.width) canvas.width = bmp.width;
-      if (canvas.height !== bmp.height) canvas.height = bmp.height;
-      canvas.getContext("2d")?.drawImage(bmp, 0, 0);
-      sizeRef.current = { w: bmp.width, h: bmp.height };
-      setReady(true);
-      bmp.close();
+    const paint = (canvas: HTMLCanvasElement) =>
+      decodeFrame(frameBlob)
+        .then((bmp) => {
+          if (cancelled || canvasRef.current !== canvas) {
+            bmp.close();
+            return;
+          }
+          if (canvas.width !== bmp.width) canvas.width = bmp.width;
+          if (canvas.height !== bmp.height) canvas.height = bmp.height;
+          canvas.getContext("2d")?.drawImage(bmp, 0, 0);
+          sizeRef.current = { w: bmp.width, h: bmp.height };
+          setReady(true);
+          bmp.close();
+        })
+        .catch(() => undefined);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      void paint(canvas);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const retry = window.requestAnimationFrame(() => {
+      const late = canvasRef.current;
+      if (late) void paint(late);
     });
     return () => {
       cancelled = true;
+      window.cancelAnimationFrame(retry);
     };
   }, [frameBlob]);
 

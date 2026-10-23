@@ -145,6 +145,52 @@ def _origin_is_localhost(origin: str) -> bool:
     return parsed.hostname in {"localhost", "127.0.0.1"}
 
 
+def sniff_mjpeg_boundary(chunk: bytes) -> str | None:
+    """Read `--boundary` from the first MJPEG bytes when GADS omits it."""
+    if not chunk:
+        return None
+    start = chunk.find(b"--")
+    if start < 0:
+        return None
+    line = chunk[start + 2 : start + 96]
+    end = len(line)
+    for sep in (b"\r", b"\n", b" ", b";"):
+        idx = line.find(sep)
+        if idx >= 0:
+            end = min(end, idx)
+    name = line[:end].decode("ascii", errors="ignore").strip()
+    if name and all(ch.isalnum() or ch in "-_" for ch in name):
+        return name
+    return None
+
+
+def mjpeg_content_type(declared: str | None, first_chunk: bytes | None) -> str:
+    """Keep GADS Content-Type when it has a boundary; otherwise sniff the body."""
+    text = str(declared or "").strip()
+    lower = text.lower()
+    if "boundary=" in lower:
+        return text
+    sniffed = sniff_mjpeg_boundary(first_chunk or b"")
+    if sniffed:
+        return f"multipart/x-mixed-replace; boundary={sniffed}"
+    if first_chunk and first_chunk[:2] == b"\xff\xd8":
+        return "multipart/x-mixed-replace; boundary=frame"
+    if "multipart/x-mixed-replace" in lower:
+        return "multipart/x-mixed-replace; boundary=frame"
+    return text or "multipart/x-mixed-replace; boundary=frame"
+
+
+def mjpeg_prefixed_chunk(declared: str | None, first_chunk: bytes) -> tuple[str, bytes]:
+    """Keep a real GADS boundary; wrap a raw JPEG so parsers can emit a frame."""
+    content_type = mjpeg_content_type(declared, first_chunk)
+    if first_chunk[:2] == b"\xff\xd8" and not first_chunk.lstrip().startswith(b"--"):
+        return (
+            "multipart/x-mixed-replace; boundary=frame",
+            b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + first_chunk,
+        )
+    return content_type, first_chunk
+
+
 def _check_webhook_secret(provided: str | None, expected: str | None) -> None:
     if not expected:
         return
@@ -604,24 +650,32 @@ class Handler(BaseHTTPRequestHandler):
         """Copy GADS MJPEG through the VPS. Never expose the hub URL."""
         status = int(getattr(upstream, "status_code", 502) or 502)
         headers = getattr(upstream, "headers", {}) or {}
-        content_type = "multipart/x-mixed-replace; boundary=frame"
-        if hasattr(headers, "get"):
-            content_type = str(headers.get("Content-Type") or content_type)
-        if "multipart/x-mixed-replace" in content_type.lower() and "boundary=" not in content_type.lower():
-            content_type = "multipart/x-mixed-replace; boundary=frame"
         try:
             if status != 200:
                 self._send_json(502, error_body("gads_unavailable"))
                 return
+            iterator = getattr(upstream, "iter_content", None)
+            raw = iterator(8192) if callable(iterator) else []
+            stream = iter(raw)
+            first = b""
+            for piece in stream:
+                if piece:
+                    first = bytes(piece)
+                    break
+            declared = ""
+            if hasattr(headers, "get"):
+                declared = str(headers.get("Content-Type") or "")
+            content_type, first = mjpeg_prefixed_chunk(declared, first)
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Accel-Buffering", "no")
             self._apply_cors()
             self.end_headers()
-            iterator = getattr(upstream, "iter_content", None)
-            chunks = iterator(8192) if callable(iterator) else []
-            for chunk in chunks:
+            if first:
+                self.wfile.write(first)
+                self.wfile.flush()
+            for chunk in stream:
                 if not chunk:
                     continue
                 self.wfile.write(chunk)

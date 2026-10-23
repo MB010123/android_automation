@@ -63,6 +63,12 @@ def _optional_text(value: Any) -> str | None:
     return text or None
 
 
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 @dataclass
 class ApiResult:
     http_status: int
@@ -608,26 +614,52 @@ class VpsFarmManagementService:
         return self.end_rental(rental, explicit=True)
 
     def verify_cleanup(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
-        """Admin-only: ADB wipe then CLEANUP REQUIRED → AVAILABLE."""
+        """Admin-only: ADB wipe then CLEANUP REQUIRED → AVAILABLE.
+
+        Warnings from unrooted ADB steps do not block Enable. ``force=true``
+        releases the hold even when Farm/ADB is unreachable or the phone is
+        offline (operator-verified). Occupied bays still 409.
+        """
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         if self._reservations.is_reserved(bay) or self._assignments.is_assigned(bay):
             return ApiResult(409, error_body("slot_unavailable"))
         if self._slot_has_active_job(bay):
             return ApiResult(409, error_body("slot_unavailable"))
+        body = payload if isinstance(payload, dict) else {}
+        force = _truthy(body.get("force"))
         hold_required = self._cleanup.is_required(bay)
-        wipe = self.run_device_data_cleanup(bay, payload or {}, require_farm=False)
+        wipe = self.run_device_data_cleanup(bay, body, require_farm=False)
         if wipe.http_status >= 400:
-            return wipe
+            error = str(wipe.body.get("error") or "")
+            if error == "slot_not_found":
+                return wipe
+            if error in {"device_offline", "farm_unreachable"} and not force:
+                return wipe
+            logger.warning(
+                "cleanup_verified_continuing bay=%s error=%s force=%s",
+                bay,
+                error,
+                force,
+            )
         if hold_required:
             self._cleanup.clear(bay)
             self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
-        body = dict(wipe.body)
-        body["cleanup"] = "cleared" if hold_required else "not_required"
-        body["available"] = True
-        body["bay"] = bay
-        body["public_slot_id"] = public_id_for_farm_slot(bay)
-        return ApiResult(200, body)
+        out = dict(wipe.body) if wipe.http_status < 400 else self._cleanup_completed_body(
+            bay,
+            wipe.body.get("serial") if isinstance(wipe.body, dict) else None,
+            bool(body.get("lockdown", True)),
+            cleared=[],
+            warnings=[str(wipe.body.get("error") or "cleanup_incomplete")],
+        )
+        out["ok"] = True
+        out["status"] = "cleanup_completed"
+        out["cleanup"] = "cleared" if hold_required else "not_required"
+        out["available"] = True
+        out["bay"] = bay
+        out["public_slot_id"] = public_id_for_farm_slot(bay)
+        out["forced"] = force
+        return ApiResult(200, out)
 
     def run_device_data_cleanup(
         self,
@@ -689,6 +721,8 @@ class VpsFarmManagementService:
         if not isinstance(cleared, list):
             cleared = []
         lockdown_applied = bool(details.get("lockdown_applied", lockdown))
+        raw_warnings = details.get("warnings")
+        warnings = [str(item) for item in raw_warnings] if isinstance(raw_warnings, list) else []
         return ApiResult(
             200,
             self._cleanup_completed_body(
@@ -696,6 +730,7 @@ class VpsFarmManagementService:
                 serial,
                 lockdown_applied,
                 cleared=[str(item) for item in cleared],
+                warnings=warnings,
             ),
         )
 
@@ -706,6 +741,7 @@ class VpsFarmManagementService:
         lockdown_applied: bool,
         *,
         cleared: list[str],
+        warnings: list[str] | None = None,
     ) -> dict[str, Any]:
         return {
             "ok": True,
@@ -716,6 +752,7 @@ class VpsFarmManagementService:
             "rebooted": False,
             "cleared": cleared,
             "lockdown_applied": lockdown_applied,
+            "warnings": list(warnings or []),
         }
 
     def _serial_for(self, bay: int) -> str | None:

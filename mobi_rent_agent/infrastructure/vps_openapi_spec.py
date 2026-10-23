@@ -172,10 +172,16 @@ def _schemas() -> dict[str, Any]:
                     "example": ["files", "call_log", "contacts", "sms_mms", "browsers"],
                 },
                 "lockdown_applied": {"type": "boolean"},
+                "warnings": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Best-effort ADB steps Android denied on an unrooted device.",
+                },
                 "cleanup": {"type": "string", "enum": ["cleared", "not_required"]},
                 "available": {"type": "boolean"},
                 "bay": {"type": "integer"},
                 "public_slot_id": {"type": "string", "format": "uuid"},
+                "forced": {"type": "boolean"},
             },
         },
         "DeviceDataCleanupRequest": {
@@ -183,6 +189,11 @@ def _schemas() -> dict[str, Any]:
             "properties": {
                 "serial": {"type": "string", "example": "RFCNB056WEV"},
                 "lockdown": {"type": "boolean", "default": True},
+                "force": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Release the cleanup hold even if Farm/ADB is unreachable.",
+                },
             },
         },
         "SlotAvailabilityList": {

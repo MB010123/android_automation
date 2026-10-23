@@ -200,15 +200,69 @@
       return hit.getBoundingClientRect();
     }
 
-    function paintBlob(blob) {
-      return createImageBitmap(blob).then(function (bmp) {
-        if (canvas.width !== bmp.width) canvas.width = bmp.width;
-        if (canvas.height !== bmp.height) canvas.height = bmp.height;
-        canvas.getContext("2d").drawImage(bmp, 0, 0);
-        controller.onFrame(bmp.width, bmp.height);
-        bmp.close();
-        hit.dataset.ready = controller.ready() ? "true" : "false";
+    function jpegBlob(blob) {
+      return blob.arrayBuffer().then(function (buffer) {
+        var bytes = new Uint8Array(buffer);
+        var start = 0;
+        var end = bytes.length;
+        var i;
+        for (i = 0; i < bytes.length - 1; i += 1) {
+          if (bytes[i] === 0xff && bytes[i + 1] === 0xd8) {
+            start = i;
+            break;
+          }
+        }
+        for (i = bytes.length - 2; i > start; i -= 1) {
+          if (bytes[i] === 0xff && bytes[i + 1] === 0xd9) {
+            end = i + 2;
+            break;
+          }
+        }
+        if (start === 0 && end === bytes.length) return blob;
+        return new Blob([bytes.subarray(start, end)], { type: "image/jpeg" });
       });
+    }
+
+    function decodeWithImage(blob) {
+      return new Promise(function (resolve, reject) {
+        var decoded = new Image();
+        var url = URL.createObjectURL(blob);
+        decoded.onload = function () {
+          URL.revokeObjectURL(url);
+          if (!decoded.naturalWidth || !decoded.naturalHeight) {
+            reject(new Error("frame_decode_failed"));
+            return;
+          }
+          createImageBitmap(decoded).then(resolve, reject);
+        };
+        decoded.onerror = function () {
+          URL.revokeObjectURL(url);
+          reject(new Error("frame_decode_failed"));
+        };
+        decoded.src = url;
+      });
+    }
+
+    function paintBlob(blob) {
+      return jpegBlob(blob)
+        .then(function (clean) {
+          return createImageBitmap(clean).catch(function () {
+            return decodeWithImage(clean).catch(function () {
+              return decodeWithImage(blob);
+            });
+          });
+        })
+        .then(function (bmp) {
+          if (canvas.width !== bmp.width) canvas.width = bmp.width;
+          if (canvas.height !== bmp.height) canvas.height = bmp.height;
+          canvas.getContext("2d").drawImage(bmp, 0, 0);
+          controller.onFrame(bmp.width, bmp.height);
+          bmp.close();
+          hit.dataset.ready = controller.ready() ? "true" : "false";
+        })
+        .catch(function () {
+          return undefined;
+        });
     }
 
     function syncDot() {

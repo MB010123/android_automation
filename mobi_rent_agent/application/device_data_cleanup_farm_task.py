@@ -4,6 +4,10 @@ Deletes user files, call log, contacts, SMS/MMS, and browser/cache state.
 Never factory-resets, never reboots, never calls EuiccManager or deletes
 profiles. Gallery (`com.sec.android.gallery3d`) and Settings stay enabled
 so Samsung QR eSIM automation keeps working.
+
+On stock unrooted Pixels/Samsungs, `content delete`, `pm clear`, and
+`pm disable-user` often return non-zero. Those are warnings. The task
+fails only when the bay is unknown or ADB `get-state` is not `device`.
 """
 from __future__ import annotations
 
@@ -17,13 +21,16 @@ from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 logger = logging.getLogger("farm_agent.device_data_cleanup")
 
 DEVICE_DATA_CLEANUP_TASK = "device_data_cleanup"
+CLEANUP_ADB_TIMEOUT_SECONDS = 45.0
 
-FILE_PATHS = (
-    "/sdcard/Download/*",
-    "/sdcard/Pictures/*",
-    "/sdcard/DCIM/Camera/*",
-    "/sdcard/DCIM/Screenshots/*",
-    "/sdcard/Documents/*",
+# Wipe whole folders (no globs). `adb shell` joins argv with spaces and
+# drops quotes, so `sh -c 'rm -rf …/*'` becomes `sh -c rm` → "Needs 1 argument".
+FILE_DIRS = (
+    "/sdcard/Download",
+    "/sdcard/Pictures",
+    "/sdcard/DCIM/Camera",
+    "/sdcard/DCIM/Screenshots",
+    "/sdcard/Documents",
 )
 MEDIA_SCAN_URIS = ("file:///sdcard/Pictures", "file:///sdcard/DCIM")
 OPTIONAL_CLEAR_PACKAGES = (
@@ -49,11 +56,24 @@ def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
     return serial or None
 
 
-def _optional_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> bool:
+def _short_error(exc: BaseException) -> str:
+    text = str(exc).replace("\n", " ").strip()
+    return text[:180] if text else exc.__class__.__name__
+
+
+def _best_effort(
+    runner: AdbCommandRunner,
+    serial: str,
+    arguments: list[str],
+    warnings: list[str],
+    label: str,
+) -> bool:
     try:
         runner.run(serial, arguments)
         return True
-    except AdbCommandError:
+    except AdbCommandError as exc:
+        warnings.append(f"{label}: {_short_error(exc)}")
+        logger.info("device_data_cleanup_step_skipped label=%s", label)
         return False
 
 
@@ -125,7 +145,9 @@ def run_device_data_cleanup(
             error="serial_mismatch",
         )
     lockdown = bool(request.payload.get("lockdown", True))
-    runner = command_runner or AdbCommandRunner(adb_path)
+    runner = command_runner or AdbCommandRunner(
+        adb_path, timeout_seconds=CLEANUP_ADB_TIMEOUT_SECONDS
+    )
     try:
         state = runner.run(mapped, ["get-state"]).stdout
     except AdbCommandError:
@@ -140,60 +162,82 @@ def run_device_data_cleanup(
             error="device_offline",
         )
 
+    warnings: list[str] = []
     cleared: list[str] = []
-    try:
-        runner.run(mapped, ["shell", "sh", "-c", "rm -rf " + " ".join(FILE_PATHS)])
-        for uri in MEDIA_SCAN_URIS:
-            _optional_shell(
-                runner,
-                mapped,
-                [
-                    "shell",
-                    "am",
-                    "broadcast",
-                    "-a",
-                    "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                    "-d",
-                    uri,
-                ],
-            )
+
+    files_ok = False
+    for path in FILE_DIRS:
+        removed = _best_effort(runner, mapped, ["shell", "rm", "-rf", path], warnings, f"rm {path}")
+        restored = _best_effort(
+            runner, mapped, ["shell", "mkdir", "-p", path], warnings, f"mkdir {path}"
+        )
+        files_ok = files_ok or removed or restored
+    for uri in MEDIA_SCAN_URIS:
+        _best_effort(
+            runner,
+            mapped,
+            [
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                "-d",
+                uri,
+            ],
+            warnings,
+            f"media_scan {uri}",
+        )
+    if files_ok:
         cleared.append("files")
 
-        runner.run(mapped, ["shell", "content", "delete", "--uri", "content://call_log/calls"])
+    if _best_effort(
+        runner,
+        mapped,
+        ["shell", "content", "delete", "--uri", "content://call_log/calls"],
+        warnings,
+        "call_log",
+    ):
         cleared.append("call_log")
 
-        runner.run(mapped, ["shell", "pm", "clear", "com.android.providers.contacts"])
+    if _best_effort(
+        runner,
+        mapped,
+        ["shell", "pm", "clear", "com.android.providers.contacts"],
+        warnings,
+        "contacts",
+    ):
         cleared.append("contacts")
 
-        sms_ok = _optional_shell(
-            runner, mapped, ["shell", "content", "delete", "--uri", "content://sms"]
-        )
-        mms_ok = _optional_shell(
-            runner, mapped, ["shell", "content", "delete", "--uri", "content://mms"]
-        )
-        for package in OPTIONAL_CLEAR_PACKAGES[:2]:
-            _optional_shell(runner, mapped, ["shell", "pm", "clear", package])
-        if sms_ok or mms_ok:
-            cleared.append("sms_mms")
+    sms_ok = _best_effort(
+        runner, mapped, ["shell", "content", "delete", "--uri", "content://sms"], warnings, "sms"
+    )
+    mms_ok = _best_effort(
+        runner, mapped, ["shell", "content", "delete", "--uri", "content://mms"], warnings, "mms"
+    )
+    for package in OPTIONAL_CLEAR_PACKAGES[:2]:
+        _best_effort(runner, mapped, ["shell", "pm", "clear", package], warnings, f"pm clear {package}")
+    if sms_ok or mms_ok:
+        cleared.append("sms_mms")
 
-        for package in OPTIONAL_CLEAR_PACKAGES[2:]:
-            _optional_shell(runner, mapped, ["shell", "pm", "clear", package])
-        _optional_shell(runner, mapped, ["shell", "am", "force-stop", "com.android.settings"])
-        _optional_shell(runner, mapped, ["shell", "input", "keyevent", "KEYCODE_HOME"])
+    browsers_ok = False
+    for package in OPTIONAL_CLEAR_PACKAGES[2:]:
+        if _best_effort(
+            runner, mapped, ["shell", "pm", "clear", package], warnings, f"pm clear {package}"
+        ):
+            browsers_ok = True
+    _best_effort(
+        runner,
+        mapped,
+        ["shell", "am", "force-stop", "com.android.settings"],
+        warnings,
+        "force-stop settings",
+    )
+    _best_effort(
+        runner, mapped, ["shell", "input", "keyevent", "KEYCODE_HOME"], warnings, "home"
+    )
+    if browsers_ok:
         cleared.append("browsers")
-    except AdbCommandError:
-        logger.warning("device_data_cleanup_adb_failed slot=%s", slot_id)
-        return _result(
-            ok=False,
-            http_status=422,
-            job_id=request.job_id,
-            slot_id=slot_id,
-            serial=mapped,
-            error="cleanup_adb_failed",
-            status="cleanup_failed",
-            cleared=cleared,
-            lockdown_applied=False,
-        )
 
     lockdown_applied = False
     if lockdown:
@@ -201,17 +245,20 @@ def run_device_data_cleanup(
         for package in LOCKDOWN_PACKAGES:
             if package in PRESERVED_PACKAGES:
                 continue
-            _optional_shell(
+            _best_effort(
                 runner,
                 mapped,
                 ["shell", "pm", "disable-user", "--user", "0", package],
+                warnings,
+                f"lockdown {package}",
             )
 
     logger.info(
-        "device_data_cleanup_ok slot=%s lockdown=%s cleared=%s",
+        "device_data_cleanup_ok slot=%s lockdown=%s cleared=%s warnings=%s",
         slot_id,
         lockdown_applied,
         ",".join(cleared),
+        len(warnings),
     )
     return _result(
         ok=True,
@@ -222,4 +269,5 @@ def run_device_data_cleanup(
         status="cleanup_completed",
         cleared=cleared,
         lockdown_applied=lockdown_applied,
+        warnings=warnings,
     )

@@ -107,8 +107,12 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     assert details["rebooted"] is False
     assert details["lockdown_applied"] is True
     assert details["cleared"] == ["files", "call_log", "contacts", "sms_mms", "browsers"]
+    assert details["warnings"] == []
     joined = [" ".join(args) for _serial, args in runner.calls]
-    assert any("rm -rf" in item and "/sdcard/Pictures/*" in item for item in joined)
+    assert any(item == "shell rm -rf /sdcard/Pictures" for item in joined)
+    assert any(item == "shell mkdir -p /sdcard/Pictures" for item in joined)
+    assert all("*" not in item for item in joined)
+    assert all("sh -c" not in item for item in joined)
     assert any("MEDIA_SCANNER_SCAN_FILE" in item and "file:///sdcard/Pictures" in item for item in joined)
     assert any("MEDIA_SCANNER_SCAN_FILE" in item and "file:///sdcard/DCIM" in item for item in joined)
     assert any("content://call_log/calls" in item for item in joined)
@@ -164,28 +168,51 @@ def test_cleanup_serial_mismatch_and_optional_packages():
     assert result.details["serial"] == PIXEL_SERIAL
 
 
-def test_cleanup_required_file_wipe_failure_fails_task():
+def test_cleanup_file_wipe_failure_is_warning():
     result = run_device_data_cleanup(
         adb_path="adb",
         slot_map={21: S20_SERIAL},
         request=_request(),
         command_runner=CleanupRunner(fail_on="rm -rf"),
     )
-    assert result.ok is False
-    assert result.error == "cleanup_adb_failed"
+    assert result.ok is True
+    assert result.http_status == 200
+    assert result.error is None
+    assert result.details["status"] == "cleanup_completed"
     assert result.details["rebooted"] is False
     assert result.details["esim_preserved"] is True
+    assert any("rm /sdcard/" in item for item in result.details["warnings"])
+
+
+def test_cleanup_offline_device_still_fails():
+    result = run_device_data_cleanup(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=_request(),
+        command_runner=CleanupRunner(state="offline"),
+    )
+    assert result.ok is False
+    assert result.http_status == 409
+    assert result.error == "device_offline"
 
 
 class MockCleanupFarm:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        error: str = "cleanup_adb_failed",
+        http_status: int = 422,
+    ) -> None:
         self.fail = fail
+        self.error = error
+        self.http_status = http_status
         self.calls: list[dict] = []
 
     def run_task(self, **kwargs: object) -> FarmTaskResponse:
         self.calls.append(dict(kwargs))
         if self.fail:
-            return FarmTaskResponse(ok=False, http_status=422, body={}, error="cleanup_adb_failed")
+            return FarmTaskResponse(ok=False, http_status=self.http_status, body={}, error=self.error)
         return FarmTaskResponse(
             ok=True,
             http_status=200,
@@ -262,6 +289,7 @@ def test_vps_auto_cleanup_returns_slot_and_serial(tmp_path: Path):
         "rebooted": False,
         "cleared": ["files", "call_log", "contacts", "sms_mms", "browsers"],
         "lockdown_applied": True,
+        "warnings": [],
     }
     assert farm.calls[0]["task_type"] == "device_data_cleanup"
     assert farm.calls[0]["farm_slot_id"] == 21
@@ -277,18 +305,35 @@ def test_vps_auto_cleanup_serial_mismatch(tmp_path: Path):
     assert farm.calls == []
 
 
-def test_cleanup_verified_fail_closed_keeps_hold(tmp_path: Path):
+def test_cleanup_verified_releases_hold_when_adb_emits_warnings(tmp_path: Path):
     svc, _farm = _farm_svc(tmp_path, farm=MockCleanupFarm(fail=True))
     rental = str(uuid.uuid4())
     svc._cleanup.mark_required(21, rental, detail="awaiting_operator")
     verified = svc.verify_cleanup(21)
-    assert verified.http_status == 422
+    assert verified.http_status == 200, verified.body
+    assert verified.body["status"] == "cleanup_completed"
+    assert verified.body["ok"] is True
+    assert verified.body["cleanup"] == "cleared"
+    assert "cleanup_adb_failed" in verified.body["warnings"]
+    assert svc._cleanup.is_required(21) is False
+
+
+def test_cleanup_verified_offline_keeps_hold_unless_forced(tmp_path: Path):
+    svc, _farm = _farm_svc(
+        tmp_path,
+        farm=MockCleanupFarm(fail=True, error="device_offline", http_status=409),
+    )
+    rental = str(uuid.uuid4())
+    svc._cleanup.mark_required(21, rental, detail="awaiting_operator")
+    blocked = svc.verify_cleanup(21)
+    assert blocked.http_status == 409
+    assert blocked.body["error"] == "device_offline"
     assert svc._cleanup.is_required(21) is True
-    assert verified.body["status"] == "cleanup_failed"
-    assert verified.body["slot_id"] == 21
-    assert verified.body["serial"] == S20_SERIAL
-    assert verified.body["esim_preserved"] is True
-    assert verified.body["rebooted"] is False
+    forced = svc.verify_cleanup(21, {"force": True})
+    assert forced.http_status == 200, forced.body
+    assert forced.body["forced"] is True
+    assert forced.body["status"] == "cleanup_completed"
+    assert svc._cleanup.is_required(21) is False
 
 
 def test_cleanup_verified_success_clears_hold(tmp_path: Path):
@@ -332,3 +377,17 @@ def test_auto_cleanup_route_parses_slot_21():
     listed = parse_route("/farm/slots")
     assert listed is not None
     assert listed.kind == "farm_slots"
+
+
+def test_mjpeg_sniffs_samsung_boundary_and_wraps_raw_jpeg():
+    from tools.vps_backend_server import mjpeg_content_type, mjpeg_prefixed_chunk
+
+    declared = "multipart/x-mixed-replace"
+    body = b"--GadsBoundary\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff"
+    assert mjpeg_content_type(declared, body) == "multipart/x-mixed-replace; boundary=GadsBoundary"
+    jpeg = b"\xff\xd8\xff\xe0" + b"\x00" * 8 + b"\xff\xd9"
+    ctype, prefixed = mjpeg_prefixed_chunk("image/octet-stream", jpeg)
+    assert ctype == "multipart/x-mixed-replace; boundary=frame"
+    assert prefixed.startswith(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8")
+    kept = "multipart/x-mixed-replace; boundary=frame"
+    assert mjpeg_content_type(kept, body) == kept
