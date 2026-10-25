@@ -758,6 +758,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_service_get(self, route) -> bool:
         query = parse_qs(urlparse(self.path).query)
+        if route.kind == "farm_about_phone" or route.kind == "admin_device_about_phone":
+            return self._handle_farm_admin_device_op(route, {})
         if route.kind == "farm_available":
             assert self.farm_management_service is not None
             result = self.farm_management_service.list_available_slots()
@@ -906,6 +908,43 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return False
 
+    def _resolve_admin_bay(self, route) -> int | None:
+        if route.farm_bay is not None:
+            return int(route.farm_bay)
+        ref = getattr(route, "device_ref", None)
+        service = self.admin_live_access_service
+        if ref and service is not None:
+            return service.resolve_slot_reference(ref)
+        if ref and str(ref).isdigit():
+            return int(ref)
+        return None
+
+    def _handle_farm_admin_device_op(self, route, payload: dict[str, Any] | None) -> bool:
+        farm = self.farm_management_service
+        if farm is None:
+            return False
+        kind = route.kind
+        bay = self._resolve_admin_bay(route)
+        body = payload if isinstance(payload, dict) else {}
+        if kind == "farm_force_available" and bay is not None:
+            result = farm.force_available(bay)
+        elif kind == "farm_disable_rental" and bay is not None:
+            result = farm.disable_rental(bay, body)
+        elif kind == "admin_device_disable" and bay is not None:
+            result = farm.disable_rental(bay, body)
+        elif kind == "farm_enable_rental" and bay is not None:
+            result = farm.enable_rental(bay)
+        elif kind in {"farm_reboot", "admin_device_reboot"} and bay is not None:
+            result = farm.reboot_slot(bay)
+        elif kind in {"farm_airplane_mode", "admin_device_airplane", "devices_airplane_mode"} and bay is not None:
+            result = farm.run_airplane_mode(bay, body)
+        elif kind in {"farm_about_phone", "admin_device_about_phone"} and bay is not None:
+            result = farm.about_phone_screenshot(bay)
+        else:
+            return False
+        self._send_json(result.http_status, result.body)
+        return True
+
     def _handle_service_post(self, route, payload: dict[str, Any]) -> bool:
         if route.kind == "farm_assign" and route.farm_bay is not None:
             assert self.farm_management_service is not None
@@ -923,6 +962,8 @@ class Handler(BaseHTTPRequestHandler):
                 route.farm_bay, payload, require_farm=True
             )
             self._send_json(result.http_status, result.body)
+            return True
+        if self._handle_farm_admin_device_op(route, payload):
             return True
         if route.kind == "rental_cancel" and route.rental_id:
             assert self.farm_management_service is not None
@@ -1429,6 +1470,7 @@ def main() -> int:
         cleanup_store=cleanup_store,
         farm_task_client=farm_task_client,
         slot_serial_map=slot_serial_map,
+        preferred_next_slot_ids=getattr(config, "preferred_next_slot_ids", (21,)),
     )
 
     sms_rate_limiter = VpsRateLimiter(
@@ -1455,6 +1497,7 @@ def main() -> int:
         event_store=event_store,
         esim_url_prefixes=auth_prefixes,
         db_path=Path(vps_jobs_db).with_name("remote_access_sessions.sqlite"),
+        cleanup_store=cleanup_store,
     )
     if remote_access_service is not None:
         farm_management_service.set_remote_access(remote_access_service)
@@ -1587,6 +1630,7 @@ def _build_remote_access_service(
     event_store: SlotEventStore,
     esim_url_prefixes: tuple[str, ...],
     db_path: Path,
+    cleanup_store: Any = None,
 ) -> tuple[RemoteAccessService | None, Any]:
     """GADS remote access. Serials come from SLOT_MAP_PATH; isolation is one workspace per bay."""
     if not getattr(config, "remote_access_poc_enabled", False):
@@ -1645,6 +1689,7 @@ def _build_remote_access_service(
         voidfix_android_package=getattr(config, "voidfix_android_package", None),
         session_restrictions=bool(getattr(config, "customer_session_restrictions", True)),
         slot_msisdn_map_path=getattr(config, "slot_msisdn_map_path", None),
+        cleanup_store=cleanup_store,
     )
     prepare_ids = getattr(config, "remote_access_prepare_slot_ids", None)
     observe_ids = getattr(config, "remote_access_observe_slot_ids", None)

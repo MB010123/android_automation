@@ -40,10 +40,19 @@ RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
 RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$")
+RE_FARM_SLOT_OP = re.compile(
+    r"^/farm/slots/(\d{1,2})/"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available)$"
+)
+RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 # Admin live view. The device reference may be a farm bay number (1–32), a
 # slot public UUID (Supabase public.slots id), or an ADB serial; the admin
 # service resolves it. Separate from customer /rentals/.../remote-access.
 _DEVICE_REF = r"[0-9a-zA-Z\-]{1,64}"
+RE_ADMIN_DEVICE_OP = re.compile(
+    rf"^/admin/devices/({_DEVICE_REF})/"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental)$"
+)
 RE_ADMIN_LIVE_ACCESS = re.compile(rf"^/admin/devices/({_DEVICE_REF})/live-access$")
 RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close)$"
@@ -79,7 +88,36 @@ USER_OWNED_KINDS = frozenset(
     }
 )
 FARM_SERVICE_ONLY = frozenset({"farm_available", "farm_assign", "rental_end", "cleanup_verified"})
-FARM_OR_ADMIN_KINDS = frozenset({"farm_auto_cleanup"})
+_FARM_SLOT_KIND = {
+    "reboot": "farm_reboot",
+    "airplane-mode": "farm_airplane_mode",
+    "about-phone-screenshot": "farm_about_phone",
+    "disable-rental": "farm_disable_rental",
+    "enable-rental": "farm_enable_rental",
+    "force-available": "farm_force_available",
+}
+_ADMIN_DEVICE_KIND = {
+    "reboot": "admin_device_reboot",
+    "airplane-mode": "admin_device_airplane",
+    "about-phone-screenshot": "admin_device_about_phone",
+    "disable-rental": "admin_device_disable",
+}
+FARM_OR_ADMIN_KINDS = frozenset(
+    {
+        "farm_auto_cleanup",
+        "farm_reboot",
+        "farm_airplane_mode",
+        "farm_about_phone",
+        "farm_disable_rental",
+        "farm_enable_rental",
+        "farm_force_available",
+        "admin_device_reboot",
+        "admin_device_airplane",
+        "admin_device_about_phone",
+        "admin_device_disable",
+        "devices_airplane_mode",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +154,14 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="farm_assign", farm_bay=int(m.group(1)))
     if m := RE_FARM_CLEANUP_VERIFIED.match(path):
         return ParsedRoute(kind="cleanup_verified", farm_bay=int(m.group(1)))
+    if m := RE_FARM_SLOT_OP.match(path):
+        return ParsedRoute(
+            kind=_FARM_SLOT_KIND[m.group(2)],
+            farm_bay=int(m.group(1)),
+            action=m.group(2),
+        )
+    if m := RE_DEVICES_AIRPLANE.match(path):
+        return ParsedRoute(kind="devices_airplane_mode", farm_bay=int(m.group(1)))
     if m := RE_ADMIN_LIVE_ACCESS.match(path):
         ref = m.group(1)
         return ParsedRoute(
@@ -127,6 +173,14 @@ def parse_route(path: str) -> ParsedRoute | None:
         ref = m.group(1)
         return ParsedRoute(
             kind="admin_live_access_action",
+            farm_bay=int(ref) if ref.isdigit() else None,
+            action=m.group(2),
+            device_ref=ref,
+        )
+    if m := RE_ADMIN_DEVICE_OP.match(path):
+        ref = m.group(1)
+        return ParsedRoute(
+            kind=_ADMIN_DEVICE_KIND[m.group(2)],
             farm_bay=int(ref) if ref.isdigit() else None,
             action=m.group(2),
             device_ref=ref,

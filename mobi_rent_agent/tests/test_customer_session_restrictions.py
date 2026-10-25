@@ -287,8 +287,8 @@ def test_reconnect_still_501_phone_ready_observational_full_nav_allowed(tmp_path
     farm = FakeFarm()
     tenant, platform, farm, service, store, rental = _created(tmp_path, farm=farm)
     reconnect = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert reconnect.http_status == 501
-    assert reconnect.body["error"] == "action_not_supported"
+    assert reconnect.http_status == 200
+    assert reconnect.body["ok"] is True
     store.set_activation_observed(rental, "confirmed")
     store.upsert(replace(store.get(rental), setup_phase="complete", setup_complete=True))
     got = service.get_remote_access(CUSTOMER_A, None, rental)

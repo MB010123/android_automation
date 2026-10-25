@@ -45,6 +45,10 @@ LOCKDOWN_PACKAGES = (
     "com.sec.android.app.sbrowser",
     "com.google.android.documentsui",
     "com.sec.android.app.myfiles",
+    "com.netflix.mediaclient",
+    "com.netflix.partner.activation",
+    "com.samsung.android.app.spage",
+    "com.sec.android.app.kidshome",
 )
 PRESERVED_PACKAGES = frozenset({"com.sec.android.gallery3d", "com.android.settings"})
 

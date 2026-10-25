@@ -11,7 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from application.admin_identity import is_admin_user
 from application.device_screen_prepare import request_device_screen_prepare
@@ -244,13 +244,7 @@ class AdminLiveAccessService:
             status = 422 if code == "invalid_control" else 403
             return ApiResult(status, error_body(code))
         if decision.command.action == "airplane_mode":
-            return ApiResult(
-                501,
-                error_body(
-                    "action_not_supported",
-                    message=AIRPLANE_MODE_UNSUPPORTED_MESSAGE,
-                ),
-            )
+            return self._run_airplane_mode(bound.slot_id, decision.command.state)
         ready = self._require_ready(bound.slot_id)
         if isinstance(ready, ApiResult):
             return ready
@@ -282,6 +276,25 @@ class AdminLiveAccessService:
                 "cleanup_unchanged": True,
             },
         )
+
+    def _run_airplane_mode(self, slot_id: int, state: str | None) -> ApiResult:
+        if self._farm is None:
+            return ApiResult(503, error_body("farm_unreachable"))
+        try:
+            response = self._farm.run_task(
+                task_type="airplane_mode",
+                farm_slot_id=int(slot_id),
+                payload={"state": state or "toggle"},
+                job_id=str(uuid4()),
+            )
+        except Exception:
+            return ApiResult(504, error_body("timeout"))
+        if not getattr(response, "ok", False):
+            status = int(getattr(response, "http_status", 0) or 502)
+            if status in {0, 504}:
+                return ApiResult(504, error_body("timeout"))
+            return ApiResult(503, error_body("farm_unreachable"))
+        return ApiResult(200, {"ok": True, "slot_id": int(slot_id), "state": state or "toggled"})
 
     def close_session(
         self, admin: AuthUser, slot_id: int, payload: dict[str, Any] | None

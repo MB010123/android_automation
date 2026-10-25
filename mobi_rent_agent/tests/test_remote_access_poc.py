@@ -272,14 +272,13 @@ class FakeFarm:
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
-        if task_type == "airplane_cycle":
+        if task_type in {"airplane_cycle", "airplane_mode"}:
             if self.airplane_timeout:
                 raise TimeoutError("farm_timeout")
             return FarmTaskResponse(
-                ok=False,
-                http_status=501,
-                body={"error": "action_not_supported"},
-                error="action_not_supported",
+                ok=True,
+                http_status=200,
+                body={"ok": True, "details": {"state": "off", "cycled": task_type == "airplane_cycle"}},
             )
         if task_type == "reboot" and self.reboot_timeout:
             raise TimeoutError("farm_timeout")

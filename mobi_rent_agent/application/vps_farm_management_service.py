@@ -40,6 +40,10 @@ from application.auth_service import validate_esim_storage_key
 from application.remote_access_service import rental_end_from_row
 from infrastructure.esim_qr_security import extract_authoritative_esim_ref, validate_authoritative_esim_ref
 from infrastructure.device_cleanup_store import DeviceCleanupStore
+from application.preferred_slots import (
+    DEFAULT_PREFERRED_NEXT_SLOT_IDS,
+    sort_available_bays,
+)
 
 logger = logging.getLogger("vps_backend.farm_mgmt")
 
@@ -99,6 +103,7 @@ class VpsFarmManagementService:
         farm_task_client: Any = None,
         credit_billing: Any = None,
         slot_serial_map: dict[int, str] | None = None,
+        preferred_next_slot_ids: tuple[int, ...] | None = None,
     ) -> None:
         self._jobs = job_store
         self._assignments = assignment_store
@@ -132,6 +137,11 @@ class VpsFarmManagementService:
             for k, v in (slot_serial_map or {}).items()
             if str(v).strip()
         }
+        self._preferred_next = tuple(
+            int(s)
+            for s in (preferred_next_slot_ids or DEFAULT_PREFERRED_NEXT_SLOT_IDS)
+            if 1 <= int(s) <= MAX_FARM_SLOT_ID
+        ) or DEFAULT_PREFERRED_NEXT_SLOT_IDS
 
     def set_remote_access(self, remote_access: Any) -> None:
         self._remote_access = remote_access
@@ -432,7 +442,7 @@ class VpsFarmManagementService:
             return farm
         offline = offline_farm_slots(farm)
         available: list[dict[str, Any]] = []
-        for bay in sorted(mapped_farm_slots(farm)):
+        for bay in sort_available_bays(mapped_farm_slots(farm), self._preferred_next):
             if bay in offline:
                 continue
             if self._assignments.is_assigned(bay):
@@ -442,6 +452,8 @@ class VpsFarmManagementService:
             if self._slot_has_active_job(bay):
                 continue
             if self._cleanup.is_required(bay):
+                continue
+            if self._cleanup.is_disabled(bay):
                 continue
             available.append(
                 {
@@ -486,6 +498,8 @@ class VpsFarmManagementService:
             )
         if self._cleanup.is_required(bay):
             return ApiResult(409, error_body("cleanup_required"))
+        if self._cleanup.is_disabled(bay):
+            return ApiResult(403, error_body("rental_disabled"))
         owner = self._resolve_reservation_owner(bay, payload, rental_id)
         if isinstance(owner, ApiResult):
             return owner
@@ -640,6 +654,7 @@ class VpsFarmManagementService:
         if hold_required:
             self._cleanup.clear(bay)
             self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
+        self._cleanup.clear_disabled(bay)
         out = dict(wipe.body) if wipe.http_status < 400 else self._cleanup_completed_body(
             bay,
             wipe.body.get("serial") if isinstance(wipe.body, dict) else None,
@@ -755,6 +770,160 @@ class VpsFarmManagementService:
     def _serial_for(self, bay: int) -> str | None:
         return serial_for_slot(self._slot_serial_map, bay)
 
+    def _farm_task_result(
+        self,
+        bay: int,
+        task_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> ApiResult:
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        client = self._farm_tasks
+        if client is None:
+            return ApiResult(503, error_body("farm_unreachable"))
+        try:
+            response = client.run_task(
+                task_type=task_type,
+                farm_slot_id=int(bay),
+                payload=payload or {},
+                job_id=str(uuid.uuid4()),
+            )
+        except Exception:
+            logger.warning("farm_task_failed type=%s bay=%s", task_type, bay)
+            return ApiResult(503, error_body("farm_unreachable"))
+        details: dict[str, Any] = {}
+        raw_body = getattr(response, "body", None)
+        if isinstance(raw_body, dict):
+            inner = raw_body.get("details")
+            details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
+        if not getattr(response, "ok", False):
+            error = str(getattr(response, "error", None) or "farm_unreachable")
+            status = int(getattr(response, "http_status", 0) or 502)
+            if status < 400:
+                status = 502
+            fail = error_body(error if error in ERROR_MESSAGES else "farm_unreachable")
+            fail["slot_id"] = int(bay)
+            fail["serial"] = details.get("serial") or self._serial_for(bay)
+            return ApiResult(status, fail)
+        if not details:
+            details = {"ok": True, "slot_id": int(bay), "serial": self._serial_for(bay)}
+        details.setdefault("ok", True)
+        details.setdefault("slot_id", int(bay))
+        details.setdefault("serial", self._serial_for(bay))
+        return ApiResult(200, details)
+
+    def force_available(self, bay: int) -> ApiResult:
+        """Clear reservation, assignment, cleanup hold, and rental lock."""
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        held = self._reservations.get(bay)
+        rental_id = held.rental_id if held is not None else ""
+        remote = self._remote_access
+        if remote is not None:
+            terminate = getattr(remote, "terminate_slot_sessions", None)
+            if callable(terminate):
+                try:
+                    terminate(bay)
+                except Exception:
+                    logger.warning("force_available_session_terminate_failed bay=%s", bay)
+        if held is not None:
+            self._reservations.release(bay, held.rental_id)
+        else:
+            self._reservations.force_release(bay)
+        self._assignments.release(bay)
+        self._cleanup.clear(bay)
+        self._cleanup.clear_disabled(bay)
+        if self._auth_store is not None:
+            try:
+                if rental_id:
+                    self._auth_store.unclaim_slot(bay, rental_id)
+                else:
+                    self._auth_store.unclaim_slot(bay, None)
+            except (TypeError, ValueError, OSError, requests.RequestException):
+                logger.warning("force_available_unclaim_failed bay=%s", bay)
+        self._events.append(bay, "slot_force_available", "admin_cleared_holds")
+        logger.info("slot_force_available bay=%s", bay)
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "available": True,
+                "bay": int(bay),
+                "slot_id": public_id_for_farm_slot(bay),
+                "serial": self._serial_for(bay),
+            },
+        )
+
+    def disable_rental(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        body = payload if isinstance(payload, dict) else {}
+        held = self._reservations.get(bay)
+        rental_id = str(body.get("rental_id") or (held.rental_id if held else "") or "")
+        self._cleanup.mark_disabled(bay, rental_id or "admin")
+        remote = self._remote_access
+        if remote is not None:
+            terminate = getattr(remote, "terminate_slot_sessions", None)
+            if callable(terminate):
+                try:
+                    terminate(bay)
+                except Exception:
+                    logger.warning("disable_rental_session_terminate_failed bay=%s", bay)
+        self._events.append(bay, "rental_disabled", f"rental_id={rental_id or 'admin'}")
+        logger.info("rental_disabled bay=%s", bay)
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "disabled": True,
+                "bay": int(bay),
+                "slot_id": public_id_for_farm_slot(bay),
+                "serial": self._serial_for(bay),
+            },
+        )
+
+    def enable_rental(self, bay: int) -> ApiResult:
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        self._cleanup.clear_disabled(bay)
+        self._events.append(bay, "rental_enabled", "admin_enabled")
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "disabled": False,
+                "bay": int(bay),
+                "slot_id": public_id_for_farm_slot(bay),
+                "serial": self._serial_for(bay),
+            },
+        )
+
+    def reboot_slot(self, bay: int) -> ApiResult:
+        """Admin/farm reboot without an active customer rental. Then unlock home."""
+        rebooted = self._farm_task_result(bay, "reboot", {})
+        if rebooted.http_status >= 400:
+            return rebooted
+        prepared = self._farm_task_result(bay, "device_screen_prepare", {"wait_boot": True})
+        body = {
+            "ok": prepared.http_status < 400,
+            "rebooted": True,
+            "slot_id": int(bay),
+            "serial": self._serial_for(bay),
+            "screen_prepared": prepared.http_status < 400,
+        }
+        if prepared.http_status >= 400:
+            body.update({k: v for k, v in prepared.body.items() if k != "ok"})
+            return ApiResult(prepared.http_status, body)
+        return ApiResult(200, body)
+
+    def run_airplane_mode(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
+        body = payload if isinstance(payload, dict) else {}
+        state = str(body.get("state") or "toggle").strip().lower() or "toggle"
+        return self._farm_task_result(bay, "airplane_mode", {"state": state})
+
+    def about_phone_screenshot(self, bay: int) -> ApiResult:
+        return self._farm_task_result(bay, "device_about_phone_screenshot", {})
+
     def _safe_customer_cleanup(self, bay: int, rental_id: str) -> None:
         client = self._farm_tasks
         if client is None:
@@ -770,6 +939,17 @@ class VpsFarmManagementService:
                 logger.warning("safe_cleanup_incomplete bay=%s", bay)
         except Exception:
             logger.warning("safe_cleanup_failed bay=%s", bay)
+        try:
+            wipe = client.run_task(
+                task_type="device_data_cleanup",
+                farm_slot_id=int(bay),
+                payload={"lockdown": True},
+                job_id=str(uuid.uuid4()),
+            )
+            if not getattr(wipe, "ok", False):
+                logger.warning("device_data_cleanup_incomplete bay=%s", bay)
+        except Exception:
+            logger.warning("device_data_cleanup_failed bay=%s", bay)
 
     def sweep_ended_rentals(self) -> None:
         """Release occupancy for expired/unowned rentals. Active rentals stay held."""
@@ -823,6 +1003,8 @@ class VpsFarmManagementService:
             return ApiResult(409, error_body("slot_unavailable"))
         if self._cleanup.is_required(bay):
             return ApiResult(409, error_body("cleanup_required"))
+        if self._cleanup.is_disabled(bay):
+            return ApiResult(403, error_body("rental_disabled"))
         if self._assignments.is_assigned(bay) or self._slot_has_active_job(bay):
             return ApiResult(409, error_body("slot_unavailable"))
         farm = self._load_farm()

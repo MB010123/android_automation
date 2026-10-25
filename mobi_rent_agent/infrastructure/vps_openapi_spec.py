@@ -1722,6 +1722,86 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/farm/slots/{bay}/reboot": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Admin/farm reboot without an active rental",
+                "description": (
+                    "Farm-service token or admin JWT. Runs `adb reboot`, waits for "
+                    "`sys.boot_completed=1`, then `device_screen_prepare`."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {
+                    "200": {"description": "Rebooted and screen prepared"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "404": {"description": "slot_not_found"},
+                },
+            }
+        },
+        "/farm/slots/{bay}/airplane-mode": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Toggle Airplane Mode via cmd connectivity",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Airplane mode applied"}},
+            }
+        },
+        "/farm/slots/{bay}/about-phone-screenshot": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "About Phone screenshot plus IMEI/EID",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "PNG data URL and identity fields"}},
+            }
+        },
+        "/farm/slots/{bay}/disable-rental": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Hard-lock a rental: terminate stream and block renter actions",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Rental disabled"}},
+            }
+        },
+        "/farm/slots/{bay}/force-available": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Clear reservation, assignment, and cleanup hold",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Bay is available"}},
+            }
+        },
+        "/admin/devices/{bay}/reboot": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Admin reboot without renting the phone",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Rebooted and unlocked"}},
+            }
+        },
+        "/admin/devices/{bay}/about-phone-screenshot": {
+            "get": {
+                "tags": ["Admin"],
+                "summary": "About Phone screenshot (IMEI / IMEI2 / EID)",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Screenshot and parsed identity"}},
+            }
+        },
+        "/devices/{bay}/airplane-mode": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Airplane Mode toggle (admin or farm service)",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Airplane mode applied"}},
+            }
+        },
         "/farm/slots/{bay}/cleanup-verified": {
             "post": {
                 "tags": ["Farm management"],

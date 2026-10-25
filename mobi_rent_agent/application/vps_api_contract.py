@@ -65,6 +65,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "admin_forbidden": "Administrator access is required",
     "serial_mismatch": "Provided serial does not match the mapped ADB device for this bay",
     "cleanup_adb_failed": "ADB data cleanup did not complete on the Farm Agent",
+    "rental_disabled": "Rental is disabled for this phone",
+    "cleanup_required": "Bay is held for operator cleanup before the next rental",
     "invalid_slot": "slot_id must be a farm bay number from 1 to 20",
     "live_access_not_found": "No admin live-access session exists for this slot",
     "live_access_slot_mismatch": "This live-access session belongs to a different slot",

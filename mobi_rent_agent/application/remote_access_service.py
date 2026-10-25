@@ -126,6 +126,7 @@ _CUSTOMER_AUTH_ERRORS: dict[str, tuple[int, str]] = {
     "rental_not_owned": (403, "rental_not_owned"),
     "rental_slot_mismatch": (403, "rental_not_owned"),
     "rental_expired": (403, "session_expired"),
+    "rental_disabled": (403, "rental_disabled"),
     "access_expired": (403, "session_expired"),
     "access_not_active": (409, "remote_access_not_ready"),
     "poc_disabled": (503, "phone_unavailable"),
@@ -203,6 +204,7 @@ class RemoteAccessService:
         voidfix_android_package: str | None = None,
         session_restrictions: bool = True,
         slot_msisdn_map_path: str | None = None,
+        cleanup_store: Any = None,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
@@ -226,6 +228,7 @@ class RemoteAccessService:
         self._voidfix_package = str(voidfix_android_package or "").strip() or None
         self._session_restrictions = bool(session_restrictions)
         self._slot_msisdn_map_path = str(slot_msisdn_map_path or "").strip() or None
+        self._cleanup = cleanup_store
         self._platform = platform
         self._store = store
         self._tenant = tenant_store
@@ -386,6 +389,9 @@ class RemoteAccessService:
             if require_poc_slot:
                 self._revoke_if_active_session(rental, row_slot)
             return _forbidden("rental_expired")
+        cleanup = self._cleanup
+        if cleanup is not None and getattr(cleanup, "is_disabled", lambda _bay: False)(row_slot):
+            return _forbidden("rental_disabled")
         return AuthorizedRental(
             customer_id=customer,
             rental_id=rental,
@@ -531,7 +537,9 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
+            request_device_screen_prepare(
+                self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
+            )
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -592,7 +600,9 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
+        request_device_screen_prepare(
+            self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
+        )
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -676,7 +686,9 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=False)
+        request_device_screen_prepare(
+            self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
+        )
         try:
             return opener(
                 device_id=session.device_id,
@@ -822,7 +834,9 @@ class RemoteAccessService:
         if wait:
             body["adb_online"] = self._wait_adb_online(slot)
             if body["adb_online"]:
-                request_device_screen_prepare(self._farm, slot, wait_boot=True)
+                request_device_screen_prepare(
+                    self._farm, slot, wait_boot=True, voidfix_package=self._voidfix_package
+                )
             body["platform_online"] = self._wait_platform_online(slot) if body["adb_online"] else False
             body["ok"] = bool(body["adb_online"] and body["platform_online"])
             if not body["ok"]:
@@ -893,11 +907,9 @@ class RemoteAccessService:
         rental_id: str,
         payload: dict[str, Any] | None = None,
     ) -> ApiResult:
-        """Semantic Reconnect Cellular for the owned rental Pixel only.
+        """Semantic Reconnect Cellular for the owned rental phone.
 
-        Wires to the existing Farm ``airplane_cycle`` task. That task is a
-        documented stub (no ``mobi_rent.network`` airplane command, no raw
-        ``settings`` API). This method never reports success.
+        Wires to the Farm ``airplane_cycle`` task.
         """
         auth = self._authorize(customer_id, rental_id)
         if isinstance(auth, ApiResult):
@@ -944,10 +956,10 @@ class RemoteAccessService:
                 and response.error != "action_not_supported"
             ):
                 return ApiResult(503, error_body("farm_unreachable"))
-            # Farm Agent airplane_cycle is unsupported. Do not remap ok=True
-            # into a customer success — that would fake the capability.
-            logger.info("reconnect_cellular_unsupported slot=%s", auth.slot_id)
-            return ApiResult(501, error_body("action_not_supported"))
+            if not response.ok:
+                return ApiResult(503, error_body("farm_unreachable"))
+            logger.info("reconnect_cellular_ok slot=%s", auth.slot_id)
+            return ApiResult(200, {"ok": True, "slot_id": auth.slot_id, "reconnected": True})
         finally:
             lock.release()
 
@@ -1082,13 +1094,10 @@ class RemoteAccessService:
             "ui_state": public.get("ui_state"),
             "cellular_status": "unknown",
             "farm_reachable": farm_ok and self._farm is not None,
-            "supported_recovery": ["reboot"],
+            "supported_recovery": ["reboot", "reconnect_cellular", "voidfix_repair"],
             "unsupported": [
-                "airplane_cycle",
-                "reconnect_cellular",
                 "factory_reset",
                 "esim_delete",
-                "voidfix_repair",
                 "adb_shell",
             ],
         }
@@ -1575,12 +1584,25 @@ class RemoteAccessService:
     ) -> bool | ApiResult:
         return self._forward_control(platform, session, secret, ControlCommand(action="home"))
 
-    def _airplane_mode_unsupported(self) -> ApiResult:
-        """No approved Android 16 path. Do not call settings/cmd/root/DO."""
-        return ApiResult(
-            501,
-            error_body("action_not_supported", message=AIRPLANE_MODE_UNSUPPORTED_MESSAGE),
-        )
+    def _run_airplane_mode(self, slot_id: int, state: str | None) -> ApiResult:
+        """Dispatch Airplane Mode to the Farm Agent. No raw ADB in this module."""
+        if self._farm is None:
+            return ApiResult(503, error_body("farm_unreachable"))
+        try:
+            response = self._farm.run_task(
+                task_type="airplane_mode",
+                farm_slot_id=int(slot_id),
+                payload={"state": state or "toggle"},
+                job_id=str(uuid.uuid4()),
+            )
+        except Exception:
+            return ApiResult(504, error_body("timeout"))
+        if not getattr(response, "ok", False):
+            status = int(getattr(response, "http_status", 0) or 502)
+            if status in {0, 504}:
+                return ApiResult(504, error_body("timeout"))
+            return ApiResult(503, error_body("farm_unreachable"))
+        return ApiResult(200, {"ok": True, "slot_id": int(slot_id), "state": state or "toggled"})
 
     def _session_public(self, session: RemoteAccessSession, now: float | None = None) -> dict:
         body = session.to_public_dict(
@@ -1599,7 +1621,10 @@ class RemoteAccessService:
         command: ControlCommand,
     ) -> tuple[bool | ApiResult, dict[str, str]]:
         if command.action == "airplane_mode":
-            return self._airplane_mode_unsupported(), {}
+            result = self._run_airplane_mode(session.slot_id, command.state)
+            if result.http_status >= 400:
+                return result, {}
+            return True, {"airplane_state": command.state or "toggled"}
         if not self._session_restrictions:
             if command.action == "settings":
                 # No GADS/Farm settings endpoint. Rollback must not 502 or launch Add eSIM.
@@ -1913,6 +1938,13 @@ class RemoteAccessService:
         except Exception:  # noqa: BLE001
             logger.warning("remote_access_expire_revoke_failed slot=%s", slot_id)
 
+    def terminate_slot_sessions(self, slot_id: int) -> None:
+        """Admin disable-rental: drop the customer remote-access stream immediately."""
+        session = self._store.active_for_slot(int(slot_id), now=self._clock())
+        if session is None:
+            return
+        self._revoke_if_active_session(session.rental_id, int(slot_id))
+
     def _lock_for(self, rental_id: str) -> threading.Lock:
         with self._flow_locks_guard:
             lock = self._flow_locks.get(rental_id)
@@ -1977,7 +2009,9 @@ class RemoteAccessService:
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="adb_reconnect_timeout")
             return
         logger.info("device_adb_ready slot=%s", auth.slot_id)
-        request_device_screen_prepare(self._farm, auth.slot_id, wait_boot=True)
+        request_device_screen_prepare(
+            self._farm, auth.slot_id, wait_boot=True, voidfix_package=self._voidfix_package
+        )
         self._store.set_prepare_state(auth.rental_id, PREPARE_WAITING_PLATFORM)
         if not self._wait_platform_online(auth.slot_id):
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="platform_reconnect_timeout")

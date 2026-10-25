@@ -8,6 +8,7 @@ SUPPORTED_TASK_TYPES = {
     "reboot",
     "assign",
     "airplane_cycle",
+    "airplane_mode",
     "voidfix_repair",
     "remote_access_place_qr",
     "remote_access_activation_status",
@@ -19,6 +20,7 @@ SUPPORTED_TASK_TYPES = {
     "device_data_cleanup",
     "device_display_size",
     "device_screen_prepare",
+    "device_about_phone_screenshot",
 }
 
 

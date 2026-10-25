@@ -324,11 +324,11 @@ def test_imei2_phone_ready_setup_mode_troubleshoot_reconnect_unchanged(tmp_path:
     assert diag.body["ui_state"] != "phone_ready"
     assert diag.body["cellular_status"] == "unknown"
     assert "reboot" in diag.body["supported_recovery"]
-    assert "voidfix_repair" in diag.body["unsupported"]
+    assert "voidfix_repair" in diag.body["supported_recovery"]
     assert "esim_delete" in diag.body["unsupported"]
     reconnect = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert reconnect.http_status == 501
-    assert reconnect.body["error"] == "action_not_supported"
+    assert reconnect.http_status == 200
+    assert reconnect.body["ok"] is True
     session = store.get(rental)
     store.upsert(
         replace(
@@ -647,8 +647,8 @@ def test_device_status_inventory_path_does_not_probe_adb_or_mutate(tmp_path: Pat
     assert "auth.slot_id" in eid_fn
     assert "HEALTH_MONITOR" not in source
     reconnect = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert reconnect.http_status == 501
-    assert reconnect.body["error"] == "action_not_supported"
+    assert reconnect.http_status == 200
+    assert reconnect.body["ok"] is True
 
 
 def test_customer_phone_number_farm_map_wins_else_tenant():

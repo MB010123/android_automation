@@ -184,5 +184,15 @@ class SlotReservationStore:
             self._conn.commit()
             return cur.rowcount > 0
 
+    def force_release(self, farm_slot_id: int) -> bool:
+        """Admin override: drop any reservation on this bay."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM slot_reservations WHERE farm_slot_id = ?",
+                (int(farm_slot_id),),
+            )
+            self._conn.commit()
+            return cur.rowcount > 0
+
     def close(self) -> None:
         self._conn.close()

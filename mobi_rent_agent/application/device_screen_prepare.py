@@ -135,6 +135,13 @@ def run_device_screen_prepare(
             },
         )
     run_best_effort_shell(runner, serial, WAKE_UNLOCK_COMMANDS, warnings, "wake_unlock")
+    package = str(request.payload.get("voidfix_package") or "").strip()
+    if package:
+        from application.device_voidfix_keepalive import apply_voidfix_keepalive, normalize_voidfix_package
+
+        safe = normalize_voidfix_package(package)
+        if safe:
+            apply_voidfix_keepalive(runner, serial, safe, warnings, restart=False)
     logger.info(
         "device_screen_prepare_ok slot=%s wait_boot=%s warnings=%s",
         slot_id,
@@ -160,15 +167,20 @@ def request_device_screen_prepare(
     slot_id: int,
     *,
     wait_boot: bool = False,
+    voidfix_package: str | None = None,
 ) -> None:
     """Best-effort VPS → Farm unlock. Never raises; never fails the caller."""
     if farm_client is None:
         return
+    payload: dict[str, Any] = {"wait_boot": bool(wait_boot)}
+    package = str(voidfix_package or "").strip()
+    if package:
+        payload["voidfix_package"] = package
     try:
         farm_client.run_task(
             task_type=DEVICE_SCREEN_PREPARE_TASK,
             farm_slot_id=int(slot_id),
-            payload={"wait_boot": bool(wait_boot)},
+            payload=payload,
             job_id=f"screen-prep-{int(slot_id)}-{uuid.uuid4().hex[:8]}",
         )
     except Exception:

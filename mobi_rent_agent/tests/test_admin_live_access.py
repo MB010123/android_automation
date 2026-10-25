@@ -339,7 +339,8 @@ def test_live_access_prepares_screen_on_open(tmp_path: Path):
 
 def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
     clock = FakeClock()
-    svc, platform, clock, _ = _admin_service(tmp_path, clock=clock, ttl_minutes=5)
+    farm = FakeFarm()
+    svc, platform, clock, _ = _admin_service(tmp_path, clock=clock, ttl_minutes=5, farm=farm)
     created = svc.create_session(_admin(), 1)
     sid = created.body["session_id"]
 
@@ -390,8 +391,9 @@ def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
     airplane = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "airplane_mode", "state": "on"}
     )
-    assert airplane.http_status == 501
-    assert airplane.body["error"] == "action_not_supported"
+    assert airplane.http_status == 200
+    assert airplane.body["ok"] is True
+    assert any(t["type"] == "airplane_mode" for t in farm.tasks)
     bad = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "adb", "command": "shell"}
     )

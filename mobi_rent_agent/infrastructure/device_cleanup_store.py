@@ -60,6 +60,16 @@ class DeviceCleanupStore:
                 """
             )
             self._conn.commit()
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS slot_rental_disabled (
+                farm_slot_id INTEGER PRIMARY KEY,
+                rental_id TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL
+            )
+            """
+        )
+        self._conn.commit()
 
     def is_required(self, farm_slot_id: int) -> bool:
         return self.get(farm_slot_id) is not None
@@ -99,6 +109,35 @@ class DeviceCleanupStore:
         with self._lock:
             cursor = self._conn.execute(
                 "DELETE FROM device_cleanup_holds WHERE farm_slot_id = ?",
+                (int(farm_slot_id),),
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
+
+    def is_disabled(self, farm_slot_id: int) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT farm_slot_id FROM slot_rental_disabled WHERE farm_slot_id = ?",
+                (int(farm_slot_id),),
+            ).fetchone()
+        return row is not None
+
+    def mark_disabled(self, farm_slot_id: int, rental_id: str = "") -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR REPLACE INTO slot_rental_disabled
+                    (farm_slot_id, rental_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (int(farm_slot_id), str(rental_id or ""), time.time()),
+            )
+            self._conn.commit()
+
+    def clear_disabled(self, farm_slot_id: int) -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM slot_rental_disabled WHERE farm_slot_id = ?",
                 (int(farm_slot_id),),
             )
             self._conn.commit()

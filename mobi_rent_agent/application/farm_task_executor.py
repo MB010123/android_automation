@@ -80,18 +80,35 @@ def execute_controlled_farm_task(
             deps,
         )
     if request.task_type == "airplane_cycle":
-        return FarmTaskResult(
-            ok=False,
-            http_status=501,
-            error="action_not_supported",
-            message=AIRPLANE_UNSUPPORTED_REASON,
+        from application.device_airplane_mode import run_airplane_cycle
+
+        return run_airplane_cycle(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "airplane_mode":
+        from application.device_airplane_mode import run_airplane_mode
+
+        return run_airplane_mode(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
         )
     if request.task_type == "voidfix_repair":
-        return FarmTaskResult(
-            ok=False,
-            http_status=501,
-            error="action_not_supported",
-            message=VOIDFIX_REPAIR_UNSUPPORTED_REASON,
+        from application.device_voidfix_keepalive import run_voidfix_repair
+
+        package = None
+        if agent_config is not None:
+            package = getattr(agent_config, "voidfix_android_package", None)
+        return run_voidfix_repair(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+            voidfix_package=package,
         )
     if request.task_type == "remote_access_place_qr":
         from application.remote_access_farm_task import run_remote_access_place_qr
@@ -180,7 +197,27 @@ def execute_controlled_farm_task(
     if request.task_type == "device_screen_prepare":
         from application.device_screen_prepare import run_device_screen_prepare
 
+        payload = dict(request.payload)
+        if agent_config is not None and not payload.get("voidfix_package"):
+            package = getattr(agent_config, "voidfix_android_package", None)
+            if package:
+                payload["voidfix_package"] = package
+                request = FarmTaskRequest(
+                    job_id=request.job_id,
+                    task_type=request.task_type,
+                    farm_slot_id=request.farm_slot_id,
+                    payload=payload,
+                )
         return run_device_screen_prepare(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
+    if request.task_type == "device_about_phone_screenshot":
+        from application.device_about_phone import run_device_about_phone_screenshot
+
+        return run_device_about_phone_screenshot(
             adb_path=adb_path,
             slot_map=slot_map,
             request=request,
@@ -363,13 +400,20 @@ def run_airplane_cycle_if_supported(
     runner: AdbCommandRunner,
     on_seconds: float = 5.0,
 ) -> FarmTaskResult:
-    """Reserved for a future companion command; not wired until a safe command exists."""
-    _ = (slot_map, farm_slot_id, runner, on_seconds)
-    return FarmTaskResult(
-        ok=False,
-        http_status=501,
-        error="action_not_supported",
-        message=AIRPLANE_UNSUPPORTED_REASON,
+    """Airplane radio cycle via ``cmd connectivity airplane-mode`` (no root)."""
+    from application.device_airplane_mode import run_airplane_cycle
+
+    _ = on_seconds
+    return run_airplane_cycle(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=FarmTaskRequest(
+            job_id="airplane-cycle",
+            task_type="airplane_cycle",
+            farm_slot_id=int(farm_slot_id),
+            payload={},
+        ),
+        command_runner=runner,
     )
 
 

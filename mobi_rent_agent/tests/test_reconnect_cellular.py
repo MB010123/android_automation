@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.farm_agent_tasks import FarmTaskRequest, execute_farm_task
-from application.farm_task_executor import AIRPLANE_UNSUPPORTED_REASON, FarmTaskExecutorDeps
+from application.farm_task_executor import FarmTaskExecutorDeps
 from application.vps_lovable_routes import parse_route
 from tests.fakes_supabase import MemoryTenant
 from tests.test_farm_agent_tasks import FakeRunner
@@ -55,15 +55,15 @@ def test_owned_slot_only_and_cross_rental_rejected(tmp_path: Path):
     missing = service.reconnect_cellular_for_customer(CUSTOMER_A, "00000000-0000-4000-8000-000000000001", {})
     assert missing.http_status == 404
     owned = service.reconnect_cellular_for_customer(CUSTOMER_A, rental_a, {})
-    assert owned.http_status == 501
-    assert owned.body["error"] == "action_not_supported"
+    assert owned.http_status == 200
+    assert owned.body["ok"] is True
     assert SLOT1_SERIAL not in json.dumps(owned.body)
     cycles = [t for t in farm.tasks if t["type"] == "airplane_cycle"]
     assert len(cycles) == 1
     assert cycles[0]["slot"] == 1
     assert cycles[0]["payload"] == {}
     other = service.reconnect_cellular_for_customer(CUSTOMER_B, rental_b, {})
-    assert other.http_status == 501
+    assert other.http_status == 200
     slots = [t["slot"] for t in farm.tasks if t["type"] == "airplane_cycle"]
     assert slots == [1, 2]
 
@@ -108,7 +108,7 @@ def test_concurrent_reconnect_is_rejected(tmp_path: Path):
     assert second.body["error"] == "remote_access_busy"
     release.set()
     thread.join(timeout=2)
-    assert first_status and first_status[0].http_status == 501
+    assert first_status and first_status[0].http_status == 200
     assert [t["slot"] for t in farm.tasks if t["type"] == "airplane_cycle"] == [1]
 
 
@@ -120,7 +120,7 @@ def test_cooldown_and_timeout(tmp_path: Path):
     )
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     first = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert first.http_status == 501
+    assert first.http_status == 200
     second = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
     assert second.http_status == 429
     assert second.body["error"] == "rate_limited"
@@ -128,7 +128,7 @@ def test_cooldown_and_timeout(tmp_path: Path):
     assert len([t for t in farm.tasks if t["type"] == "airplane_cycle"]) == 1
     clock.now += 31
     third = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert third.http_status == 501
+    assert third.http_status == 200
     farm.airplane_timeout = True
     clock.now += 31
     timed = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
@@ -146,17 +146,16 @@ def test_airplane_cycle_does_not_mutate_esim_voidfix_or_wipe():
             job_id="job-air",
             task_type="airplane_cycle",
             farm_slot_id=2,
-            payload={},
+            payload={"on_seconds": 0},
         ),
         deps=FarmTaskExecutorDeps(command_runner=runner),
     )
-    assert result.http_status == 501
-    assert result.error == "action_not_supported"
-    assert AIRPLANE_UNSUPPORTED_REASON in (result.message or "")
-    assert runner.calls == []
+    assert result.ok is True
+    assert result.http_status == 200
+    joined = " ".join(" ".join(args) for _s, args in runner.calls)
+    assert "cmd connectivity airplane-mode" in joined
     source = (ROOT / "application" / "farm_task_executor.py").read_text(encoding="utf-8")
     assert "run_airplane_cycle_if_supported" in source
-    assert "raw adb shell settings are not exposed" in source
 
 
 def test_stream_setup_mode_and_phone_ready_unchanged(tmp_path: Path):
@@ -168,7 +167,7 @@ def test_stream_setup_mode_and_phone_ready_unchanged(tmp_path: Path):
     assert service.create_remote_access(CUSTOMER_A, None, rental).http_status == 201
     inspects_before = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
     denied = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert denied.http_status == 501
+    assert denied.http_status == 200
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT1_SERIAL
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
@@ -186,7 +185,7 @@ def test_stream_setup_mode_and_phone_ready_unchanged(tmp_path: Path):
     )
     service._reconnect_last.clear()
     again = service.reconnect_cellular_for_customer(CUSTOMER_A, rental, {})
-    assert again.http_status == 501
+    assert again.http_status == 200
     home_ready = service.control_session(CUSTOMER_A, rental, {"action": "home"})
     assert home_ready.http_status == 200
     assert not any(t["type"] == "setup_session_voidfix_cycle" for t in farm.tasks)

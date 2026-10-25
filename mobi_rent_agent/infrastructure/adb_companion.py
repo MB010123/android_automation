@@ -47,6 +47,27 @@ class AdbCommandRunner:
             raise AdbCommandError(f"ADB command failed for serial {serial}: {detail}")
         return AdbCommandResult(stdout=completed.stdout.strip(), stderr=completed.stderr.strip())
 
+    def run_bytes(self, serial: str, arguments: list[str]) -> bytes:
+        """Binary ADB stdout (screencap). Does not decode as text."""
+        command = [self._adb_path, "-s", serial, *arguments]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                timeout=self._timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AdbCommandError(f"ADB command timed out for serial {serial}") from exc
+        except FileNotFoundError as exc:
+            raise AdbCommandError(f"ADB executable not found: {self._adb_path}") from exc
+        except OSError as exc:
+            raise AdbCommandError(f"ADB command could not start for serial {serial}: {exc}") from exc
+        if completed.returncode != 0:
+            detail = (completed.stderr or b"").decode("utf-8", errors="replace").strip()
+            raise AdbCommandError(f"ADB command failed for serial {serial}: {detail or completed.returncode}")
+        return completed.stdout
+
 
 class AdbForwardedJsonClient:
     """Sends one JSON-line request to a device-local abstract socket."""

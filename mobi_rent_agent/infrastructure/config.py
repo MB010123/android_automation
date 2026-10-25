@@ -100,6 +100,7 @@ class AgentConfig:
     # Android package of the VoidFix SMS app on the Pixel. Observation only;
     # never assigned as default SMS without the customer confirming in Android.
     voidfix_android_package: str | None = None
+    preferred_next_slot_ids: tuple[int, ...] = (21,)
     # Customer rental Settings/Back/VoidFix session-layer redirects. Rollback: 0.
     customer_session_restrictions: bool = True
     # Supabase user UUIDs allowed to use /admin/devices/{bay}/live-access.
@@ -281,6 +282,11 @@ def load_config(env_file: str | None = ".env") -> AgentConfig:
                 os.getenv("REMOTE_ACCESS_QR_URL_PREFIXES") or os.getenv("VPS_ESIM_ALLOWED_URL_PREFIXES")
             ),
             voidfix_android_package=(os.getenv("VOIDFIX_ANDROID_PACKAGE") or "").strip() or None,
+            preferred_next_slot_ids=parse_allowed_slot_ids(
+                os.getenv("PREFERRED_NEXT_SLOT_IDS"),
+                default=(21,),
+                name="PREFERRED_NEXT_SLOT_IDS",
+            ),
             customer_session_restrictions=_read_bool("CUSTOMER_SESSION_RESTRICTIONS", True),
             vps_admin_user_ids=_parse_csv(os.getenv("VPS_ADMIN_USER_IDS")),
             admin_live_access_enabled=_read_bool("ADMIN_LIVE_ACCESS_ENABLED", False),

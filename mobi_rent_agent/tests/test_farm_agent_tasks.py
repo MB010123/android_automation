@@ -38,7 +38,21 @@ class FakeRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="", stderr="")
         if arguments[:3] == ["shell", "dumpsys", "activity"]:
             return AdbCommandResult(stdout=self.dumpsys_activity, stderr="")
+        if arguments and arguments[0] == "shell" and "airplane-mode" in " ".join(arguments):
+            if arguments[-1].endswith("enable") or "enable" in " ".join(arguments):
+                return AdbCommandResult(stdout="enabled", stderr="")
+            if arguments[-1].endswith("disable") or "disable" in " ".join(arguments):
+                return AdbCommandResult(stdout="disabled", stderr="")
+            return AdbCommandResult(stdout="disabled", stderr="")
         return AdbCommandResult(stdout="", stderr="")
+
+    def run_bytes(self, serial: str, arguments: list[str]) -> bytes:
+        self.calls.append((serial, arguments))
+        return (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
+            b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
 
 
 class FakeResolver:
@@ -217,19 +231,32 @@ def test_assign_offline_device():
     assert result.http_status == 409
 
 
-def test_airplane_and_voidfix_return_501():
+def test_airplane_mode_runs_and_voidfix_needs_package():
     slot_map = {1: "SERIAL-A"}
-    for task_type in ("airplane_cycle", "voidfix_repair"):
-        req = FarmTaskRequest(job_id="j", task_type=task_type, farm_slot_id=1, payload={})
-        result = execute_farm_task(
-            adb_path="adb",
-            slot_map=slot_map,
-            request=req,
-            agent_config=_config(),
-        )
-        assert result.http_status == 501
-        assert result.error == "action_not_supported"
-        assert result.message
+    runner = FakeRunner()
+    air = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=FarmTaskRequest(
+            job_id="j",
+            task_type="airplane_mode",
+            farm_slot_id=1,
+            payload={"state": "off"},
+        ),
+        agent_config=_config(),
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert air.ok is True
+    assert air.http_status == 200
+    void = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=FarmTaskRequest(job_id="j", task_type="voidfix_repair", farm_slot_id=1, payload={}),
+        agent_config=_config(),
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert void.http_status == 422
+    assert void.error == "invalid_request"
 
 
 def test_setup_session_inspect_uses_mapped_serial():
