@@ -15,7 +15,7 @@ if (!defined('WHMCS')) {
 
 use WHMCS\Database\Capsule;
 
-$allowedProductIds = [41, 42, 43];
+$allowedProductIds = [41];
 if (!defined('MOBI_RENT_ALLOWED_PRODUCT_IDS')) {
     define('MOBI_RENT_ALLOWED_PRODUCT_IDS', $allowedProductIds);
 }
@@ -24,7 +24,7 @@ if (!function_exists('mobirent_isApprovedPhoneProduct')) {
     function mobirent_isApprovedPhoneProduct($packageId): bool
     {
         $packageId = (int) $packageId;
-        $allowed = defined('MOBI_RENT_ALLOWED_PRODUCT_IDS') ? MOBI_RENT_ALLOWED_PRODUCT_IDS : [41, 42, 43];
+        $allowed = defined('MOBI_RENT_ALLOWED_PRODUCT_IDS') ? MOBI_RENT_ALLOWED_PRODUCT_IDS : [41];
         if ($packageId > 0 && in_array($packageId, $allowed, true)) {
             return true;
         }
@@ -135,17 +135,12 @@ function mobirent_vps_emit(string $event, object $hosting, int $invoiceId = 0): 
     if ($userId === '') {
         return;
     }
-    $packageId = (int) ($hosting->packageid ?? 0);
-    $delta = function_exists('mobirent_phoneCountForProduct')
-        ? mobirent_phoneCountForProduct($packageId)
-        : ($packageId === 42 ? 5 : ($packageId === 43 ? 10 : 1));
-    $tier = $delta === 5 ? 'five_phones' : ($delta === 10 ? 'ten_phones' : 'phone');
+    $delta = 1;
     mobirent_vps_post_event([
         'event' => $event,
         'user_id' => $userId,
         'credit_delta' => $delta,
-        'subscription_tier' => $tier,
-        'phone_count' => $delta,
+        'subscription_tier' => 'phone',
         'whmcs_client_id' => $clientId,
         'whmcs_service_id' => (string) ($hosting->id ?? ''),
         'invoice_id' => $invoiceId ? (string) $invoiceId : null,

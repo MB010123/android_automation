@@ -67,7 +67,6 @@ def test_valid_token_returns_200():
     assert result.body["replayed"] is False
     assert result.body["user_id"] == USER
     assert result.body["whmcs_client_id"] == 41
-    assert result.body["phone_count"] == 1
 
 
 def test_react_strictmode_replay_same_fingerprint_is_200():

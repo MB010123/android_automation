@@ -14,49 +14,7 @@ if (!defined('WHMCS')) {
 use WHMCS\Database\Capsule;
 
 if (!defined('MOBI_RENT_ALLOWED_PRODUCT_IDS')) {
-    define('MOBI_RENT_ALLOWED_PRODUCT_IDS', [41, 42, 43]);
-}
-
-if (!function_exists('mobirent_phoneCountForProduct')) {
-    function mobirent_phoneCountForProduct($packageId): int
-    {
-        $packageId = (int) $packageId;
-        if ($packageId === 42) {
-            return 5;
-        }
-        if ($packageId === 43) {
-            return 10;
-        }
-        return 1;
-    }
-}
-
-if (!function_exists('mobirent_phoneCountForClient')) {
-    function mobirent_phoneCountForClient(int $clientId): int
-    {
-        if ($clientId <= 0) {
-            return 1;
-        }
-        try {
-            $packageIds = Capsule::table('tblhosting')
-                ->where('userid', $clientId)
-                ->whereIn('domainstatus', ['Active', 'Pending', 'Completed'])
-                ->pluck('packageid');
-        } catch (\Throwable $exc) {
-            return 1;
-        }
-        $max = 1;
-        foreach ($packageIds as $packageId) {
-            if (!mobirent_isApprovedPhoneProduct($packageId)) {
-                continue;
-            }
-            $count = mobirent_phoneCountForProduct((int) $packageId);
-            if ($count > $max) {
-                $max = $count;
-            }
-        }
-        return $max;
-    }
+    define('MOBI_RENT_ALLOWED_PRODUCT_IDS', [41]);
 }
 
 if (!function_exists('mobirent_isApprovedPhoneProduct')) {
@@ -167,9 +125,6 @@ function mobirent_buildDashboardSsoUrl(int $clientId): ?string
         'client_id' => $clientId,
         'email' => $email,
         'user_id' => trim($supabaseUserId),
-        'phone_count' => function_exists('mobirent_phoneCountForClient')
-            ? mobirent_phoneCountForClient($clientId)
-            : 1,
         'nonce' => bin2hex(random_bytes(16)),
         'iat' => $now,
         'exp' => $now + 60,

@@ -164,11 +164,6 @@ class WhmcsSsoService:
                     ensure(user_id, email)
                 except (TypeError, ValueError, OSError):
                     logger.warning("whmcs_sso_profile_failed")
-        phone_count = _optional_int(claims.get("phone_count"))
-        if phone_count is None or phone_count < 1:
-            phone_count = 1
-        if phone_count > 20:
-            phone_count = 20
         return {
             "ok": True,
             "authenticated": True,
@@ -176,7 +171,6 @@ class WhmcsSsoService:
             "user_id": user_id,
             "email": email or None,
             "whmcs_client_id": client_id,
-            "phone_count": phone_count,
         }
 
     def _purge_locked(self, now: float) -> None:
