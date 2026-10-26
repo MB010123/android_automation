@@ -348,6 +348,8 @@ def test_schema_migration_adds_qr_uploaded_at(tmp_path: Path):
         now=1.0,
     )
     assert session.qr_uploaded_at is None
+    assert session.qr_walk_completed is False
+    assert session.setup_ui_state is None
     assert session.setup_complete is False
     assert session.setup_phase == NEW_RENTAL_SETUP_PHASE
     version = sqlite3.connect(str(path)).execute("SELECT version FROM remote_access_schema_version").fetchone()[0]

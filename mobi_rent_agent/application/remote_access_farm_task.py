@@ -78,6 +78,9 @@ SAMSUNG_GALLERY_QR_PATHS = (
     f"{PICTURES_DIR}/esim_qr.png",
     f"{DCIM_DIR}/esim_qr.png",
 )
+PLACED_ESIM_QR_PATHS = SAMSUNG_GALLERY_QR_PATHS
+QR_PREFIX = "mobirent_esim_qr_"
+QR_WALK_MARKER_PATH = f"{PICTURES_DIR}/.mobirent_qr_walk_done"
 MAX_QR_IMAGE_BYTES = 5 * 1024 * 1024
 _RENTAL_TOKEN_RE = re.compile(r"[^a-z0-9]")
 
@@ -134,6 +137,49 @@ def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool
         return True
     except AdbCommandError:
         return False
+
+
+def delete_placed_esim_qr(runner: AdbCommandRunner, serial: str) -> list[str]:
+    """Remove Gallery aliases and hashed QR files so they cannot be re-picked."""
+    removed: list[str] = []
+    directories = (PICTURES_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
+    targets = list(PLACED_ESIM_QR_PATHS)
+    for directory in directories:
+        try:
+            listing = runner.run(serial, ["shell", "ls", directory]).stdout or ""
+        except AdbCommandError:
+            listing = ""
+        for name in listing.split():
+            if name.startswith(QR_PREFIX):
+                targets.append(f"{directory}/{name}")
+    seen: set[str] = set()
+    for path in targets:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            runner.run(serial, ["shell", "rm", "-f", path])
+            _media_scan(runner, serial, path)
+            removed.append(path)
+        except AdbCommandError:
+            continue
+    return removed
+
+
+def write_qr_walk_marker(runner: AdbCommandRunner, serial: str, token: str | None = None) -> None:
+    marker = str(token or "1").strip() or "1"
+    try:
+        runner.run(serial, ["shell", f"echo {marker} > {QR_WALK_MARKER_PATH}"])
+    except AdbCommandError:
+        return
+
+
+def read_qr_walk_marker(runner: AdbCommandRunner, serial: str) -> str | None:
+    try:
+        text = (runner.run(serial, ["shell", "cat", QR_WALK_MARKER_PATH]).stdout or "").strip()
+    except AdbCommandError:
+        return None
+    return text or None
 
 
 def _copy_samsung_gallery_aliases(

@@ -16,10 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from application.esim_setup_ui_state import SETUP_UI_COMPLETED, SETUP_UI_WORKING
 from application.in_app_control_policy import public_allowed_controls
 from domain.remote_access import public_activation_view
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 STATUS_ACTIVE = "active"
 STATUS_INITIALIZED = "initialized"
@@ -74,6 +75,9 @@ class RemoteAccessSession:
     setup_complete: bool = False
     voidfix_observed: str | None = None
     qr_uploaded_at: float | None = None
+    qr_sha256: str | None = None
+    qr_walk_completed: bool = False
+    setup_ui_state: str | None = None
 
     def is_active(self, now: float) -> bool:
         return self.status == STATUS_ACTIVE and now < self.expires_at
@@ -115,6 +119,10 @@ class RemoteAccessSession:
             "coordinate_space": "native_device_pixels",
             "ui_state": ui_state,
         }
+        if self.setup_ui_state:
+            body["setup_ui_state"] = str(self.setup_ui_state)
+        elif confirmed:
+            body["setup_ui_state"] = SETUP_UI_COMPLETED
         body.update(
             public_activation_view(
                 prepare_state=self.prepare_state,
@@ -167,7 +175,10 @@ class RemoteAccessSessionStore:
                     setup_phase TEXT,
                     setup_complete INTEGER,
                     voidfix_observed TEXT,
-                    qr_uploaded_at REAL
+                    qr_uploaded_at REAL,
+                    qr_sha256 TEXT,
+                    qr_walk_completed INTEGER,
+                    setup_ui_state TEXT
                 )
                 """
             )
@@ -204,6 +215,15 @@ class RemoteAccessSessionStore:
         if version < 5 or "qr_uploaded_at" not in columns:
             if "qr_uploaded_at" not in columns:
                 self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN qr_uploaded_at REAL")
+        if version < 6 or "qr_walk_completed" not in columns:
+            if "qr_sha256" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN qr_sha256 TEXT")
+            if "qr_walk_completed" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE remote_access_sessions ADD COLUMN qr_walk_completed INTEGER"
+                )
+            if "setup_ui_state" not in columns:
+                self._conn.execute("ALTER TABLE remote_access_sessions ADD COLUMN setup_ui_state TEXT")
         self._conn.execute("UPDATE remote_access_schema_version SET version = ?", (SCHEMA_VERSION,))
         self._conn.commit()
 
@@ -211,7 +231,8 @@ class RemoteAccessSessionStore:
         "rental_id, customer_id, slot_id, device_id, platform_username, status, "
         "created_at, expires_at, ended_at, prepare_state, prepare_detail, prepare_job_id, "
         "activation_observed, activation_observed_at, activation_evidence, "
-        "platform_secret, setup_phase, setup_complete, voidfix_observed, qr_uploaded_at"
+        "platform_secret, setup_phase, setup_complete, voidfix_observed, qr_uploaded_at, "
+        "qr_sha256, qr_walk_completed, setup_ui_state"
     )
 
     @staticmethod
@@ -244,6 +265,9 @@ class RemoteAccessSessionStore:
             setup_complete=bool(row[17]) if len(row) > 17 and row[17] else False,
             voidfix_observed=str(row[18]) if len(row) > 18 and row[18] else None,
             qr_uploaded_at=float(row[19]) if len(row) > 19 and row[19] is not None else None,
+            qr_sha256=str(row[20]).strip() if len(row) > 20 and row[20] else None,
+            qr_walk_completed=bool(row[21]) if len(row) > 21 and row[21] else False,
+            setup_ui_state=str(row[22]).strip() if len(row) > 22 and row[22] else None,
         )
 
     def get(self, rental_id: str) -> RemoteAccessSession | None:
@@ -251,6 +275,18 @@ class RemoteAccessSessionStore:
             row = self._conn.execute(
                 f"SELECT {self._COLUMNS} FROM remote_access_sessions WHERE rental_id = ?",
                 (str(rental_id),),
+            ).fetchone()
+        return self._row_to_session(row) if row else None
+
+    def latest_for_slot(self, slot_id: int) -> RemoteAccessSession | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"""
+                SELECT {self._COLUMNS} FROM remote_access_sessions
+                WHERE slot_id = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (int(slot_id),),
             ).fetchone()
         return self._row_to_session(row) if row else None
 
@@ -285,7 +321,7 @@ class RemoteAccessSessionStore:
             self._conn.execute(
                 f"""
                 INSERT OR REPLACE INTO remote_access_sessions ({self._COLUMNS})
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.rental_id,
@@ -308,6 +344,9 @@ class RemoteAccessSessionStore:
                     1 if session.setup_complete else 0,
                     session.voidfix_observed,
                     session.qr_uploaded_at,
+                    session.qr_sha256,
+                    1 if session.qr_walk_completed else 0,
+                    session.setup_ui_state,
                 ),
             )
             self._conn.commit()
@@ -341,13 +380,58 @@ class RemoteAccessSessionStore:
         self.upsert(session)
         return session
 
-    def mark_qr_uploaded(self, rental_id: str, *, uploaded_at: float | None = None) -> None:
+    def mark_qr_uploaded(
+        self,
+        rental_id: str,
+        *,
+        uploaded_at: float | None = None,
+        qr_sha256: str | None = None,
+    ) -> None:
         current = self.get(rental_id)
         if current is None:
             return
-        if current.qr_uploaded_at is not None:
+        sha = str(qr_sha256 or "").strip().lower() or None
+        stamp = time.time() if uploaded_at is None else float(uploaded_at)
+        same_qr = bool(sha and current.qr_sha256 == sha)
+        if current.qr_uploaded_at is not None and (not sha or same_qr):
+            if sha and not current.qr_sha256:
+                self.upsert(replace(current, qr_sha256=sha))
             return
-        self.upsert(replace(current, qr_uploaded_at=time.time() if uploaded_at is None else float(uploaded_at)))
+        self.upsert(
+            replace(
+                current,
+                qr_uploaded_at=stamp,
+                qr_sha256=sha or current.qr_sha256,
+                qr_walk_completed=False if sha and not same_qr else current.qr_walk_completed,
+                setup_ui_state=SETUP_UI_WORKING,
+            )
+        )
+
+    def mark_qr_walk_completed(
+        self,
+        rental_id: str,
+        *,
+        setup_ui_state: str | None = None,
+    ) -> None:
+        current = self.get(rental_id)
+        if current is None:
+            return
+        self.upsert(
+            replace(
+                current,
+                qr_walk_completed=True,
+                setup_ui_state=setup_ui_state or current.setup_ui_state or SETUP_UI_WORKING,
+            )
+        )
+
+    def set_setup_ui_state(self, rental_id: str, state: str, *, setup_complete: bool | None = None) -> None:
+        current = self.get(rental_id)
+        if current is None:
+            return
+        kwargs: dict[str, Any] = {"setup_ui_state": str(state)}
+        if setup_complete is not None:
+            kwargs["setup_complete"] = bool(setup_complete)
+        self.upsert(replace(current, **kwargs))
 
     def end(self, rental_id: str, *, status: str, now: float | None = None) -> RemoteAccessSession | None:
         current = self.get(rental_id)

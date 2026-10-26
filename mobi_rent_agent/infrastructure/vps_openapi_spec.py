@@ -611,6 +611,9 @@ def _schemas() -> dict[str, Any]:
                 "(never a placeholder). `cellular_status` is always `unknown` (no approved "
                 "live radio reader; not inferred from Wi-Fi/ADB). IMEI1 is not returned. "
                 "Includes integer `slot_id` and ADB `serial` from slot_map. "
+                "Spinner-gated eSIM setup exposes `setup_ui_state` "
+                "(`working` | `awaiting_human_click` | `completed`) so the frontend "
+                "hides the phone behind a spinner except for the 1–2 human confirmation taps. "
                 "No GADS URLs, tokens, or workspace IDs."
             ),
             "properties": {
@@ -645,6 +648,21 @@ def _schemas() -> dict[str, Any]:
                 "phone_number": {"type": "string", "nullable": True},
                 "phone_number_status": {"type": "string", "enum": ["unknown", "known"]},
                 "cellular_status": {"type": "string", "enum": ["unknown"]},
+                "setup_ui_state": {
+                    "type": "string",
+                    "enum": ["working", "awaiting_human_click", "completed"],
+                    "description": (
+                        "working: hide the phone and show a spinner while the bot walks "
+                        "SIM Manager / Gallery or the eSIM is downloading. "
+                        "awaiting_human_click: reveal the phone only for Add/Confirm/Download. "
+                        "completed: hide the phone and finish setup."
+                    ),
+                },
+                "setup_ui_prompt": {
+                    "type": "string",
+                    "description": "Human-facing prompt when setup_ui_state is awaiting_human_click.",
+                },
+                "setup_human_click": {"type": "string"},
             },
         },
         "EsimAssignRequest": {

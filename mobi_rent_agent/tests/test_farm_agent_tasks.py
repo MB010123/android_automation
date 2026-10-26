@@ -322,6 +322,34 @@ def test_setup_session_inspect_recover_uses_samsung_sim_manager():
     assert "SIM_CARD_SETTINGS" not in joined
 
 
+def test_setup_session_inspect_skips_recover_after_qr_walk():
+    from application.setup_activity_guard import SAMSUNG_SIM_MGR_COMPONENT
+
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 com.android.settings/.spa.SpaActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=21,
+        payload={"phase": "esim", "recover": True, "qr_walk_completed": True},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    assert result.details["recovered"] is False
+    starts = [args for _serial, args in runner.calls if args[:3] == ["shell", "am", "start"]]
+    assert starts == []
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
+
+
 def test_setup_session_input_scales_normalized_tap_to_wm_size():
     slot_map = {21: "RFCNB056WEV"}
     runner = FakeRunner()

@@ -25,6 +25,7 @@ from application.esim_auto_activation_farm_task import (
     ESIM_AUTO_ACTIVATION_TASK,
     SAMSUNG_ESIM_DEEPLINK_PREFIX,
     SIM_CARD_MGR_COMPONENT,
+    UI_DUMP_REMOTE_PATH,
     decode_lpa_activation_code,
     find_album_tile_tap,
     find_confirm_tap,
@@ -36,6 +37,7 @@ from application.esim_auto_activation_farm_task import (
     run_esim_auto_activation,
     smdp_host_from_code,
 )
+from application.remote_access_farm_task import QR_WALK_MARKER_PATH
 from application.farm_task_types import FarmTaskRequest
 from infrastructure.adb_companion import AdbCommandResult, AdbCommandRunner
 from tests.test_remote_access_poc import _agent_config
@@ -178,6 +180,11 @@ class _ActivationRunner(AdbCommandRunner):
             text = self._logcat_polls[index] if self._logcat_polls else ""
             return AdbCommandResult(stdout=text, stderr="")
         if arguments[:2] == ["shell", "cat"]:
+            path = arguments[2] if len(arguments) > 2 else ""
+            if path == QR_WALK_MARKER_PATH:
+                return AdbCommandResult(stdout="", stderr="")
+            if path != UI_DUMP_REMOTE_PATH and not str(path).endswith(".xml"):
+                return AdbCommandResult(stdout="", stderr="")
             index = min(self._ui_index, len(self._ui_polls) - 1)
             self._ui_index += 1
             text = self._ui_polls[index] if self._ui_polls else _ui()
@@ -221,13 +228,16 @@ def _activate(runner: AdbCommandRunner, **kwargs: Any):
     )
 
 
-def test_open_qr_picker_stops_on_gallery_and_does_not_go_home():
-    runner = _ActivationRunner(ui_polls=WALK_UI_POLLS)
+def test_open_qr_picker_walks_through_done_deletes_qr_and_does_not_go_home():
+    runner = _ActivationRunner(ui_polls=WALK_UI_POLLS + [CONFIRM_UI])
     result = _activate(runner, request=_req(mode="open_qr_picker"))
     assert result.ok is True, (result.error, result.message)
     assert result.details["method"] == "open_qr_picker"
     assert result.details["opened"] is True
     assert result.details["activated"] is False
+    assert result.details["qr_walk_completed"] is True
+    assert result.details["qr_deleted"] is True
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
     assert result.details["steps_done"] == [
         "open_sim_manager",
         "add_esim",
@@ -235,7 +245,11 @@ def test_open_qr_picker_stops_on_gallery_and_does_not_go_home():
         "scan_qr_code",
         "open_gallery",
         "open_album",
+        "pick_newest_image",
+        "confirm_done",
     ]
+    rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
+    assert any(args[-1].endswith("esim_qr.png") for args in rms)
     # Wake/home happen at the start of the walk; cleanup must not send home again.
     homes = [args for _, args in runner.calls if args == ["shell", "input", "keyevent", "3"]]
     assert len(homes) == 1
@@ -243,6 +257,18 @@ def test_open_qr_picker_stops_on_gallery_and_does_not_go_home():
     aosp = " ".join(" ".join(args) for _, args in runner.calls)
     assert "SIM_CARD_SETTINGS" not in aosp
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in aosp
+    # Human confirmation is not auto-tapped in the gated picker path.
+    assert "add" not in result.details["taps"]
+
+
+def test_qr_walk_is_skipped_when_already_completed():
+    runner = _ActivationRunner(ui_polls=WALK_UI_POLLS)
+    result = _activate(runner, request=_req(mode="gated_setup", qr_walk_completed=True))
+    assert result.ok is True
+    assert result.details["skipped"] is True
+    assert result.details["qr_walk_completed"] is True
+    assert runner.commands("shell", "am", "start") == []
+    assert runner.tap_points() == []
 
 
 def test_aosp_sims_fragment_is_detected():

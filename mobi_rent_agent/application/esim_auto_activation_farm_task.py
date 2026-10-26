@@ -43,11 +43,21 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any, Callable
 
+from application.esim_setup_ui_state import (
+    SETUP_UI_AWAITING,
+    SETUP_UI_COMPLETED,
+    SETUP_UI_WORKING,
+    classify_setup_ui,
+    public_setup_ui_body,
+)
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.remote_access_farm_task import (
     _is_samsung_renter_device,
     _manufacturer_from_adb,
     _place_qr_config_gate,
+    delete_placed_esim_qr,
+    read_qr_walk_marker,
+    write_qr_walk_marker,
 )
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
@@ -444,9 +454,39 @@ def run_esim_auto_activation(
     outcome: str | None = None
     detail: str | None = None
     mode = str(request.payload.get("mode") or "").strip().lower()
-    open_picker = mode in {"open_qr_picker", "open_gallery"}
-    method = "deeplink" if code else ("open_qr_picker" if open_picker else "one_ui_flow")
+    open_picker = mode in {"open_qr_picker", "open_gallery", "gated_setup"}
+    method = "deeplink" if code else (mode if open_picker else "one_ui_flow")
     leave_on_screen = open_picker
+    qr_sha256 = str(request.payload.get("qr_sha256") or "").strip().lower()
+    walk_already_done = bool(request.payload.get("qr_walk_completed", False))
+    esim_present = bool(request.payload.get("esim_profile_present", False))
+    if not walk_already_done:
+        marker = read_qr_walk_marker(runner, serial)
+        if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
+            walk_already_done = True
+    if walk_already_done or esim_present:
+        deleted = delete_placed_esim_qr(runner, serial)
+        logger.info(
+            "esim_qr_walk_skipped slot=%s job_id=%s reason=%s",
+            slot_id,
+            request.job_id,
+            "esim_present" if esim_present else "walk_completed",
+        )
+        return _result(
+            ok=True,
+            http_status=200,
+            job_id=request.job_id,
+            message="esim_qr_walk_skipped",
+            method=method,
+            steps_done=[],
+            taps=[],
+            activated=False,
+            opened=False,
+            skipped=True,
+            qr_walk_completed=True,
+            qr_deleted=bool(deleted),
+            setup_ui_state=SETUP_UI_WORKING if not esim_present else SETUP_UI_COMPLETED,
+        )
     try:
         runner.run(serial, ["shell", "logcat", "-c"])
         runner.run(serial, ["shell", "input", "keyevent", "224"])  # wake
@@ -478,7 +518,8 @@ def run_esim_auto_activation(
                 clock=clock,
                 poll_interval_seconds=poll_interval_seconds,
                 step_timeout_seconds=step_timeout_seconds,
-                stop_after="open_album" if open_picker else None,
+                stop_after="confirm_done" if open_picker else None,
+                on_qr_consumed=lambda: delete_placed_esim_qr(runner, serial),
             )
             if walk_error is not None:
                 failed_step, screen_hint = walk_error
@@ -498,23 +539,46 @@ def run_esim_auto_activation(
                     opened=False,
                 )
             if open_picker:
+                deleted = delete_placed_esim_qr(runner, serial)
+                write_qr_walk_marker(runner, serial, qr_sha256 or "1")
+                try:
+                    ui_xml = ui.dump()
+                except AdbCommandError:
+                    ui_xml = ""
+                classification = classify_setup_ui(
+                    ui_xml,
+                    walk_completed=True,
+                    walk_in_progress=False,
+                )
                 logger.info(
-                    "esim_open_qr_picker_ok slot=%s job_id=%s steps=%s",
+                    "esim_gated_setup_ok slot=%s job_id=%s steps=%s state=%s",
                     slot_id,
                     request.job_id,
                     steps_done,
+                    classification.state,
                 )
-                return _result(
-                    ok=True,
-                    http_status=200,
-                    job_id=request.job_id,
-                    message="esim_qr_picker_opened",
-                    method=method,
-                    steps_done=steps_done,
-                    taps=taps,
-                    activated=False,
-                    opened=True,
-                )
+                if classification.state == SETUP_UI_COMPLETED:
+                    leave_on_screen = False
+                body = {
+                    "ok": True,
+                    "http_status": 200,
+                    "job_id": request.job_id,
+                    "message": "esim_gated_setup_ready",
+                    "method": method,
+                    "steps_done": steps_done,
+                    "taps": taps,
+                    "activated": False,
+                    "opened": True,
+                    "qr_walk_completed": True,
+                    "qr_deleted": bool(deleted),
+                    **public_setup_ui_body(classification),
+                }
+                if classification.state == SETUP_UI_AWAITING and not classification.prompt:
+                    body["setup_ui_state"] = SETUP_UI_AWAITING
+                    body["setup_ui_prompt"] = "Please tap 'Add' / 'Confirm' on the screen below"
+                if classification.state == SETUP_UI_WORKING and "setup_ui_state" not in body:
+                    body["setup_ui_state"] = SETUP_UI_WORKING
+                return _result(**body)
 
         deadline = clock() + float(timeout_seconds)
         while clock() < deadline:
@@ -588,6 +652,8 @@ def run_esim_auto_activation(
                 pass
 
     if outcome == "success":
+        deleted = delete_placed_esim_qr(runner, serial)
+        write_qr_walk_marker(runner, serial, qr_sha256 or "1")
         logger.info(
             "esim_auto_activation_ok slot=%s job_id=%s method=%s state=%s taps=%s",
             slot_id,
@@ -608,6 +674,9 @@ def run_esim_auto_activation(
             state_transitions=transitions,
             taps=taps,
             activated=True,
+            qr_walk_completed=True,
+            qr_deleted=bool(deleted),
+            setup_ui_state=SETUP_UI_COMPLETED,
         )
     error = "activation_failed" if outcome == "failure" else "activation_timeout"
     logger.warning(
@@ -664,6 +733,7 @@ def _walk_one_ui_flow(
     poll_interval_seconds: float,
     step_timeout_seconds: float,
     stop_after: str | None = None,
+    on_qr_consumed: Callable[[], Any] | None = None,
 ) -> tuple[str, str] | None:
     """Walk SIM manager → … → Gallery Done. None on success.
 
@@ -713,6 +783,11 @@ def _walk_one_ui_flow(
         ui.tap(target[0], target[1])
         taps.append(step.name)
         steps_done.append(step.name)
+        if on_qr_consumed is not None and step.name in {"pick_newest_image", "confirm_done"}:
+            try:
+                on_qr_consumed()
+            except AdbCommandError:
+                pass
         if not step.done_markers:
             return None  # terminal step tapped; monitor phase takes over
         deadline = clock() + float(step_timeout_seconds)

@@ -335,7 +335,13 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     assert auto and auto[-1]["slot"] == 21
     assert auto[-1]["payload"]["actor"] == "renter"
     assert auto[-1]["payload"]["rental_id"] == rental
-    assert auto[-1]["payload"]["mode"] == "open_qr_picker"
+    assert auto[-1]["payload"]["mode"] == "gated_setup"
+    assert auto[-1]["payload"]["qr_walk_completed"] is False
+    farm.tasks.clear()
+    again = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert again.http_status == 200
+    auto_again = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
+    assert auto_again == [] or all(t["payload"].get("qr_walk_completed") for t in auto_again)
     assert "image_base64" in auto[-1]["payload"]
     assert "serial" not in auto[-1]["payload"]
     assert "RFCNB056WEV" not in json.dumps(result.body)

@@ -166,6 +166,23 @@ def decide_setup_guard(
     return GuardDecision(False, component, current, recover, "left_setup")
 
 
+def should_recover_setup(
+    *,
+    allowed: bool,
+    qr_walk_completed: bool = False,
+    esim_profile_present: bool = False,
+    activation_confirmed: bool = False,
+) -> bool:
+    """Recover only while the QR walk is still outstanding.
+
+    Once this QR has been walked or an eSIM is present/downloading, never
+    re-launch SIM Manager / Add eSIM from the background guard.
+    """
+    if qr_walk_completed or esim_profile_present or activation_confirmed:
+        return False
+    return not bool(allowed)
+
+
 def _esim_allowed(package: str, lowered: str) -> bool:
     if package in _ESIM_PACKAGES:
         return True

@@ -11,10 +11,14 @@ from typing import Any
 
 from application.device_display_size import map_touch_to_native, parse_wm_size
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
+from application.esim_setup_ui_state import classify_setup_ui, public_setup_ui_body
 from application.remote_access_farm_task import (
     DCIM_CAMERA_DIR,
     PICTURES_DIR,
+    QR_PREFIX,
+    QR_WALK_MARKER_PATH,
     _is_samsung_renter_device,
+    delete_placed_esim_qr,
 )
 from application.setup_activity_guard import (
     PHASE_ESIM,
@@ -23,12 +27,13 @@ from application.setup_activity_guard import (
     decide_setup_guard,
     parse_foreground_activity,
     parse_sms_role_holders,
+    should_recover_setup,
 )
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 
 logger = logging.getLogger("farm_agent.setup_session")
 
-QR_PREFIX = "mobirent_esim_qr_"
+UI_DUMP_REMOTE_PATH = "/sdcard/mobirent_setup_ui.xml"
 SYSTEM_SMS_PACKAGES = frozenset(
     {
         "com.google.android.apps.messaging",
@@ -119,6 +124,9 @@ def run_setup_session_inspect(
     phase = str(payload.get("phase") or "esim").strip().lower()
     voidfix_package = str(payload.get("voidfix_package") or "").strip() or None
     recover = bool(payload.get("recover", False))
+    qr_walk_completed = bool(payload.get("qr_walk_completed", False))
+    esim_profile_present = bool(payload.get("esim_profile_present", False))
+    activation_confirmed = bool(payload.get("activation_confirmed", False))
     runner = command_runner
     try:
         activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
@@ -140,7 +148,12 @@ def run_setup_session_inspect(
         samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, manufacturer)
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, ValueError, TypeError):
         samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, None)
-    if recover and not decision.allowed:
+    if should_recover_setup(
+        allowed=decision.allowed,
+        qr_walk_completed=qr_walk_completed,
+        esim_profile_present=esim_profile_present,
+        activation_confirmed=activation_confirmed,
+    ) and recover:
         recover_args: list[str] | None = None
         if samsung and phase == PHASE_ESIM:
             # Never android.settings.SIM_CARD_SETTINGS / MANAGE_ALL_SIM on One UI.
@@ -179,6 +192,36 @@ def run_setup_session_inspect(
             voidfix_running = voidfix_package in (services or "")
         except (AdbCommandError, OSError, subprocess.TimeoutExpired):
             voidfix_running = False
+    if not qr_walk_completed:
+        qr_walk_completed = _marker_says_walk_done(
+            runner, adb_path, serial, str(payload.get("qr_sha256") or "")
+        )
+    ui_xml = _dump_setup_ui(runner, adb_path, serial)
+    classification = classify_setup_ui(
+        ui_xml,
+        activity,
+        walk_completed=qr_walk_completed,
+        walk_in_progress=bool(payload.get("walk_in_progress", False)),
+        activation_confirmed=activation_confirmed,
+        esim_profile_present=esim_profile_present,
+    )
+    qr_deleted: list[str] = []
+    lowered_ui = (ui_xml or "").lower()
+    consume_qr = (
+        qr_walk_completed
+        or esim_profile_present
+        or activation_confirmed
+        or classification.state == "completed"
+        or classification.reason in {"confirm_dialog", "confirm_button", "success_copy", "esim_installed"}
+        or "pinch or spread" in lowered_ui
+    )
+    if consume_qr:
+        qr_deleted = _delete_qr_files(runner, adb_path, serial)
+    if classification.state == "completed":
+        try:
+            _shell(runner, adb_path, serial, ["input", "keyevent", "3"])
+        except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+            pass
     details = {
         "activity": activity,
         "allowed": bool(decision.allowed),
@@ -188,8 +231,69 @@ def run_setup_session_inspect(
         "sms_role_holder": sms_holder,
         "voidfix_is_default_sms": voidfix_is_sms,
         "voidfix_running": voidfix_running,
+        "qr_walk_completed": qr_walk_completed or classification.state == "completed",
+        "qr_deleted": bool(qr_deleted),
+        **public_setup_ui_body(classification),
     }
     return FarmTaskResult(ok=True, http_status=200, details=details)
+
+
+def _dump_setup_ui(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+) -> str:
+    try:
+        _shell(runner, adb_path, serial, ["uiautomator", "dump", UI_DUMP_REMOTE_PATH])
+        return _shell(runner, adb_path, serial, ["cat", UI_DUMP_REMOTE_PATH])
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _marker_says_walk_done(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+    qr_sha256: str,
+) -> bool:
+    try:
+        text = _shell(runner, adb_path, serial, ["cat", QR_WALK_MARKER_PATH]).strip()
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+        return False
+    if not text:
+        return False
+    sha = str(qr_sha256 or "").strip().lower()
+    if sha:
+        return sha in text.lower()
+    return True
+
+
+def _delete_qr_files(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+) -> list[str]:
+    if runner is not None:
+        try:
+            return delete_placed_esim_qr(runner, serial)
+        except AdbCommandError:
+            return []
+    removed: list[str] = []
+    try:
+        from application.remote_access_farm_task import PLACED_ESIM_QR_PATHS
+
+        for path in PLACED_ESIM_QR_PATHS:
+            _shell(runner, adb_path, serial, ["rm", "-f", path])
+            removed.append(path)
+        for directory in (PICTURES_DIR, DCIM_CAMERA_DIR, "/sdcard/DCIM"):
+            listing = _shell(runner, adb_path, serial, ["ls", directory])
+            for name in (listing or "").split():
+                if name.startswith(QR_PREFIX):
+                    _shell(runner, adb_path, serial, ["rm", "-f", f"{directory}/{name}"])
+                    removed.append(f"{directory}/{name}")
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+        return removed
+    return removed
 
 
 def run_setup_session_input(
