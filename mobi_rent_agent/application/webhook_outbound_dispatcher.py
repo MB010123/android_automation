@@ -51,11 +51,13 @@ class WebhookOutboundDispatcher:
         farm_client: FarmSmsClient | None,
         policy: WebhookReplyPolicy | None = None,
         max_dispatch_attempts: int = 3,
+        cleanup_store: Any = None,
     ) -> None:
         self._jobs = job_store
         self._farm = farm_client
         self._policy = policy or load_webhook_reply_policy()
         self._max_attempts = max(1, max_dispatch_attempts)
+        self._cleanup = cleanup_store
 
     def process_inbound(
         self,
@@ -83,6 +85,18 @@ class WebhookOutboundDispatcher:
         rule = rule_for_inbound_slot(self._policy, inbound_slot)
         if rule is None:
             return {"dispatched": False, "reason": "no_reply_rule"}
+        cleanup = self._cleanup
+        disabled_check = getattr(cleanup, "is_disabled", None) if cleanup is not None else None
+        if callable(disabled_check):
+            inbound_disabled = bool(inbound_slot is not None and disabled_check(int(inbound_slot)))
+            sender_disabled = bool(disabled_check(int(rule.sender_slot)))
+            if inbound_disabled or sender_disabled:
+                return {
+                    "dispatched": False,
+                    "reason": "rental_disabled",
+                    "error": "rental_disabled",
+                    "http_status": 403,
+                }
 
         if self._farm is None:
             return {"dispatched": False, "reason": "farm_agent_not_configured"}

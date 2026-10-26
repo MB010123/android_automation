@@ -754,9 +754,17 @@ def _schemas() -> dict[str, Any]:
         },
         "AdminLiveAccessControlRequest": {
             "type": "object",
-            "required": ["session_id", "action"],
+            "required": ["action"],
             "properties": {
-                "session_id": {"type": "string", "format": "uuid"},
+                "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Required for touch/nav. Not required for airplane_mode.",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Airplane Mode on/off. Accepted with action=airplane_mode or alone.",
+                },
                 "action": {
                     "type": "string",
                     "enum": [
@@ -1250,7 +1258,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "(swipe accepts `start_x`/`start_y`/`end_x`/`end_y` or `x`/`y`/`x2`/`y2`, optional `duration_ms`). "
                     "Home, Recents, and rotate are semantic actions with no keycodes. Shade/QS and top-edge "
                     "pull-downs are blocked while `CUSTOMER_SESSION_RESTRICTIONS` is on. "
-                    "`airplane_mode` with `state=on|off` returns `501 action_not_supported` on current Android 16. "
+                    "`airplane_mode` with `state=on|off` or `enabled=true|false` uses Farm `cmd connectivity airplane-mode`. "
                     "The semantic `settings` action opens Add eSIM "
                     "(`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`), not the Settings homepage. "
                     "Assigned customers have full normal Android access from session start — before, "
@@ -1761,9 +1769,14 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "post": {
                 "tags": ["Farm management"],
                 "summary": "Toggle Airplane Mode via cmd connectivity",
+                "description": (
+                    "Farm `airplane_mode` task (`cmd connectivity airplane-mode`). "
+                    "Body accepts `state=on|off` or `enabled=true|false`. "
+                    "Returns `{ok:true, enabled:bool}`."
+                ),
                 "security": bearer,
                 "parameters": [bay_param],
-                "responses": {"200": {"description": "Airplane mode applied"}},
+                "responses": {"200": {"description": "{ok:true, enabled:bool}"}},
             }
         },
         "/farm/slots/{bay}/about-phone-screenshot": {
@@ -1778,10 +1791,119 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "/farm/slots/{bay}/disable-rental": {
             "post": {
                 "tags": ["Farm management"],
-                "summary": "Hard-lock a rental: terminate stream and block renter actions",
+                "summary": "Hard-lock a rental: terminate stream, airplane on, block SMS",
+                "description": (
+                    "Sets `rental_disabled=true`, terminates the customer stream, and immediately "
+                    "turns Airplane Mode ON so VoidFix/GHL cannot send cellular SMS. Outbound SMS, "
+                    "VoidFix repair, and webhook auto-replies then return `403 rental_disabled`."
+                ),
                 "security": bearer,
                 "parameters": [bay_param],
-                "responses": {"200": {"description": "Rental disabled"}},
+                "responses": {"200": {"description": "Rental disabled and airplane mode on"}},
+            }
+        },
+        "/farm/slots/{bay}/enable-rental": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Clear rental_disabled and restore cellular",
+                "description": (
+                    "Sets `rental_disabled=false` and immediately turns Airplane Mode OFF so the "
+                    "phone reconnects to cellular."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Rental enabled and airplane mode off"}},
+            }
+        },
+        "/admin/devices/{bay}/disable-rental": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Disable rental (same as /farm/slots/{bay}/disable-rental)",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Rental disabled and airplane mode on"}},
+            }
+        },
+        "/admin/devices/{bay}/enable-rental": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Enable rental (same as /farm/slots/{bay}/enable-rental)",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Rental enabled and airplane mode off"}},
+            }
+        },
+        "/admin/devices/{bay}/force-available": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Clear holds and restore cellular",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Bay is available"}},
+            }
+        },
+        "/admin/devices/{bay}/cleanup-verified": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Verify cleanup, clear rental_disabled, restore cellular",
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "Cleanup verified"}},
+            }
+        },
+        "/admin/devices/{bay}/airplane-mode": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Airplane Mode via Farm airplane_mode task",
+                "description": (
+                    "Same Farm `airplane_mode` task as `/farm/slots/{bay}/airplane-mode`. "
+                    "Body accepts `state=on|off` or `enabled=true|false`. Returns `{ok:true, enabled:bool}`."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "responses": {"200": {"description": "{ok:true, enabled:bool}"}},
+            }
+        },
+        "/admin/live-access/{slot_id}/airplane-mode": {
+            "post": {
+                "tags": ["Admin live access"],
+                "summary": "Admin Live View Airplane Mode (no live-access session required)",
+                "description": (
+                    "Top-row Airplane Mode control. Routes to the Farm `airplane_mode` task. "
+                    "Does not require a live-access `session_id`. Body accepts `state` or `enabled`. "
+                    "Returns `{ok:true, enabled:bool}`."
+                ),
+                "security": bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                        "description": "Farm bay number, slot public UUID, or ADB serial.",
+                    }
+                ],
+                "responses": {"200": {"description": "{ok:true, enabled:bool}"}},
+            }
+        },
+        "/admin/devices/{slot_id}/live-access/airplane-mode": {
+            "post": {
+                "tags": ["Admin live access"],
+                "summary": "Admin Live View nested Airplane Mode route",
+                "description": (
+                    "Same Farm `airplane_mode` task as `/farm/slots/{bay}/airplane-mode`. "
+                    "No live-access session required. Returns `{ok:true, enabled:bool}`."
+                ),
+                "security": bearer,
+                "parameters": [
+                    {
+                        "name": "slot_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "{ok:true, enabled:bool}"}},
             }
         },
         "/farm/slots/{bay}/force-available": {
@@ -1815,9 +1937,13 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "post": {
                 "tags": ["Farm management"],
                 "summary": "Airplane Mode toggle (admin or farm service)",
+                "description": (
+                    "Same Farm `airplane_mode` task as `/farm/slots/{bay}/airplane-mode`. "
+                    "Returns `{ok:true, enabled:bool}`."
+                ),
                 "security": bearer,
                 "parameters": [bay_param],
-                "responses": {"200": {"description": "Airplane mode applied"}},
+                "responses": {"200": {"description": "{ok:true, enabled:bool}"}},
             }
         },
         "/farm/slots/{bay}/cleanup-verified": {
@@ -1973,7 +2099,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "description": (
                     "Allowlisted actions only: tap, swipe, type, back, home, recents, "
                     "notification_shade, quick_settings, rotate, settings, airplane_mode. "
-                    "`airplane_mode` returns 501 (no approved Android 16 path). "
+                    "`airplane_mode` (or body `{enabled:true|false}`) uses Farm "
+                    "`cmd connectivity airplane-mode` and does not require `session_id`. "
+                    "Returns `{ok:true, enabled:bool}`. "
                     "Rejected: shell, ADB, package install, factory reset, reboot, "
                     "device identity fields. Session cannot control a different bay. "
                     "Customer session restrictions are not applied (admin cleanup may use "
@@ -2019,7 +2147,6 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "404": {"description": "live_access_not_found"},
                     "409": {"description": "phone_offline"},
                     "422": {"description": "invalid_control"},
-                    "501": {"description": "action_not_supported (airplane_mode)"},
                     "502": {"description": "gads_unavailable"},
                 },
             }

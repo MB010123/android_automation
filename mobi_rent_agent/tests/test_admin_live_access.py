@@ -393,7 +393,16 @@ def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
     )
     assert airplane.http_status == 200
     assert airplane.body["ok"] is True
+    assert airplane.body["enabled"] is True
     assert any(t["type"] == "airplane_mode" for t in farm.tasks)
+    top_row = svc.control_session(_admin(), 1, {"enabled": True})
+    assert top_row.http_status == 200
+    assert top_row.body["ok"] is True
+    assert top_row.body["enabled"] is True
+    dedicated = svc.run_airplane_mode(_admin(), 1, {"enabled": False})
+    assert dedicated.http_status == 200
+    assert dedicated.body["ok"] is True
+    assert dedicated.body["enabled"] is False
     bad = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "adb", "command": "shell"}
     )

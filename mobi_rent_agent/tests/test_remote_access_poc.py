@@ -275,10 +275,26 @@ class FakeFarm:
         if task_type in {"airplane_cycle", "airplane_mode"}:
             if self.airplane_timeout:
                 raise TimeoutError("farm_timeout")
+            requested = str(payload.get("state") or "").strip().lower()
+            if payload.get("enabled") is True:
+                requested = "on"
+            elif payload.get("enabled") is False:
+                requested = "off"
+            applied = "on" if requested in {"on", "true", "1", "enable", "enabled"} else "off"
             return FarmTaskResponse(
                 ok=True,
                 http_status=200,
-                body={"ok": True, "details": {"state": "off", "cycled": task_type == "airplane_cycle"}},
+                body={
+                    "ok": True,
+                    "enabled": applied == "on",
+                    "state": applied,
+                    "details": {
+                        "ok": True,
+                        "enabled": applied == "on",
+                        "state": applied,
+                        "cycled": task_type == "airplane_cycle",
+                    },
+                },
             )
         if task_type == "reboot" and self.reboot_timeout:
             raise TimeoutError("farm_timeout")

@@ -158,6 +158,52 @@ def test_farm_and_admin_routes_parse():
     assert about is not None and about.kind == "admin_device_about_phone"
     disable = parse_route("/farm/slots/21/disable-rental")
     assert disable is not None and disable.kind == "farm_disable_rental"
+    enable = parse_route("/farm/slots/2/enable-rental")
+    assert enable is not None and enable.kind == "farm_enable_rental" and enable.farm_bay == 2
+    admin_enable = parse_route("/admin/devices/2/enable-rental")
+    assert admin_enable is not None and admin_enable.kind == "admin_device_enable"
+    admin_air = parse_route("/admin/devices/2/airplane-mode")
+    assert admin_air is not None and admin_air.kind == "admin_device_airplane"
+    live_air = parse_route("/admin/live-access/2/airplane-mode")
+    assert live_air is not None and live_air.kind == "admin_live_airplane" and live_air.farm_bay == 2
+    nested_air = parse_route("/admin/devices/2/live-access/airplane-mode")
+    assert nested_air is not None and nested_air.kind == "admin_live_airplane"
+    admin_force = parse_route("/admin/devices/2/force-available")
+    assert admin_force is not None and admin_force.kind == "admin_device_force_available"
+    admin_cleanup = parse_route("/admin/devices/2/cleanup-verified")
+    assert admin_cleanup is not None and admin_cleanup.kind == "admin_device_cleanup_verified"
+
+
+def test_disable_rental_turns_airplane_on_enable_clears_lock(tmp_path: Path):
+    farm = FakeFarm()
+    svc, _reservations, _assign, cleanup, _tenant = _farm_svc(tmp_path, farm=farm)
+    disabled = svc.disable_rental(2)
+    assert disabled.http_status == 200
+    assert cleanup.is_disabled(2) is True
+    assert disabled.body["rental_disabled"] is True
+    air_on = [t for t in farm.tasks if t["type"] == "airplane_mode"]
+    assert air_on
+    assert air_on[0]["payload"]["enabled"] is True
+    assert air_on[0]["payload"]["state"] == "on"
+    enabled = svc.enable_rental(2)
+    assert enabled.http_status == 200
+    assert cleanup.is_disabled(2) is False
+    assert enabled.body["rental_disabled"] is False
+    air_off = [t for t in farm.tasks if t["type"] == "airplane_mode"][-1]
+    assert air_off["payload"]["enabled"] is False
+    assert air_off["payload"]["state"] == "off"
+
+
+def test_airplane_accepts_enabled_flag_and_returns_enabled(tmp_path: Path):
+    farm = FakeFarm()
+    svc, *_ = _farm_svc(tmp_path, farm=farm)
+    on = svc.run_airplane_mode(2, {"enabled": True})
+    assert on.http_status == 200
+    assert on.body["ok"] is True
+    assert on.body["enabled"] is True
+    off = svc.run_airplane_mode(2, {"enabled": False})
+    assert off.body["ok"] is True
+    assert off.body["enabled"] is False
 
 
 def test_airplane_farm_task_uses_cmd_connectivity():
@@ -179,9 +225,24 @@ def test_airplane_farm_task_uses_cmd_connectivity():
 
 
 def test_parse_airplane_state():
+    from application.device_airplane_mode import requested_airplane_state
+
     assert parse_airplane_state("enabled") == "on"
     assert parse_airplane_state("disabled") == "off"
     assert parse_airplane_state("1") == "on"
+    assert requested_airplane_state({"enabled": True}) == "on"
+    assert requested_airplane_state({"enabled": False}) == "off"
+    assert requested_airplane_state({"state": "on"}) == "on"
+
+
+def test_farm_rental_disabled_file(tmp_path: Path):
+    from application.device_airplane_mode import farm_slot_rental_disabled, persist_farm_rental_disabled
+
+    path = tmp_path / "disabled.json"
+    persist_farm_rental_disabled(2, True, path=path)
+    assert farm_slot_rental_disabled(2, path=path) is True
+    persist_farm_rental_disabled(2, False, path=path)
+    assert farm_slot_rental_disabled(2, path=path) is False
 
 
 def test_end_rental_runs_device_data_cleanup(tmp_path: Path):

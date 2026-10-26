@@ -51,12 +51,13 @@ RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 _DEVICE_REF = r"[0-9a-zA-Z\-]{1,64}"
 RE_ADMIN_DEVICE_OP = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|cleanup-verified)$"
 )
 RE_ADMIN_LIVE_ACCESS = re.compile(rf"^/admin/devices/({_DEVICE_REF})/live-access$")
 RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
-    rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close)$"
+    rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close|airplane-mode)$"
 )
+RE_ADMIN_LIVE_AIRPLANE = re.compile(rf"^/admin/live-access/({_DEVICE_REF})/airplane-mode$")
 RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
 RE_WHMCS_SSO = re.compile(r"^/api/public/auth/whmcs-sso$")
 RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
@@ -101,6 +102,9 @@ _ADMIN_DEVICE_KIND = {
     "airplane-mode": "admin_device_airplane",
     "about-phone-screenshot": "admin_device_about_phone",
     "disable-rental": "admin_device_disable",
+    "enable-rental": "admin_device_enable",
+    "force-available": "admin_device_force_available",
+    "cleanup-verified": "admin_device_cleanup_verified",
 }
 FARM_OR_ADMIN_KINDS = frozenset(
     {
@@ -115,6 +119,10 @@ FARM_OR_ADMIN_KINDS = frozenset(
         "admin_device_airplane",
         "admin_device_about_phone",
         "admin_device_disable",
+        "admin_device_enable",
+        "admin_device_force_available",
+        "admin_device_cleanup_verified",
+        "admin_live_airplane",
         "devices_airplane_mode",
     }
 )
@@ -162,6 +170,14 @@ def parse_route(path: str) -> ParsedRoute | None:
         )
     if m := RE_DEVICES_AIRPLANE.match(path):
         return ParsedRoute(kind="devices_airplane_mode", farm_bay=int(m.group(1)))
+    if m := RE_ADMIN_LIVE_AIRPLANE.match(path):
+        ref = m.group(1)
+        return ParsedRoute(
+            kind="admin_live_airplane",
+            farm_bay=int(ref) if ref.isdigit() else None,
+            action="airplane-mode",
+            device_ref=ref,
+        )
     if m := RE_ADMIN_LIVE_ACCESS.match(path):
         ref = m.group(1)
         return ParsedRoute(
@@ -171,10 +187,18 @@ def parse_route(path: str) -> ParsedRoute | None:
         )
     if m := RE_ADMIN_LIVE_ACCESS_ACTION.match(path):
         ref = m.group(1)
+        action = m.group(2)
+        if action == "airplane-mode":
+            return ParsedRoute(
+                kind="admin_live_airplane",
+                farm_bay=int(ref) if ref.isdigit() else None,
+                action=action,
+                device_ref=ref,
+            )
         return ParsedRoute(
             kind="admin_live_access_action",
             farm_bay=int(ref) if ref.isdigit() else None,
-            action=m.group(2),
+            action=action,
             device_ref=ref,
         )
     if m := RE_ADMIN_DEVICE_OP.match(path):

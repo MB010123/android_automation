@@ -49,6 +49,7 @@ from application.remote_access_farm_task import (
     _image_extension,
     _is_samsung_renter_device,
 )
+from application.device_airplane_mode import public_airplane_body, requested_airplane_state
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, map_touch_to_native, native_resolution_body
 from application.device_screen_prepare import request_device_screen_prepare
 from application.in_app_control_policy import (
@@ -112,8 +113,8 @@ REMOTE_ACCESS_PLACE_QR_TASK = "remote_access_place_qr"
 REMOTE_ACCESS_ACTIVATION_TASK = "remote_access_activation_status"
 ESIM_AUTO_ACTIVATION_TASK = "esim_auto_activation"
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
-    "Airplane Mode cannot be changed through this rental session. "
-    "Android 16 does not allow the current Farm/GADS/companion path to toggle it."
+    "Airplane Mode uses the Farm Agent `airplane_mode` task "
+    "(`cmd connectivity airplane-mode`), not GADS."
 )
 
 _RENTAL_END_KEYS = ("ends_at", "end_at", "rental_end", "rental_ends_at", "expires_at", "end_time")
@@ -1875,11 +1876,12 @@ class RemoteAccessService:
         """Dispatch Airplane Mode to the Farm Agent. No raw ADB in this module."""
         if self._farm is None:
             return ApiResult(503, error_body("farm_unreachable"))
+        requested = requested_airplane_state({"state": state})
         try:
             response = self._farm.run_task(
                 task_type="airplane_mode",
                 farm_slot_id=int(slot_id),
-                payload={"state": state or "toggle"},
+                payload={"state": requested, "enabled": requested == "on"},
                 job_id=str(uuid.uuid4()),
             )
         except Exception:
@@ -1889,7 +1891,14 @@ class RemoteAccessService:
             if status in {0, 504}:
                 return ApiResult(504, error_body("timeout"))
             return ApiResult(503, error_body("farm_unreachable"))
-        return ApiResult(200, {"ok": True, "slot_id": int(slot_id), "state": state or "toggled"})
+        details: dict[str, Any] = {}
+        raw_body = getattr(response, "body", None)
+        if isinstance(raw_body, dict):
+            inner = raw_body.get("details")
+            details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
+        applied = str(details.get("state") or requested)
+        serial = str(details.get("serial") or self._devices.get(int(slot_id)) or "") or None
+        return ApiResult(200, public_airplane_body(slot_id=int(slot_id), state=applied, serial=serial))
 
     def _session_public(self, session: RemoteAccessSession, now: float | None = None) -> dict:
         body = session.to_public_dict(

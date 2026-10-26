@@ -926,17 +926,22 @@ class Handler(BaseHTTPRequestHandler):
         kind = route.kind
         bay = self._resolve_admin_bay(route)
         body = payload if isinstance(payload, dict) else {}
-        if kind == "farm_force_available" and bay is not None:
+        if kind in {"farm_force_available", "admin_device_force_available"} and bay is not None:
             result = farm.force_available(bay)
-        elif kind == "farm_disable_rental" and bay is not None:
+        elif kind in {"farm_disable_rental", "admin_device_disable"} and bay is not None:
             result = farm.disable_rental(bay, body)
-        elif kind == "admin_device_disable" and bay is not None:
-            result = farm.disable_rental(bay, body)
-        elif kind == "farm_enable_rental" and bay is not None:
+        elif kind in {"farm_enable_rental", "admin_device_enable"} and bay is not None:
             result = farm.enable_rental(bay)
+        elif kind == "admin_device_cleanup_verified" and bay is not None:
+            result = farm.verify_cleanup(bay, body)
         elif kind in {"farm_reboot", "admin_device_reboot"} and bay is not None:
             result = farm.reboot_slot(bay)
-        elif kind in {"farm_airplane_mode", "admin_device_airplane", "devices_airplane_mode"} and bay is not None:
+        elif kind in {
+            "farm_airplane_mode",
+            "admin_device_airplane",
+            "devices_airplane_mode",
+            "admin_live_airplane",
+        } and bay is not None:
             result = farm.run_airplane_mode(bay, body)
         elif kind in {"farm_about_phone", "admin_device_about_phone"} and bay is not None:
             result = farm.about_phone_screenshot(bay)
@@ -1283,6 +1288,23 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 )
 
+        blocked = [
+            row for row in dispatch_results if str(row.get("error") or row.get("reason") or "") == "rental_disabled"
+        ]
+        if blocked and len(blocked) == len(dispatch_results):
+            body = error_body("rental_disabled")
+            body.update(
+                {
+                    "parsed_count": len(messages),
+                    "device_ids": [m.device_id for m in messages],
+                    "mapped_slots": mapped_slots,
+                    "stored_ids": stored_ids,
+                    "dispatch": dispatch_results,
+                }
+            )
+            self._send_json(403, body)
+            return
+
         self._send_json(
             200,
             {
@@ -1361,6 +1383,7 @@ def main() -> int:
         job_store=job_store,
         farm_client=farm_client,
         max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
+        cleanup_store=None,
     )
 
     api_messages_db = os.getenv(
@@ -1487,6 +1510,7 @@ def main() -> int:
         max_dispatch_attempts=config.webhook_farm_dispatch_max_attempts,
         event_recorder=event_store.append,
         tenant_store=tenant_store,
+        cleanup_store=cleanup_store,
     )
 
     remote_access_service, remote_access_store = _build_remote_access_service(
@@ -1528,6 +1552,7 @@ def main() -> int:
     Handler.webhook_secret = config.voidfix_webhook_secret
     Handler.device_map = device_map
     Handler.inbound_store = store
+    dispatcher._cleanup = cleanup_store
     Handler.outbound_dispatcher = dispatcher
     Handler.farm_agent_url = farm_url
     Handler.farm_agent_token = farm_token

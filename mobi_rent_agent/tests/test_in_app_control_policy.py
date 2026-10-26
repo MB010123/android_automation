@@ -86,6 +86,10 @@ def test_setup_mode_does_not_restrict_system_nav():
     off = decide_control({"action": "airplane_mode", "state": "off"})
     assert off.allowed is True and off.command is not None and off.command.state == "off"
     assert decide_control({"action": "airplane_mode"}).allowed is False
+    enabled = decide_control({"action": "airplane_mode", "enabled": True})
+    assert enabled.allowed is True and enabled.command is not None and enabled.command.state == "on"
+    disabled = decide_control({"action": "airplane_mode", "enabled": False})
+    assert disabled.allowed is True and disabled.command is not None and disabled.command.state == "off"
     assert decide_control({"action": "airplane_mode", "state": "on", "udid": "X"}).reason == (
         "forbidden_control"
     )

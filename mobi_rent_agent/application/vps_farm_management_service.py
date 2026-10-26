@@ -44,6 +44,11 @@ from application.preferred_slots import (
     DEFAULT_PREFERRED_NEXT_SLOT_IDS,
     sort_available_bays,
 )
+from application.device_airplane_mode import (
+    airplane_is_on,
+    public_airplane_body,
+    requested_airplane_state,
+)
 
 logger = logging.getLogger("vps_backend.farm_mgmt")
 
@@ -655,6 +660,7 @@ class VpsFarmManagementService:
             self._cleanup.clear(bay)
             self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
         self._cleanup.clear_disabled(bay)
+        self._set_airplane(bay, enabled=False, rental_disabled=False)
         out = dict(wipe.body) if wipe.http_status < 400 else self._cleanup_completed_body(
             bay,
             wipe.body.get("serial") if isinstance(wipe.body, dict) else None,
@@ -833,6 +839,7 @@ class VpsFarmManagementService:
         self._assignments.release(bay)
         self._cleanup.clear(bay)
         self._cleanup.clear_disabled(bay)
+        self._set_airplane(bay, enabled=False, rental_disabled=False)
         if self._auth_store is not None:
             try:
                 if rental_id:
@@ -869,34 +876,51 @@ class VpsFarmManagementService:
                     terminate(bay)
                 except Exception:
                     logger.warning("disable_rental_session_terminate_failed bay=%s", bay)
+        airplane = self._set_airplane(bay, enabled=True, rental_disabled=True)
         self._events.append(bay, "rental_disabled", f"rental_id={rental_id or 'admin'}")
         logger.info("rental_disabled bay=%s", bay)
-        return ApiResult(
-            200,
-            {
-                "ok": True,
-                "disabled": True,
-                "bay": int(bay),
-                "slot_id": public_id_for_farm_slot(bay),
-                "serial": self._serial_for(bay),
-            },
-        )
+        body = {
+            "ok": True,
+            "disabled": True,
+            "rental_disabled": True,
+            "bay": int(bay),
+            "slot_id": public_id_for_farm_slot(bay),
+            "serial": self._serial_for(bay),
+            "enabled": True,
+        }
+        if airplane.http_status < 400:
+            body["airplane"] = airplane.body
+        else:
+            body["airplane_warning"] = airplane.body.get("error") or "farm_unreachable"
+        return ApiResult(200, body)
 
     def enable_rental(self, bay: int) -> ApiResult:
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         self._cleanup.clear_disabled(bay)
+        airplane = self._set_airplane(bay, enabled=False, rental_disabled=False)
         self._events.append(bay, "rental_enabled", "admin_enabled")
-        return ApiResult(
-            200,
-            {
-                "ok": True,
-                "disabled": False,
-                "bay": int(bay),
-                "slot_id": public_id_for_farm_slot(bay),
-                "serial": self._serial_for(bay),
-            },
-        )
+        logger.info("rental_enabled bay=%s", bay)
+        body = {
+            "ok": True,
+            "disabled": False,
+            "rental_disabled": False,
+            "bay": int(bay),
+            "slot_id": public_id_for_farm_slot(bay),
+            "serial": self._serial_for(bay),
+            "enabled": False,
+        }
+        if airplane.http_status < 400:
+            body["airplane"] = airplane.body
+        else:
+            body["airplane_warning"] = airplane.body.get("error") or "farm_unreachable"
+        return ApiResult(200, body)
+
+    def _set_airplane(self, bay: int, *, enabled: bool, rental_disabled: bool | None = None) -> ApiResult:
+        payload: dict[str, Any] = {"state": "on" if enabled else "off", "enabled": enabled}
+        if rental_disabled is not None:
+            payload["rental_disabled"] = bool(rental_disabled)
+        return self.run_airplane_mode(bay, payload)
 
     def reboot_slot(self, bay: int) -> ApiResult:
         """Admin/farm reboot without an active customer rental. Then unlock home."""
@@ -918,8 +942,26 @@ class VpsFarmManagementService:
 
     def run_airplane_mode(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
         body = payload if isinstance(payload, dict) else {}
-        state = str(body.get("state") or "toggle").strip().lower() or "toggle"
-        return self._farm_task_result(bay, "airplane_mode", {"state": state})
+        state = requested_airplane_state(body)
+        farm_payload = {"state": state, "enabled": state == "on"}
+        if "rental_disabled" in body:
+            farm_payload["rental_disabled"] = bool(body.get("rental_disabled"))
+        result = self._farm_task_result(bay, "airplane_mode", farm_payload)
+        if result.http_status >= 400:
+            return result
+        applied = str(result.body.get("state") or state)
+        public = dict(result.body)
+        public.update(
+            public_airplane_body(
+                slot_id=int(bay),
+                state=applied,
+                serial=result.body.get("serial") or self._serial_for(bay),
+            )
+        )
+        public["ok"] = True
+        public["enabled"] = airplane_is_on(applied)
+        public["state"] = "on" if public["enabled"] else "off"
+        return ApiResult(200, public)
 
     def about_phone_screenshot(self, bay: int) -> ApiResult:
         return self._farm_task_result(bay, "device_about_phone_screenshot", {})
@@ -1081,6 +1123,8 @@ class VpsFarmManagementService:
         farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None or not self._is_configured_bay(farm_slot):
             return ApiResult(404, error_body("slot_not_found"))
+        if self._cleanup.is_disabled(farm_slot):
+            return ApiResult(403, error_body("rental_disabled"))
         allowed, retry_after = self._rate.check(farm_slot)
         if not allowed:
             body = error_body("rate_limited")

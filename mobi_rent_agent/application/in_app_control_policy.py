@@ -88,7 +88,7 @@ _TAP_KEYS = frozenset({"action", "x", "y"})
 _TYPE_KEYS = frozenset({"action", "text"})
 _NAV_KEYS = frozenset({"action"})
 _ROTATE_KEYS = frozenset({"action", "orientation"})
-_AIRPLANE_KEYS = frozenset({"action", "state"})
+_AIRPLANE_KEYS = frozenset({"action", "state", "enabled"})
 _SWIPE_KEYS = frozenset(
     {
         "action",
@@ -169,7 +169,9 @@ def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = Fals
         extra = {k for k in payload if k not in _AIRPLANE_KEYS}
         if extra:
             return ControlDecision(False, reason="invalid_control")
-        state = str(payload.get("state") or "").strip().lower()
+        from application.device_airplane_mode import requested_airplane_state
+
+        state = requested_airplane_state(payload)
         if state not in AIRPLANE_STATES:
             return ControlDecision(False, reason="invalid_control")
         return ControlDecision(True, ControlCommand(action="airplane_mode", state=state))

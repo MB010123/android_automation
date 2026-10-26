@@ -195,6 +195,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             request = parse_farm_sms_send_body(data)
+            from application.device_airplane_mode import farm_slot_rental_disabled
+
+            if farm_slot_rental_disabled(request.sender_slot_id):
+                self._send_json(
+                    403,
+                    {
+                        "ok": False,
+                        "error": "rental_disabled",
+                        "job_id": request.job_id,
+                        "idempotency_key": request.idempotency_key,
+                    },
+                )
+                return
             result = execute_farm_sms_send(self.agent_config, request)
         except ValueError as exc:
             self._send_json(400, {"ok": False, "error": str(exc)})

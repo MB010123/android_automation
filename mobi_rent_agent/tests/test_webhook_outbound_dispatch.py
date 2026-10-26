@@ -154,6 +154,34 @@ def test_b_webhook_dispatches_to_farm(tmp_path: Path):
         jobs.close()
 
 
+def test_outbound_dropped_when_rental_disabled(tmp_path: Path):
+    from infrastructure.device_cleanup_store import DeviceCleanupStore
+
+    jobs = OutboundJobStore(tmp_path / "jobs.sqlite")
+    farm = MockFarmClient()
+    cleanup = DeviceCleanupStore(tmp_path / "cleanup.sqlite")
+    cleanup.mark_disabled(1, "admin")
+    dispatcher = WebhookOutboundDispatcher(
+        job_store=jobs,
+        farm_client=farm,
+        policy=_policy_enabled_slot2_to_slot1(),
+        max_dispatch_attempts=1,
+        cleanup_store=cleanup,
+    )
+    msg = parse_inbound_payload(REAL_VOIDFIX_MESSAGE)[0]
+    result = dispatcher.process_inbound(
+        msg,
+        inbound_row_id=1,
+        inbound_slot=1,
+        payload=REAL_VOIDFIX_MESSAGE,
+        index=0,
+    )
+    assert result["dispatched"] is False
+    assert result["error"] == "rental_disabled"
+    assert result["http_status"] == 403
+    assert farm.calls == 0
+
+
 def test_c_duplicate_webhook_one_dispatch(tmp_path: Path):
     jobs = OutboundJobStore(tmp_path / "jobs.sqlite")
     farm = MockFarmClient()

@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 import requests
 
+from application.vps_api_contract import error_body
 from infrastructure.farm_sms_client import FarmSmsClient
 from infrastructure.outbound_message_store import OutboundMessageRecord, OutboundMessageStore
 from infrastructure.redact import redact_phone
@@ -45,6 +46,7 @@ class VpsSlotSmsService:
         max_dispatch_attempts: int = 3,
         event_recorder: SlotEventRecorder | None = None,
         tenant_store: Any = None,
+        cleanup_store: Any = None,
     ) -> None:
         self._store = message_store
         self._farm = farm_client
@@ -56,6 +58,7 @@ class VpsSlotSmsService:
         self._lock = threading.Lock()
         self._record_event = event_recorder
         self._tenant = tenant_store
+        self._cleanup = cleanup_store
 
     def _resolve_farm_slot(self, slot_public_id: str) -> int | None:
         farm_slot = farm_slot_for_public_id(slot_public_id, self._overrides)
@@ -78,6 +81,9 @@ class VpsSlotSmsService:
         farm_slot = self._resolve_farm_slot(slot_public_id)
         if farm_slot is None or farm_slot not in self._known_slots:
             return SlotSmsEnqueueResult(404, {"error": "slot_not_found"})
+        cleanup = self._cleanup
+        if cleanup is not None and getattr(cleanup, "is_disabled", lambda _bay: False)(farm_slot):
+            return SlotSmsEnqueueResult(403, error_body("rental_disabled"))
 
         idem = str(payload.get("idempotency_key") or "").strip()
         if not idem:

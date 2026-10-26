@@ -112,6 +112,18 @@ def test_auth_missing_token_on_handler(tmp_path: Path):
         server.shutdown()
 
 
+def test_enqueue_send_rejects_disabled_rental(tmp_path: Path):
+    from infrastructure.device_cleanup_store import DeviceCleanupStore
+
+    cleanup = DeviceCleanupStore(tmp_path / "cleanup.sqlite")
+    cleanup.mark_disabled(1, "admin")
+    svc = _service(tmp_path, farm=MockFarmClient())
+    svc._cleanup = cleanup
+    result = svc.enqueue_send(SLOT1, _payload())
+    assert result.http_status == 403
+    assert result.body["error"] == "rental_disabled"
+
+
 def test_validation_errors(tmp_path: Path):
     svc = _service(tmp_path, farm=MockFarmClient())
     assert svc.enqueue_send(SLOT1, _payload(to="bad")).http_status == 400

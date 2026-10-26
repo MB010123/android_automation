@@ -98,7 +98,11 @@ def execute_controlled_farm_task(
             command_runner=deps.command_runner,
         )
     if request.task_type == "voidfix_repair":
+        from application.device_airplane_mode import farm_slot_rental_disabled
         from application.device_voidfix_keepalive import run_voidfix_repair
+
+        if farm_slot_rental_disabled(int(request.farm_slot_id)):
+            return FarmTaskResult(ok=False, http_status=403, error="rental_disabled")
 
         package = None
         if agent_config is not None:

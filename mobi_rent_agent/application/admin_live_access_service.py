@@ -14,6 +14,11 @@ from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from application.admin_identity import is_admin_user
+from application.device_airplane_mode import (
+    airplane_is_on,
+    public_airplane_body,
+    requested_airplane_state,
+)
 from application.device_screen_prepare import request_device_screen_prepare
 from application.device_display_size import (
     DEVICE_DISPLAY_SIZE_TASK,
@@ -45,8 +50,8 @@ MAX_SLOT = MAX_FARM_SLOT_ID
 _MAX_TTL_MINUTES = 60
 _MIN_TTL_MINUTES = 5
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
-    "Airplane Mode cannot be changed through this admin live-access session. "
-    "Android 16 does not allow the current Farm/GADS/companion path to toggle it."
+    "Airplane Mode uses the Farm Agent `airplane_mode` task "
+    "(`cmd connectivity airplane-mode`), not GADS."
 )
 
 
@@ -59,6 +64,13 @@ class ApiResult:
 def _gads_error_category(exc: BaseException) -> str:
     text = str(exc).split(":", 1)[0].strip().replace(" ", "_")
     return text[:64] or "gads_error"
+
+
+def _is_airplane_request(body: dict[str, Any]) -> bool:
+    action = str(body.get("action") or "").strip().lower().replace("-", "_")
+    if action in {"airplane_mode"}:
+        return True
+    return "enabled" in body and action in {"", "airplane_mode"}
 
 
 def _parse_session_id(raw: Any) -> str | None:
@@ -230,11 +242,18 @@ class AdminLiveAccessService:
         payload: dict[str, Any] | None,
     ) -> ApiResult:
         raw = payload if isinstance(payload, dict) else {}
+        control_body = {key: value for key, value in raw.items() if key != "session_id"}
+        if _is_airplane_request(control_body):
+            if not is_admin_user(admin):
+                return ApiResult(403, error_body("admin_forbidden"))
+            parsed = self._parse_slot(slot_id)
+            if isinstance(parsed, ApiResult):
+                return parsed
+            return self._run_airplane_mode(parsed, control_body)
         session_id = _parse_session_id(raw.get("session_id"))
         bound = self._bound_session(admin, slot_id, session_id)
         if isinstance(bound, ApiResult):
             return bound
-        control_body = {key: value for key, value in raw.items() if key != "session_id"}
         decision = decide_control(control_body, setup_mode=False)
         if not decision.allowed or decision.command is None:
             code = (
@@ -245,7 +264,7 @@ class AdminLiveAccessService:
             status = 422 if code == "invalid_control" else 403
             return ApiResult(status, error_body(code))
         if decision.command.action == "airplane_mode":
-            return self._run_airplane_mode(bound.slot_id, decision.command.state)
+            return self._run_airplane_mode(bound.slot_id, control_body)
         ready = self._require_ready(bound.slot_id)
         if isinstance(ready, ApiResult):
             return ready
@@ -278,14 +297,24 @@ class AdminLiveAccessService:
             },
         )
 
-    def _run_airplane_mode(self, slot_id: int, state: str | None) -> ApiResult:
+    def run_airplane_mode(self, admin: AuthUser, slot_id: int, payload: dict[str, Any] | None) -> ApiResult:
+        if not is_admin_user(admin):
+            return ApiResult(403, error_body("admin_forbidden"))
+        parsed = self._parse_slot(slot_id)
+        if isinstance(parsed, ApiResult):
+            return parsed
+        return self._run_airplane_mode(parsed, payload if isinstance(payload, dict) else {})
+
+    def _run_airplane_mode(self, slot_id: int, payload: dict[str, Any] | str | None) -> ApiResult:
         if self._farm is None:
             return ApiResult(503, error_body("farm_unreachable"))
+        body = payload if isinstance(payload, dict) else {"state": payload}
+        state = requested_airplane_state(body)
         try:
             response = self._farm.run_task(
                 task_type="airplane_mode",
                 farm_slot_id=int(slot_id),
-                payload={"state": state or "toggle"},
+                payload={"state": state, "enabled": state == "on"},
                 job_id=str(uuid4()),
             )
         except Exception:
@@ -295,7 +324,19 @@ class AdminLiveAccessService:
             if status in {0, 504}:
                 return ApiResult(504, error_body("timeout"))
             return ApiResult(503, error_body("farm_unreachable"))
-        return ApiResult(200, {"ok": True, "slot_id": int(slot_id), "state": state or "toggled"})
+        details: dict[str, Any] = {}
+        raw_body = getattr(response, "body", None)
+        if isinstance(raw_body, dict):
+            inner = raw_body.get("details")
+            details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
+        applied = str(details.get("state") or state)
+        public = public_airplane_body(
+            slot_id=int(slot_id),
+            state=applied,
+            serial=str(details.get("serial") or self._slots.get(int(slot_id)) or "") or None,
+        )
+        public["enabled"] = airplane_is_on(applied)
+        return ApiResult(200, public)
 
     def close_session(
         self, admin: AuthUser, slot_id: int, payload: dict[str, Any] | None

@@ -6,7 +6,10 @@ best-effort Quick Settings expand/collapse. Never uses EuiccManager or root.
 """
 from __future__ import annotations
 
+import json
 import logging
+import threading
+from pathlib import Path
 from typing import Any, Callable
 
 from application.device_screen_prepare import run_best_effort_shell
@@ -19,6 +22,8 @@ logger = logging.getLogger("farm_agent.airplane_mode")
 AIRPLANE_MODE_TASK = "airplane_mode"
 AIRPLANE_CYCLE_TASK = "airplane_cycle"
 AIRPLANE_TIMEOUT_SECONDS = 20.0
+_RENTAL_DISABLED_PATH = Path(__file__).resolve().parents[1] / "logs" / "rental_disabled_slots.json"
+_RENTAL_DISABLED_LOCK = threading.Lock()
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
@@ -27,12 +32,82 @@ def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
 
 
 def normalize_airplane_state(value: Any) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
     text = str(value or "").strip().lower()
-    if text in {"1", "on", "enable", "enabled", "true"}:
+    if text in {"1", "on", "enable", "enabled", "true", "yes"}:
         return "on"
-    if text in {"0", "off", "disable", "disabled", "false"}:
+    if text in {"0", "off", "disable", "disabled", "false", "no"}:
         return "off"
     return "toggle"
+
+
+def requested_airplane_state(payload: dict[str, Any] | None) -> str:
+    """Accept `state=on|off` or `enabled=true|false` from admin/farm callers."""
+    body = payload if isinstance(payload, dict) else {}
+    if "enabled" in body and body.get("enabled") is not None:
+        enabled = body.get("enabled")
+        if isinstance(enabled, bool):
+            return "on" if enabled else "off"
+        return normalize_airplane_state(enabled)
+    return normalize_airplane_state(body.get("state"))
+
+
+def airplane_is_on(state: str | None) -> bool:
+    return str(state or "").strip().lower() in {"on", "enabled", "enable", "true", "1"}
+
+
+def public_airplane_body(
+    *,
+    slot_id: int,
+    state: str | None,
+    serial: str | None = None,
+) -> dict[str, Any]:
+    enabled = airplane_is_on(state)
+    body: dict[str, Any] = {
+        "ok": True,
+        "enabled": enabled,
+        "state": "on" if enabled else "off",
+        "slot_id": int(slot_id),
+    }
+    if serial:
+        body["serial"] = serial
+    return body
+
+
+def persist_farm_rental_disabled(slot_id: int, disabled: bool, path: Path | None = None) -> None:
+    target = path or _RENTAL_DISABLED_PATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with _RENTAL_DISABLED_LOCK:
+            slots: list[int] = []
+            if target.is_file():
+                try:
+                    raw = json.loads(target.read_text(encoding="utf-8"))
+                    slots = [int(s) for s in (raw.get("slots") if isinstance(raw, dict) else raw) or []]
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    slots = []
+            bay = int(slot_id)
+            if disabled:
+                if bay not in slots:
+                    slots.append(bay)
+            else:
+                slots = [s for s in slots if s != bay]
+            target.write_text(json.dumps({"slots": slots}), encoding="utf-8")
+    except OSError:
+        logger.warning("rental_disabled_persist_failed slot=%s", slot_id)
+
+
+def farm_slot_rental_disabled(slot_id: int, path: Path | None = None) -> bool:
+    target = path or _RENTAL_DISABLED_PATH
+    try:
+        if not target.is_file():
+            return False
+        raw = json.loads(target.read_text(encoding="utf-8"))
+        slots = raw.get("slots") if isinstance(raw, dict) else raw
+        return int(slot_id) in {int(s) for s in slots or []}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
 
 
 def parse_airplane_state(stdout: str) -> str | None:
@@ -142,23 +217,23 @@ def run_airplane_mode(
         return FarmTaskResult(ok=False, http_status=409, error="device_offline")
 
     warnings: list[str] = []
-    requested = normalize_airplane_state(request.payload.get("state"))
+    payload = request.payload if isinstance(request.payload, dict) else {}
+    requested = requested_airplane_state(payload)
     current = _read_state(runner, serial)
     if requested == "toggle":
         desired = "off" if current == "on" else "on"
     else:
         desired = requested
     applied = apply_airplane_mode(runner, serial, desired, warnings)
+    if "rental_disabled" in payload:
+        persist_farm_rental_disabled(slot_id, bool(payload.get("rental_disabled")))
     logger.info("airplane_mode_ok slot=%s desired=%s applied=%s", slot_id, desired, applied)
     return FarmTaskResult(
         ok=True,
         http_status=200,
         details={
-            "ok": True,
-            "slot_id": slot_id,
-            "serial": serial,
+            **public_airplane_body(slot_id=slot_id, state=applied or desired, serial=serial),
             "requested": requested,
-            "state": applied or desired,
             "method": "cmd_connectivity" if "cmd_connectivity_unavailable" not in warnings else "settings_fallback",
             "warnings": warnings,
         },
