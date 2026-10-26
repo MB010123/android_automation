@@ -543,7 +543,8 @@ def test_admin_live_access_returns_farm_wm_size_not_stream_frame(tmp_path: Path)
     reused = svc.create_session(_admin(), 1)
     assert reused.http_status == 200
     assert reused.body["native_resolution"] == {"width": 1344, "height": 2992}
-    assert len([t for t in farm.tasks if t["type"] == "device_display_size"]) == 1
+    # Screen prepare after reuse invalidates the cached size so taps follow live wm size.
+    assert len([t for t in farm.tasks if t["type"] == "device_display_size"]) == 2
 
 
 def test_admin_live_access_uses_gads_screen_when_farm_wm_size_missing(tmp_path: Path):

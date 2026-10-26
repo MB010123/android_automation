@@ -8,8 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.setup_activity_guard import (
+    AOSP_SIM_SETTINGS_INTENTS,
     PHASE_ESIM,
     PHASE_VOIDFIX,
+    SAMSUNG_SIM_MGR_COMPONENT,
     decide_setup_guard,
     parse_foreground_activity,
     parse_sms_role_holders,
@@ -44,6 +46,14 @@ def test_esim_allows_mobile_network_not_generic_settings_or_launcher():
     assert launcher.allowed is False
     unknown = decide_setup_guard(phase=PHASE_ESIM, activity=None)
     assert unknown.allowed is False and unknown.reason == "activity_unknown"
+    samsung = decide_setup_guard(phase=PHASE_ESIM, activity=SAMSUNG_SIM_MGR_COMPONENT)
+    assert samsung.allowed is True
+    gallery = decide_setup_guard(
+        phase=PHASE_ESIM, activity="com.sec.android.gallery3d/.Activity"
+    )
+    assert gallery.allowed is True
+    assert "android.settings.SIM_CARD_SETTINGS" in AOSP_SIM_SETTINGS_INTENTS
+    assert "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS" in AOSP_SIM_SETTINGS_INTENTS
 
 
 def test_voidfix_role_dialog_and_package():

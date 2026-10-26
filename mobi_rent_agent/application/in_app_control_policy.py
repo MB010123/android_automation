@@ -109,10 +109,10 @@ _SWIPE_KEYS = frozenset(
 @dataclass(frozen=True)
 class ControlCommand:
     action: str
-    x: int | None = None
-    y: int | None = None
-    x2: int | None = None
-    y2: int | None = None
+    x: int | float | None = None
+    y: int | float | None = None
+    x2: int | float | None = None
+    y2: int | float | None = None
     text: str | None = None
     duration_ms: int | None = None
     orientation: str | None = None
@@ -218,9 +218,15 @@ def decide_control(payload: Mapping[str, Any] | None, *, setup_mode: bool = Fals
     )
 
 
-def _coord(value: Any) -> int | None:
+def _coord(value: Any) -> int | float | None:
     if isinstance(value, bool) or value is None:
         return None
+    if isinstance(value, float):
+        if 0.0 <= value <= 1.0:
+            return value
+        if value < 0 or value > _MAX_COORD:
+            return None
+        return int(round(value))
     try:
         number = int(value)
     except (TypeError, ValueError):

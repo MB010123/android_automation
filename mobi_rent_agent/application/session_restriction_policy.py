@@ -97,6 +97,16 @@ _ESIM_NESTED_PACKAGES = frozenset(
         "com.google.android.carriersetup",
         "com.google.android.tsmclient",
         "com.android.tsmclient",
+        # Samsung One UI eSIM / SIM Manager / Gallery / picker. Taps on these
+        # must not be rewritten to the AOSP < SIMs fragment.
+        "com.samsung.android.app.telephonyui",
+        "com.samsung.android.euicc",
+        "com.sec.android.gallery3d",
+        "com.samsung.android.gallery3d",
+        "com.google.android.documentsui",
+        "com.android.documentsui",
+        "com.samsung.android.biometrics.app.setting",
+        "com.google.android.photospicker",
     }
 )
 _ESIM_NESTED_MARKERS = (
@@ -107,6 +117,9 @@ _ESIM_NESTED_MARKERS = (
     "addesim",
     "lpa",
     "tsm",
+    "simcardmgr",
+    "simcardmanager",
+    "captureactivity",
 )
 _ESIM_ROOT_MARKERS = (
     "mobilenetwork",
@@ -118,6 +131,8 @@ _ESIM_ROOT_MARKERS = (
     "allsimprofiles",
     "simonboarding",
     "simonboardingactivity",
+    "simcardmgr",
+    "simcardmanager",
 )
 _SETTINGS_GENERIC_MARKERS = (
     "settings$settingsactivity",

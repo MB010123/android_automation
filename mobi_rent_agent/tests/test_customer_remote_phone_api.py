@@ -522,6 +522,15 @@ def test_twenty_slot_workspaces_remain_unique(tmp_path: Path):
         assert getattr(stream, "device_id") == serials[bay]
 
 
+def test_map_touch_to_native_scales_normalized_against_live_wm_size():
+    from application.device_display_size import map_touch_to_native
+
+    assert map_touch_to_native(0.5, 0.5, 1080, 2400) == (540, 1200)
+    assert map_touch_to_native(540, 960, 1080, 2400) == (540, 960)
+    assert map_touch_to_native(1440, 3200, 1080, 2400) == (1079, 2399)
+    assert map_touch_to_native(0, 0, 1080, 2400) == (0, 0)
+
+
 def test_parse_wm_size_prefers_override_when_present():
     from application.device_display_size import parse_wm_size, wm_size_source
 

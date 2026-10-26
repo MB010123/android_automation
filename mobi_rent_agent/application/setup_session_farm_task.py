@@ -9,10 +9,17 @@ import logging
 import subprocess
 from typing import Any
 
+from application.device_display_size import map_touch_to_native, parse_wm_size
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
-from application.remote_access_farm_task import DCIM_CAMERA_DIR, PICTURES_DIR
+from application.remote_access_farm_task import (
+    DCIM_CAMERA_DIR,
+    PICTURES_DIR,
+    _is_samsung_renter_device,
+)
 from application.setup_activity_guard import (
+    PHASE_ESIM,
     PHASE_VOIDFIX,
+    SAMSUNG_SIM_MGR_COMPONENT,
     decide_setup_guard,
     parse_foreground_activity,
     parse_sms_role_holders,
@@ -58,6 +65,46 @@ def _shell(
     return completed.stdout or ""
 
 
+def _live_wm_size(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+) -> tuple[int, int] | None:
+    try:
+        return parse_wm_size(_shell(runner, adb_path, serial, ["wm", "size"]))
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _native_tap_point(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+    payload: dict[str, Any],
+) -> tuple[int, int]:
+    size = _live_wm_size(runner, adb_path, serial)
+    if size is not None:
+        mapped = map_touch_to_native(payload["x"], payload["y"], size[0], size[1])
+        if mapped is not None:
+            return mapped
+    return int(payload["x"]), int(payload["y"])
+
+
+def _native_swipe_points(
+    runner: AdbCommandRunner | None,
+    adb_path: str,
+    serial: str,
+    payload: dict[str, Any],
+) -> tuple[int, int, int, int]:
+    size = _live_wm_size(runner, adb_path, serial)
+    if size is not None:
+        start = map_touch_to_native(payload["x"], payload["y"], size[0], size[1])
+        end = map_touch_to_native(payload["x2"], payload["y2"], size[0], size[1])
+        if start is not None and end is not None:
+            return start[0], start[1], end[0], end[1]
+    return int(payload["x"]), int(payload["y"]), int(payload["x2"]), int(payload["y2"])
+
+
 def run_setup_session_inspect(
     *,
     adb_path: str,
@@ -87,22 +134,39 @@ def run_setup_session_inspect(
     activity = parse_foreground_activity(activities)
     decision = decide_setup_guard(phase=phase, activity=activity, voidfix_package=voidfix_package)
     recovered = False
-    if recover and not decision.allowed and decision.recover_intent:
-        try:
-            _shell(
-                runner,
-                adb_path,
-                serial,
-                ["am", "start", "-a", decision.recover_intent],
-            )
-            recovered = True
-            activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
-            activity = parse_foreground_activity(activities)
-            decision = decide_setup_guard(
-                phase=phase, activity=activity, voidfix_package=voidfix_package
-            )
-        except (AdbCommandError, OSError, subprocess.TimeoutExpired):
-            recovered = False
+    samsung = False
+    try:
+        manufacturer = _shell(runner, adb_path, serial, ["getprop", "ro.product.manufacturer"]).strip()
+        samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, manufacturer)
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, None)
+    if recover and not decision.allowed:
+        recover_args: list[str] | None = None
+        if samsung and phase == PHASE_ESIM:
+            # Never android.settings.SIM_CARD_SETTINGS / MANAGE_ALL_SIM on One UI.
+            recover_args = [
+                "am",
+                "start",
+                "-n",
+                SAMSUNG_SIM_MGR_COMPONENT,
+                "-e",
+                "rootKey",
+                "SIMCARD_ESIM_ADD_MOBILE_PLAN",
+                "--activity-clear-task",
+            ]
+        elif decision.recover_intent:
+            recover_args = ["am", "start", "-a", decision.recover_intent]
+        if recover_args:
+            try:
+                _shell(runner, adb_path, serial, recover_args)
+                recovered = True
+                activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
+                activity = parse_foreground_activity(activities)
+                decision = decide_setup_guard(
+                    phase=phase, activity=activity, voidfix_package=voidfix_package
+                )
+            except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+                recovered = False
     holders = parse_sms_role_holders(role_dump)
     sms_holder = holders[0] if holders else None
     voidfix_is_sms = bool(voidfix_package and sms_holder == voidfix_package)
@@ -154,25 +218,15 @@ def run_setup_session_input(
         elif kind == "quick_settings":
             _shell(runner, adb_path, serial, ["cmd", "statusbar", "expand-settings"])
         elif kind == "swipe":
-            args = [
-                "input",
-                "swipe",
-                str(int(payload["x"])),
-                str(int(payload["y"])),
-                str(int(payload["x2"])),
-                str(int(payload["y2"])),
-            ]
+            x, y, x2, y2 = _native_swipe_points(runner, adb_path, serial, payload)
+            args = ["input", "swipe", str(x), str(y), str(x2), str(y2)]
             duration_ms = payload.get("duration_ms")
             if duration_ms is not None:
                 args.append(str(int(duration_ms)))
             _shell(runner, adb_path, serial, args)
         elif kind == "tap":
-            _shell(
-                runner,
-                adb_path,
-                serial,
-                ["input", "tap", str(int(payload["x"])), str(int(payload["y"]))],
-            )
+            x, y = _native_tap_point(runner, adb_path, serial, payload)
+            _shell(runner, adb_path, serial, ["input", "tap", str(x), str(y)])
         else:
             return FarmTaskResult(ok=False, http_status=400, error="invalid_control")
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):

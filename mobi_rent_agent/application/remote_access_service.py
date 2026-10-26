@@ -34,8 +34,13 @@ from application.vps_api_contract import (
 )
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
-from application.remote_access_farm_task import MAX_QR_IMAGE_BYTES, SAMSUNG_USER_QR_SLOT, _image_extension
-from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, native_resolution_body
+from application.remote_access_farm_task import (
+    MAX_QR_IMAGE_BYTES,
+    SAMSUNG_USER_QR_SLOT,
+    _image_extension,
+    _is_samsung_renter_device,
+)
+from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, map_touch_to_native, native_resolution_body
 from application.device_screen_prepare import request_device_screen_prepare
 from application.in_app_control_policy import (
     FORBIDDEN_PAYLOAD_KEYS,
@@ -537,9 +542,7 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            request_device_screen_prepare(
-                self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
-            )
+            self._prepare_device_screen(auth.slot_id, wait_boot=False)
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -600,9 +603,7 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        request_device_screen_prepare(
-            self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
-        )
+        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -686,9 +687,7 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        request_device_screen_prepare(
-            self._farm, auth.slot_id, wait_boot=False, voidfix_package=self._voidfix_package
-        )
+        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         try:
             return opener(
                 device_id=session.device_id,
@@ -834,9 +833,7 @@ class RemoteAccessService:
         if wait:
             body["adb_online"] = self._wait_adb_online(slot)
             if body["adb_online"]:
-                request_device_screen_prepare(
-                    self._farm, slot, wait_boot=True, voidfix_package=self._voidfix_package
-                )
+                self._prepare_device_screen(slot, wait_boot=True)
             body["platform_online"] = self._wait_platform_online(slot) if body["adb_online"] else False
             body["ok"] = bool(body["adb_online"] and body["platform_online"])
             if not body["ok"]:
@@ -1242,12 +1239,23 @@ class RemoteAccessService:
             # routed through this renter endpoint and stays unrestricted.
             auto_job_id = str(uuid.uuid4())
             image_base64 = base64.b64encode(image_bytes).decode("ascii")
-            self._runner(lambda: self._run_auto_activation_flow(auth, image_base64, auto_job_id))
+            self._runner(
+                lambda: self._run_auto_activation_flow(
+                    auth, image_base64, auto_job_id, mode="open_qr_picker"
+                )
+            )
             body["auto_activation"] = {"started": True, "job_id": auto_job_id}
         return ApiResult(200, body)
 
-    def _run_auto_activation_flow(self, auth: AuthorizedRental, image_base64: str, job_id: str) -> None:
-        """Background zero-touch eSIM activation for Samsung bays (renter flow)."""
+    def _run_auto_activation_flow(
+        self,
+        auth: AuthorizedRental,
+        image_base64: str,
+        job_id: str,
+        *,
+        mode: str = "open_qr_picker",
+    ) -> None:
+        """Open Samsung SIM Manager and advance to the Gallery QR picker."""
         try:
             response = self._farm.run_task(
                 task_type=ESIM_AUTO_ACTIVATION_TASK,
@@ -1256,6 +1264,7 @@ class RemoteAccessService:
                     "image_base64": image_base64,
                     "rental_id": auth.rental_id,
                     "actor": "renter",
+                    "mode": mode,
                 },
                 job_id=job_id,
             )
@@ -1268,7 +1277,9 @@ class RemoteAccessService:
             raw_details = response.body.get("details")
             if isinstance(raw_details, dict):
                 details = raw_details
-        if getattr(response, "ok", False) and details.get("activated") is True:
+        if getattr(response, "ok", False) and (
+            details.get("activated") is True or details.get("opened") is True
+        ):
             logger.info("esim_auto_activation_done slot=%s job_id=%s", auth.slot_id, job_id)
             self._record(
                 auth.slot_id,
@@ -1516,6 +1527,45 @@ class RemoteAccessService:
             return None
         return row if isinstance(row, dict) and row else None
 
+    def _prepare_device_screen(self, slot_id: int, *, wait_boot: bool) -> None:
+        request_device_screen_prepare(
+            self._farm, int(slot_id), wait_boot=wait_boot, voidfix_package=self._voidfix_package
+        )
+        self._native_resolution_cache.pop(int(slot_id), None)
+
+    def _is_samsung_renter_slot(self, slot_id: int) -> bool:
+        serial = str(self._devices.get(int(slot_id)) or "")
+        return _is_samsung_renter_device(int(slot_id), serial, None)
+
+    def _start_samsung_open_qr(self, slot_id: int) -> None:
+        if self._farm is None:
+            return
+        job_id = str(uuid.uuid4())
+        self._runner(
+            lambda: self._farm.run_task(
+                task_type=ESIM_AUTO_ACTIVATION_TASK,
+                farm_slot_id=int(slot_id),
+                payload={"mode": "open_qr_picker", "actor": "renter"},
+                job_id=job_id,
+            )
+        )
+
+    def _mapped_touch_command(self, slot_id: int, command: Any) -> Any:
+        if command.action not in {"tap", "swipe"}:
+            return command
+        native, _unavailable = self._native_resolution_for_slot(slot_id)
+        if native is None:
+            return command
+        start = map_touch_to_native(command.x, command.y, native[0], native[1])
+        if start is None:
+            return command
+        if command.action == "tap":
+            return replace(command, x=start[0], y=start[1])
+        end = map_touch_to_native(command.x2, command.y2, native[0], native[1])
+        if end is None:
+            return command
+        return replace(command, x=start[0], y=start[1], x2=end[0], y2=end[1])
+
     def _native_resolution_for_slot(self, slot_id: int) -> tuple[tuple[int, int] | None, str | None]:
         """Physical panel size from Farm ``wm size``. Never uses the MJPEG frame size."""
         bay = int(slot_id)
@@ -1557,9 +1607,18 @@ class RemoteAccessService:
             payload["voidfix_package"] = self._voidfix_package
         return self._farm_setup_task("setup_session_inspect", slot_id, payload)
 
-    def _launch_add_esim(self, slot_id: int) -> dict[str, Any] | ApiResult:
-        """One-shot allowlisted SIM-profiles intent. Never a background recover loop."""
-        return self._inspect_session(int(slot_id), recover=True)
+    def _launch_add_esim(
+        self, slot_id: int, *, advance: bool = True
+    ) -> dict[str, Any] | ApiResult:
+        """Open the vendor eSIM UI. Samsung uses SIM Manager, never AOSP < SIMs>."""
+        launched = self._inspect_session(int(slot_id), recover=True)
+        if (
+            advance
+            and not isinstance(launched, ApiResult)
+            and self._is_samsung_renter_slot(slot_id)
+        ):
+            self._start_samsung_open_qr(int(slot_id))
+        return launched
 
     def _navigate_rental_to_add_esim(self, auth: AuthorizedRental) -> dict[str, str]:
         """Open Add eSIM on the authorized rental bay only.
@@ -1843,12 +1902,13 @@ class RemoteAccessService:
             "platform_password": secret,
         }
         if command.action == "tap":
+            mapped = self._mapped_touch_command(session.slot_id, command)
             tap = getattr(platform, "tap", None)
             forwarded = False
             if callable(tap):
-                forwarded = bool(tap(**kwargs, x=int(command.x), y=int(command.y)))
+                forwarded = bool(tap(**kwargs, x=int(mapped.x), y=int(mapped.y)))
             if not forwarded:
-                return self._farm_input(session.slot_id, "tap", command)
+                return self._farm_input(session.slot_id, "tap", mapped)
             return True
         if command.action == "type":
             type_text = getattr(platform, "type_text", None)
@@ -1857,15 +1917,16 @@ class RemoteAccessService:
             type_text(**kwargs, text=str(command.text))
             return True
         if command.action == "swipe":
+            mapped = self._mapped_touch_command(session.slot_id, command)
             swipe = getattr(platform, "swipe", None)
             forwarded = False
             if callable(swipe):
                 swipe_kwargs = {
                     **kwargs,
-                    "x": int(command.x),
-                    "y": int(command.y),
-                    "x2": int(command.x2),
-                    "y2": int(command.y2),
+                    "x": int(mapped.x),
+                    "y": int(mapped.y),
+                    "x2": int(mapped.x2),
+                    "y2": int(mapped.y2),
                 }
                 duration_ms = getattr(command, "duration_ms", None)
                 if duration_ms is not None:
@@ -1876,7 +1937,7 @@ class RemoteAccessService:
                 else:
                     forwarded = bool(swipe(**swipe_kwargs))
             if not forwarded:
-                return self._farm_input(session.slot_id, "swipe", command)
+                return self._farm_input(session.slot_id, "swipe", mapped)
             return True
         if command.action in NAV_ACTIONS:
             method = {
@@ -2009,9 +2070,7 @@ class RemoteAccessService:
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="adb_reconnect_timeout")
             return
         logger.info("device_adb_ready slot=%s", auth.slot_id)
-        request_device_screen_prepare(
-            self._farm, auth.slot_id, wait_boot=True, voidfix_package=self._voidfix_package
-        )
+        self._prepare_device_screen(auth.slot_id, wait_boot=True)
         self._store.set_prepare_state(auth.rental_id, PREPARE_WAITING_PLATFORM)
         if not self._wait_platform_online(auth.slot_id):
             self._store.set_prepare_state(auth.rental_id, PREPARE_FAILED, detail="platform_reconnect_timeout")

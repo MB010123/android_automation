@@ -291,3 +291,64 @@ def test_setup_session_inspect_uses_mapped_serial():
     )
     assert result.ok is True
     assert ("SERIAL-A", ["reboot"]) in runner.calls
+
+
+def test_setup_session_inspect_recover_uses_samsung_sim_manager():
+    from application.setup_activity_guard import SAMSUNG_SIM_MGR_COMPONENT
+
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 com.android.settings/.spa.SpaActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=21,
+        payload={"phase": "esim", "recover": True},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    starts = [args for _serial, args in runner.calls if args[:3] == ["shell", "am", "start"]]
+    assert starts
+    joined = " ".join(starts[0])
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in joined
+    assert "SIM_CARD_SETTINGS" not in joined
+
+
+def test_setup_session_input_scales_normalized_tap_to_wm_size():
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+
+    class SizeRunner(FakeRunner):
+        def run(self, serial: str, arguments: list[str]):
+            self.calls.append((serial, arguments))
+            if arguments[:3] == ["shell", "wm", "size"]:
+                return AdbCommandResult(
+                    stdout="Physical size: 1440x3200\nOverride size: 1080x2400\n",
+                    stderr="",
+                )
+            return AdbCommandResult(stdout="device" if arguments == ["get-state"] else "", stderr="")
+
+    sized = SizeRunner()
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_input",
+        farm_slot_id=21,
+        payload={"kind": "tap", "x": 0.5, "y": 0.5},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=sized),
+    )
+    assert result.ok is True
+    taps = [args for _s, args in sized.calls if args[:3] == ["shell", "input", "tap"]]
+    assert taps == [["shell", "input", "tap", "540", "1200"]]

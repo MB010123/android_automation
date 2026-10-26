@@ -50,6 +50,38 @@ def native_resolution_body(width: int, height: int) -> dict[str, int]:
     return {"width": int(width), "height": int(height)}
 
 
+def map_touch_to_native(
+    x: Any,
+    y: Any,
+    width: int,
+    height: int,
+) -> tuple[int, int] | None:
+    """Map a pointer to the live ``wm size`` pixel space.
+
+    Normalized ``0..1`` floats (when at least one value is not an integer) are
+    scaled against the current override/physical size. Integer pixel coordinates
+    are clamped into the live size so a stale 1440-wide mapper cannot miss on a
+    1080-wide panel.
+    """
+    if width <= 0 or height <= 0:
+        return None
+    try:
+        fx = float(x)
+        fy = float(y)
+    except (TypeError, ValueError):
+        return None
+    if fx < 0 or fy < 0:
+        return None
+    normalized = 0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0 and not (fx.is_integer() and fy.is_integer())
+    if normalized:
+        xi = int(round(fx * width))
+        yi = int(round(fy * height))
+    else:
+        xi = int(round(fx))
+        yi = int(round(fy))
+    return max(0, min(width - 1, xi)), max(0, min(height - 1, yi))
+
+
 def parse_display_size_payload(payload: dict[str, Any] | None) -> tuple[int, int] | None:
     """Read width/height from a Farm task body or nested ``details`` object."""
     if not isinstance(payload, dict):

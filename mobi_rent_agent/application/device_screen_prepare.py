@@ -33,6 +33,14 @@ WAKE_UNLOCK_COMMANDS = (
     "input keyevent KEYCODE_HOME",
 )
 
+# Samsung Galaxy S20 ships FHD+ (1080x2400 @ 420). ``wm size reset`` restores
+# the physical WQHD+ panel (1440x3200), which desyncs GADS stream vs taps.
+SAMSUNG_S20_SERIAL = "RFCNB056WEV"
+SAMSUNG_S20_SLOT_ID = 21
+SAMSUNG_S20_SIZE = "1080x2400"
+SAMSUNG_S20_DENSITY = "420"
+_SAMSUNG_S20_MODEL_PREFIXES = ("SM-G980", "SM-G981", "SM-G985", "SM-G986", "SM-G988")
+
 
 def best_effort_shell_script(commands: tuple[str, ...] | list[str]) -> str:
     """Join device commands so a denied step cannot fail the adb shell."""
@@ -57,6 +65,38 @@ def run_best_effort_shell(
         warnings.append(f"{label}: {text or exc.__class__.__name__}")
         logger.info("device_screen_prepare_step_skipped label=%s", label)
         return False
+
+
+def _prop(runner: AdbCommandRunner, serial: str, key: str) -> str:
+    try:
+        return (runner.run(serial, ["shell", "getprop", key]).stdout or "").strip()
+    except AdbCommandError:
+        return ""
+
+
+def is_samsung_s20(
+    *,
+    slot_id: int,
+    serial: str,
+    manufacturer: str = "",
+    model: str = "",
+) -> bool:
+    if int(slot_id) == SAMSUNG_S20_SLOT_ID:
+        return True
+    if str(serial or "").strip().upper() == SAMSUNG_S20_SERIAL:
+        return True
+    brand = str(manufacturer or "").strip().lower()
+    if brand != "samsung" and not brand.startswith("samsung"):
+        return False
+    upper = str(model or "").strip().upper()
+    return any(upper.startswith(prefix) for prefix in _SAMSUNG_S20_MODEL_PREFIXES)
+
+
+def wake_unlock_commands(*, samsung_s20: bool) -> tuple[str, ...]:
+    """Wake/unlock script. S20 stays on FHD+ so stream and taps share one size."""
+    size = f"wm size {SAMSUNG_S20_SIZE}" if samsung_s20 else "wm size reset"
+    density = f"wm density {SAMSUNG_S20_DENSITY}" if samsung_s20 else "wm density reset"
+    return (size, density) + WAKE_UNLOCK_COMMANDS[2:]
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
@@ -134,7 +174,14 @@ def run_device_screen_prepare(
                 "warnings": warnings,
             },
         )
-    run_best_effort_shell(runner, serial, WAKE_UNLOCK_COMMANDS, warnings, "wake_unlock")
+    manufacturer = _prop(runner, serial, "ro.product.manufacturer")
+    model = _prop(runner, serial, "ro.product.model")
+    samsung_s20 = is_samsung_s20(
+        slot_id=slot_id, serial=serial, manufacturer=manufacturer, model=model
+    )
+    run_best_effort_shell(
+        runner, serial, wake_unlock_commands(samsung_s20=samsung_s20), warnings, "wake_unlock"
+    )
     package = str(request.payload.get("voidfix_package") or "").strip()
     if package:
         from application.device_voidfix_keepalive import apply_voidfix_keepalive, normalize_voidfix_package

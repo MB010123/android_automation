@@ -335,6 +335,7 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     assert auto and auto[-1]["slot"] == 21
     assert auto[-1]["payload"]["actor"] == "renter"
     assert auto[-1]["payload"]["rental_id"] == rental
+    assert auto[-1]["payload"]["mode"] == "open_qr_picker"
     assert "image_base64" in auto[-1]["payload"]
     assert "serial" not in auto[-1]["payload"]
     assert "RFCNB056WEV" not in json.dumps(result.body)

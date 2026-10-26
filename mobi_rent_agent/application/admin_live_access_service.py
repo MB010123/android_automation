@@ -18,6 +18,7 @@ from application.device_screen_prepare import request_device_screen_prepare
 from application.device_display_size import (
     DEVICE_DISPLAY_SIZE_TASK,
     attach_native_resolution,
+    map_touch_to_native,
     parse_display_size_payload,
 )
 from application.in_app_control_policy import (
@@ -175,7 +176,7 @@ class AdminLiveAccessService:
                     parsed,
                     admin.user_id[:8],
                 )
-                request_device_screen_prepare(self._farm, parsed, wait_boot=False)
+                self._prepare_device_screen(parsed, wait_boot=False)
                 return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
@@ -187,7 +188,7 @@ class AdminLiveAccessService:
         self._audit(parsed, "admin_live_access_opened", admin.user_id)
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
         _ = platform
-        request_device_screen_prepare(self._farm, parsed, wait_boot=False)
+        self._prepare_device_screen(parsed, wait_boot=False)
         return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
@@ -202,7 +203,7 @@ class AdminLiveAccessService:
         device_id, platform = ready
         if device_id != bound.device_id:
             return ApiResult(409, error_body("phone_unavailable"))
-        request_device_screen_prepare(self._farm, bound.slot_id, wait_boot=False)
+        self._prepare_device_screen(bound.slot_id, wait_boot=False)
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))
@@ -390,6 +391,33 @@ class AdminLiveAccessService:
         attach_native_resolution(body, native, unavailable)
         return body
 
+    def _prepare_device_screen(self, slot_id: int, *, wait_boot: bool) -> None:
+        request_device_screen_prepare(self._farm, int(slot_id), wait_boot=wait_boot)
+        self._native_resolution_cache.pop(int(slot_id), None)
+
+    def _mapped_touch_command(self, slot_id: int, command: ControlCommand) -> ControlCommand:
+        if command.action not in {"tap", "swipe"}:
+            return command
+        native, _unavailable = self._native_resolution_for_slot(slot_id)
+        if native is None:
+            return command
+        start = map_touch_to_native(command.x, command.y, native[0], native[1])
+        if start is None:
+            return command
+        if command.action == "tap":
+            return ControlCommand(action="tap", x=start[0], y=start[1])
+        end = map_touch_to_native(command.x2, command.y2, native[0], native[1])
+        if end is None:
+            return command
+        return ControlCommand(
+            action="swipe",
+            x=start[0],
+            y=start[1],
+            x2=end[0],
+            y2=end[1],
+            duration_ms=command.duration_ms,
+        )
+
     def _native_resolution_for_slot(self, slot_id: int) -> tuple[tuple[int, int] | None, str | None]:
         """Active input size: Farm ``wm size``, then GADS registered screen size.
 
@@ -547,12 +575,13 @@ class AdminLiveAccessService:
             # No dedicated GADS Settings endpoint. Admin opens Settings by tap.
             return True
         if command.action == "tap":
+            mapped = self._mapped_touch_command(session.slot_id, command)
             tap = getattr(platform, "tap", None)
             forwarded = False
             if callable(tap):
-                forwarded = bool(tap(**kwargs, x=int(command.x), y=int(command.y)))
+                forwarded = bool(tap(**kwargs, x=int(mapped.x), y=int(mapped.y)))
             if not forwarded:
-                return self._farm_input(session.slot_id, "tap", command)
+                return self._farm_input(session.slot_id, "tap", mapped)
             return True
         if command.action == "type":
             type_text = getattr(platform, "type_text", None)
@@ -561,15 +590,16 @@ class AdminLiveAccessService:
             type_text(**kwargs, text=str(command.text))
             return True
         if command.action == "swipe":
+            mapped = self._mapped_touch_command(session.slot_id, command)
             swipe = getattr(platform, "swipe", None)
             forwarded = False
             if callable(swipe):
                 swipe_kwargs = {
                     **kwargs,
-                    "x": int(command.x),
-                    "y": int(command.y),
-                    "x2": int(command.x2),
-                    "y2": int(command.y2),
+                    "x": int(mapped.x),
+                    "y": int(mapped.y),
+                    "x2": int(mapped.x2),
+                    "y2": int(mapped.y2),
                 }
                 if command.duration_ms is not None:
                     try:
@@ -579,7 +609,7 @@ class AdminLiveAccessService:
                 else:
                     forwarded = bool(swipe(**swipe_kwargs))
             if not forwarded:
-                return self._farm_input(session.slot_id, "swipe", command)
+                return self._farm_input(session.slot_id, "swipe", mapped)
             return True
         if command.action in NAV_ACTIONS:
             method = {

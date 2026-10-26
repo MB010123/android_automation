@@ -223,6 +223,32 @@ def test_normal_apps_and_esim_screens_unchanged_with_operator_ui_blocks(tmp_path
     assert getattr(stream, "device_id") == SLOT2_SERIAL
 
 
+def test_samsung_esim_gallery_and_picker_taps_are_not_redirected(tmp_path: Path):
+    farm = FakeFarm()
+    _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
+    for activity in (
+        "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity",
+        "com.samsung.android.euicc/.EuiccActivity",
+        "com.sec.android.gallery3d/.GalleryActivity",
+        "com.google.android.documentsui/.picker.PickActivity",
+        "com.samsung.android.biometrics.app.setting/.FingerprintActivity",
+        "com.android.settings/.network.telephony.MobileNetworkActivity",
+    ):
+        farm.inspect_activity = activity
+        farm.inspect_allowed = True
+        platform.calls.clear()
+        before = len(farm.tasks)
+        tapped = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 40, "y": 80})
+        assert tapped.http_status == 200, activity
+        assert "restricted_destination" not in tapped.body, activity
+        assert any(c[0] == "tap" for c in platform.calls)
+        assert not any(c[0] == "home" for c in platform.calls)
+        assert not any(
+            t["type"] == "setup_session_inspect" and t["payload"].get("recover")
+            for t in farm.tasks[before:]
+        )
+
+
 def test_package_installer_does_not_disconnect_stream(tmp_path: Path):
     farm = FakeFarm()
     farm.inspect_activity = "com.android.packageinstaller/.InstallStart"

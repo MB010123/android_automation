@@ -69,10 +69,15 @@ def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | 
     return None
 
 DCIM_CAMERA_DIR = "/sdcard/DCIM/Camera"
+DCIM_DIR = "/sdcard/DCIM"
 PICTURES_DIR = "/sdcard/Pictures"
 ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR})
 SAMSUNG_S20_SERIAL = "RFCNB056WEV"
 SAMSUNG_USER_QR_SLOT = 21
+SAMSUNG_GALLERY_QR_PATHS = (
+    f"{PICTURES_DIR}/esim_qr.png",
+    f"{DCIM_DIR}/esim_qr.png",
+)
 MAX_QR_IMAGE_BYTES = 5 * 1024 * 1024
 _RENTAL_TOKEN_RE = re.compile(r"[^a-z0-9]")
 
@@ -110,6 +115,43 @@ def qr_placement_dir(
     if _is_samsung_renter_device(int(slot_id), serial, manufacturer):
         return PICTURES_DIR
     return DCIM_CAMERA_DIR
+
+
+def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool:
+    try:
+        runner.run(
+            serial,
+            [
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+                "-d",
+                f"file://{remote_path}",
+            ],
+        )
+        return True
+    except AdbCommandError:
+        return False
+
+
+def _copy_samsung_gallery_aliases(
+    runner: AdbCommandRunner, serial: str, source_path: str
+) -> list[str]:
+    """Stable Gallery/My Files names so Recent/Pictures shows the QR first."""
+    copied: list[str] = []
+    for dest in SAMSUNG_GALLERY_QR_PATHS:
+        parent = dest.rsplit("/", 1)[0]
+        try:
+            runner.run(serial, ["shell", "mkdir", "-p", parent])
+            if dest != source_path:
+                runner.run(serial, ["shell", "cp", source_path, dest])
+            _media_scan(runner, serial, dest)
+            copied.append(dest)
+        except AdbCommandError:
+            continue
+    return copied
 
 
 def _manufacturer_from_adb(runner: AdbCommandRunner, serial: str) -> str:
@@ -212,6 +254,7 @@ def _place_details(
     error_code: str | None = None,
     message: str | None = None,
     media_scanned: bool | None = None,
+    gallery_aliases: list[str] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "ok": ok,
@@ -226,6 +269,8 @@ def _place_details(
     }
     if media_scanned is not None:
         body["media_scanned"] = media_scanned
+    if gallery_aliases:
+        body["gallery_aliases"] = list(gallery_aliases)
     return body
 
 
@@ -242,6 +287,7 @@ def _place_result(
     remote_size: int | None = None,
     placed: bool = False,
     media_scanned: bool | None = None,
+    gallery_aliases: list[str] | None = None,
 ) -> FarmTaskResult:
     details = _place_details(
         ok=ok,
@@ -254,6 +300,7 @@ def _place_result(
         error_code=error,
         message=message,
         media_scanned=media_scanned,
+        gallery_aliases=gallery_aliases,
     )
     return FarmTaskResult(
         ok=ok,
@@ -472,22 +519,10 @@ def run_remote_access_place_qr(
             except OSError:
                 pass
 
-    media_scanned = True
-    try:
-        runner.run(
-            serial,
-            [
-                "shell",
-                "am",
-                "broadcast",
-                "-a",
-                "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-                "-d",
-                f"file://{remote_path}",
-            ],
-        )
-    except AdbCommandError:
-        media_scanned = False
+    media_scanned = _media_scan(runner, serial, remote_path)
+    gallery_aliases: list[str] = []
+    if _is_samsung_renter_device(slot_id, serial, _manufacturer_from_adb(runner, serial)):
+        gallery_aliases = _copy_samsung_gallery_aliases(runner, serial, remote_path)
 
     logger.info(
         "esim_qr_placed slot=%s job_id=%s downloaded_size=%s remote_size=%s media_scanned=%s",
@@ -507,6 +542,7 @@ def run_remote_access_place_qr(
         remote_size=remote_size,
         placed=True,
         media_scanned=media_scanned,
+        gallery_aliases=gallery_aliases,
         message=f"qr_placed:{remote_path};media_scanned={str(media_scanned).lower()}",
     )
 

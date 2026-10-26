@@ -13,14 +13,35 @@ PHASE_VOIDFIX = "voidfix"
 KNOWN_PHASES = frozenset({PHASE_ESIM, PHASE_VOIDFIX})
 
 # Public Settings intents only. Never EuiccManager / silent provision.
+# Pixel only. Samsung One UI must not use these — they open the broken AOSP
+# "< SIMs>" fragment (DOWNLOADED SIM / Inactive / + Add more).
 RECOVER_INTENT_ESIM = "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS"
 RECOVER_INTENT_VOIDFIX = "android.settings.MANAGE_DEFAULT_APPS_SETTINGS"
+AOSP_SIM_SETTINGS_INTENTS = frozenset(
+    {
+        "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS",
+        "android.settings.SIM_CARD_SETTINGS",
+    }
+)
+SAMSUNG_SIM_MGR_COMPONENT = (
+    "com.samsung.android.app.telephonyui/"
+    ".netsettings.ui.simcardmanager.SimCardMgrActivity"
+)
+SAMSUNG_MANAGE_EMBEDDED_INTENT = "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS"
 
 _ESIM_PACKAGES = frozenset(
     {
         "com.google.android.euicc",
         "com.android.euicc",
         "com.google.android.carriersetup",
+        "com.samsung.android.app.telephonyui",
+        "com.samsung.android.euicc",
+        "com.sec.android.gallery3d",
+        "com.samsung.android.gallery3d",
+        "com.google.android.documentsui",
+        "com.android.documentsui",
+        "com.samsung.android.biometrics.app.setting",
+        "com.google.android.photospicker",
     }
 )
 _ROLE_PACKAGES = frozenset(
@@ -48,6 +69,8 @@ _ESIM_ACTIVITY_MARKERS = (
     "managesim",
     "addesim",
     "provisionembedded",
+    "simcardmgr",
+    "simcardmanager",
 )
 _VOIDFIX_ACTIVITY_MARKERS = (
     "requestrole",

@@ -187,6 +187,22 @@ def find_label_tap(ui_xml: str, label: str) -> tuple[int, int] | None:
     return None
 
 
+def find_any_label_tap(ui_xml: str, labels: tuple[str, ...]) -> tuple[int, int] | None:
+    for label in labels:
+        hit = find_label_tap(ui_xml, label)
+        if hit is not None:
+            return hit
+    return None
+
+
+def is_aosp_sims_screen(ui_xml: str) -> bool:
+    """True for the broken AOSP ``< SIMs>`` fragment on One UI."""
+    lowered = (ui_xml or "").lower()
+    if "add esim" in lowered or "sim manager" in lowered:
+        return False
+    return "downloaded sim" in lowered and "add more" in lowered
+
+
 def find_album_tile_tap(ui_xml: str, titles: tuple[str, ...] = ("Pictures", "Recent")) -> tuple[int, int] | None:
     """Center of the Gallery album tile (recycler item) matching a title.
 
@@ -287,7 +303,7 @@ def _samsung_ui_flow_steps() -> tuple[UiFlowStep, ...]:
     return (
         UiFlowStep(
             name="add_esim",
-            locate=lambda xml: find_label_tap(xml, "Add eSIM"),
+            locate=lambda xml: find_any_label_tap(xml, ("Add eSIM", "Add mobile plan")),
             done_markers=(
                 "Other ways to connect",
                 "Choose how to add your eSIM",
@@ -302,12 +318,14 @@ def _samsung_ui_flow_steps() -> tuple[UiFlowStep, ...]:
         ),
         UiFlowStep(
             name="scan_qr_code",
-            locate=lambda xml: find_label_tap(xml, "Scan QR code"),
-            done_markers=("Open Gallery",),
+            locate=lambda xml: find_any_label_tap(
+                xml, ("Scan QR code from service provider", "Scan QR code")
+            ),
+            done_markers=("Open Gallery", "Choose photo", "Gallery"),
         ),
         UiFlowStep(
             name="open_gallery",
-            locate=lambda xml: find_label_tap(xml, "Open Gallery"),
+            locate=lambda xml: find_any_label_tap(xml, ("Open Gallery", "Choose photo")),
             done_markers=("Select item", "Albums", "Pictures", "Recent"),
         ),
         UiFlowStep(
@@ -425,7 +443,10 @@ def run_esim_auto_activation(
     steps_done: list[str] = []
     outcome: str | None = None
     detail: str | None = None
-    method = "deeplink" if code else "one_ui_flow"
+    mode = str(request.payload.get("mode") or "").strip().lower()
+    open_picker = mode in {"open_qr_picker", "open_gallery"}
+    method = "deeplink" if code else ("open_qr_picker" if open_picker else "one_ui_flow")
+    leave_on_screen = open_picker
     try:
         runner.run(serial, ["shell", "logcat", "-c"])
         runner.run(serial, ["shell", "input", "keyevent", "224"])  # wake
@@ -457,6 +478,7 @@ def run_esim_auto_activation(
                 clock=clock,
                 poll_interval_seconds=poll_interval_seconds,
                 step_timeout_seconds=step_timeout_seconds,
+                stop_after="open_album" if open_picker else None,
             )
             if walk_error is not None:
                 failed_step, screen_hint = walk_error
@@ -473,6 +495,25 @@ def run_esim_auto_activation(
                     state_transitions=ui.progress_states(),
                     taps=taps,
                     activated=False,
+                    opened=False,
+                )
+            if open_picker:
+                logger.info(
+                    "esim_open_qr_picker_ok slot=%s job_id=%s steps=%s",
+                    slot_id,
+                    request.job_id,
+                    steps_done,
+                )
+                return _result(
+                    ok=True,
+                    http_status=200,
+                    job_id=request.job_id,
+                    message="esim_qr_picker_opened",
+                    method=method,
+                    steps_done=steps_done,
+                    taps=taps,
+                    activated=False,
+                    opened=True,
                 )
 
         deadline = clock() + float(timeout_seconds)
@@ -530,12 +571,17 @@ def run_esim_auto_activation(
                     ui.tap(dismiss[0], dismiss[1])
         except AdbCommandError:
             pass
-        # Remove the UI dump, back out, and return home.
-        for cleanup in (
-            ["shell", "rm", "-f", UI_DUMP_REMOTE_PATH],
-            ["shell", "input", "keyevent", "4"],
-            ["shell", "input", "keyevent", "3"],
-        ):
+        # Remove the UI dump. Full activation returns home; open_qr_picker
+        # leaves the renter on Gallery so one tap can pick the QR.
+        cleanup_cmds = [["shell", "rm", "-f", UI_DUMP_REMOTE_PATH]]
+        if not leave_on_screen:
+            cleanup_cmds.extend(
+                [
+                    ["shell", "input", "keyevent", "4"],
+                    ["shell", "input", "keyevent", "3"],
+                ]
+            )
+        for cleanup in cleanup_cmds:
             try:
                 runner.run(serial, cleanup)
             except AdbCommandError:
@@ -589,24 +635,7 @@ def run_esim_auto_activation(
     )
 
 
-def _walk_one_ui_flow(
-    ui: _DeviceUi,
-    runner: AdbCommandRunner,
-    serial: str,
-    *,
-    steps_done: list[str],
-    taps: list[str],
-    sleep_fn: Callable[[float], None],
-    clock: Callable[[], float],
-    poll_interval_seconds: float,
-    step_timeout_seconds: float,
-) -> tuple[str, str] | None:
-    """Walk SIM manager → … → Gallery Done. None on success.
-
-    On failure returns ``(step_name, screen_hint)`` where ``screen_hint`` is a
-    short note about what the screen showed instead (never raw UI content
-    beyond known labels).
-    """
+def _launch_samsung_sim_manager(runner: AdbCommandRunner, serial: str) -> None:
     runner.run(
         serial,
         [
@@ -618,22 +647,48 @@ def _walk_one_ui_flow(
             "-e",
             "rootKey",
             "SIMCARD_ESIM_ADD_MOBILE_PLAN",
-            # A previous session may have left SimCardMgrActivity on a
-            # subscreen; clear the task so the walk always starts at the root.
             "--activity-clear-task",
         ],
     )
+
+
+def _walk_one_ui_flow(
+    ui: _DeviceUi,
+    runner: AdbCommandRunner,
+    serial: str,
+    *,
+    steps_done: list[str],
+    taps: list[str],
+    sleep_fn: Callable[[float], None],
+    clock: Callable[[], float],
+    poll_interval_seconds: float,
+    step_timeout_seconds: float,
+    stop_after: str | None = None,
+) -> tuple[str, str] | None:
+    """Walk SIM manager → … → Gallery Done. None on success.
+
+    On failure returns ``(step_name, screen_hint)`` where ``screen_hint`` is a
+    short note about what the screen showed instead (never raw UI content
+    beyond known labels).
+    """
+    _launch_samsung_sim_manager(runner, serial)
     launch_deadline = clock() + float(step_timeout_seconds)
     ui_xml = ""
+    relaunched = False
     while clock() < launch_deadline:
         sleep_fn(float(poll_interval_seconds))
         try:
             ui_xml = ui.dump()
         except AdbCommandError:
             continue
-        if ui_contains(ui_xml, "Add eSIM"):
+        if is_aosp_sims_screen(ui_xml) and not relaunched:
+            # Never stay on AOSP < SIMs>. Re-open One UI SIM Manager once.
+            _launch_samsung_sim_manager(runner, serial)
+            relaunched = True
+            continue
+        if ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
             break
-    if not ui_contains(ui_xml, "Add eSIM"):
+    if not ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
         return "open_sim_manager", "SIM manager screen did not show Add eSIM"
     steps_done.append("open_sim_manager")
 
@@ -675,4 +730,6 @@ def _walk_one_ui_flow(
                 break
         if not advanced:
             return step.name, "next screen did not appear"
+        if stop_after and step.name == stop_after:
+            return None
     return None

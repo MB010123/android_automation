@@ -176,6 +176,20 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
         args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/Pictures"
         for _, args in runner.calls
     )
+    copied = [" ".join(args) for _, args in runner.calls]
+    assert any("cp" in line and "/sdcard/Pictures/esim_qr.png" in line for line in copied)
+    assert any("cp" in line and "/sdcard/DCIM/esim_qr.png" in line for line in copied)
+    scans = [
+        " ".join(args)
+        for _, args in runner.calls
+        if args[:3] == ["shell", "am", "broadcast"]
+    ]
+    assert any("file:///sdcard/Pictures/esim_qr.png" in line for line in scans)
+    assert any("file:///sdcard/DCIM/esim_qr.png" in line for line in scans)
+    assert result.details["gallery_aliases"] == [
+        "/sdcard/Pictures/esim_qr.png",
+        "/sdcard/DCIM/esim_qr.png",
+    ]
 
 
 def test_renter_cannot_override_samsung_qr_dir():

@@ -52,6 +52,34 @@ def test_classify_esim_settings_voidfix_and_apps():
         classify_foreground_activity("com.google.android.euicc/.ui.EuiccProvisioningActivity").kind
         == KIND_ESIM_NESTED
     )
+    assert (
+        classify_foreground_activity(
+            "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity"
+        ).kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity(
+            "com.samsung.android.euicc/.ui.EuiccProvisioningActivity"
+        ).kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity("com.sec.android.gallery3d/.GalleryActivity").kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity(
+            "com.google.android.documentsui/.picker.PickActivity"
+        ).kind
+        == KIND_ESIM_NESTED
+    )
+    assert (
+        classify_foreground_activity(
+            "com.samsung.android.biometrics.app.setting/.BiometricsActivity"
+        ).kind
+        == KIND_ESIM_NESTED
+    )
     assert classify_foreground_activity("com.android.settings/.Settings").kind == KIND_SETTINGS
     assert (
         classify_foreground_activity("com.android.settings/com.android.settings.Settings").kind
@@ -289,6 +317,16 @@ def test_settings_and_back_decisions():
     )
     assert tap_esim_root.launch_esim is False and tap_esim_root.send_home is False
     assert tap_esim_root.escape_settings is False
+    tap_samsung_sim = decide_restriction(
+        action="tap",
+        activity="com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity",
+    )
+    assert tap_samsung_sim.launch_esim is False and tap_samsung_sim.send_home is False
+    tap_samsung_gallery = decide_restriction(
+        action="tap",
+        activity="com.sec.android.gallery3d/.GalleryActivity",
+    )
+    assert tap_samsung_gallery.launch_esim is False and tap_samsung_gallery.send_home is False
     tap_installer = decide_restriction(
         action="tap",
         activity="com.android.packageinstaller/.InstallStart",

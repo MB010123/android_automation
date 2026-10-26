@@ -30,6 +30,7 @@ from application.esim_auto_activation_farm_task import (
     find_confirm_tap,
     find_first_gallery_item_tap,
     find_label_tap,
+    is_aosp_sims_screen,
     lpa_code_is_shell_safe,
     parse_progress_states,
     run_esim_auto_activation,
@@ -218,6 +219,36 @@ def _activate(runner: AdbCommandRunner, **kwargs: Any):
         step_timeout_seconds=kwargs.pop("step_timeout_seconds", 6.0),
         **kwargs,
     )
+
+
+def test_open_qr_picker_stops_on_gallery_and_does_not_go_home():
+    runner = _ActivationRunner(ui_polls=WALK_UI_POLLS)
+    result = _activate(runner, request=_req(mode="open_qr_picker"))
+    assert result.ok is True, (result.error, result.message)
+    assert result.details["method"] == "open_qr_picker"
+    assert result.details["opened"] is True
+    assert result.details["activated"] is False
+    assert result.details["steps_done"] == [
+        "open_sim_manager",
+        "add_esim",
+        "other_ways_to_connect",
+        "scan_qr_code",
+        "open_gallery",
+        "open_album",
+    ]
+    # Wake/home happen at the start of the walk; cleanup must not send home again.
+    homes = [args for _, args in runner.calls if args == ["shell", "input", "keyevent", "3"]]
+    assert len(homes) == 1
+    assert SIM_CARD_MGR_COMPONENT in runner.commands("shell", "am", "start")[0]
+    aosp = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "SIM_CARD_SETTINGS" not in aosp
+    assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in aosp
+
+
+def test_aosp_sims_fragment_is_detected():
+    xml = _ui(_node("SIMs", clickable=False), _node("DOWNLOADED SIM"), _node("+ Add more"))
+    assert is_aosp_sims_screen(xml) is True
+    assert is_aosp_sims_screen(SIM_MANAGER_UI) is False
 
 
 def test_ui_walk_success_taps_every_screen_and_reports_states():

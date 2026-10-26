@@ -407,6 +407,29 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     assert "input swipe 540 1800 540 400 300" in script
 
 
+def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    runner = CleanupRunner()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep21",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    script = runner.calls[-1][1][1]
+    assert "wm size 1080x2400; true" in script
+    assert "wm density 420; true" in script
+    assert "wm size reset; true" not in script
+    assert "wm density reset; true" not in script
+
+
 def test_device_screen_prepare_wait_boot_then_unlock():
     from application.device_screen_prepare import run_device_screen_prepare
 

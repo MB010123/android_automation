@@ -253,7 +253,9 @@ def test_farm_tap_input_uses_assigned_slot_serial_only():
         deps=FarmTaskExecutorDeps(command_runner=runner),
     )
     assert result.ok is True
-    assert runner.calls == [("SERIAL-BAY12", ["shell", "input", "tap", "540", "960"])]
+    assert runner.calls[0] == ("SERIAL-BAY12", ["shell", "wm", "size"])
+    assert runner.calls[-1] == ("SERIAL-BAY12", ["shell", "input", "tap", "540", "960"])
+    assert {serial for serial, _args in runner.calls} == {"SERIAL-BAY12"}
 
 
 def test_gads_adapter_tap_200_returns_true():
