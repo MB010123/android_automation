@@ -322,6 +322,59 @@ def test_setup_session_inspect_recover_uses_samsung_sim_manager():
     assert "SIM_CARD_SETTINGS" not in joined
 
 
+def test_setup_session_inspect_kills_game_launcher_and_opens_sim_manager():
+    from application.setup_activity_guard import SAMSUNG_SIM_MGR_COMPONENT
+
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 com.samsung.android.game.gamehome/.MainActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=21,
+        payload={"phase": "esim", "recover": True},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "am force-stop com.samsung.android.game.gamehome" in joined
+    assert "KEYCODE_HOME" in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "android.settings.SETTINGS" not in joined
+    assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in joined
+
+
+def test_setup_session_input_settings_uses_explicit_component_on_samsung():
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_input",
+        farm_slot_id=21,
+        payload={"kind": "settings"},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    starts = [args for _serial, args in runner.calls if args[:3] == ["shell", "am", "start"]]
+    assert starts
+    joined = " ".join(starts[0])
+    assert "com.android.settings/.Settings" in joined
+    assert "-n" in starts[0]
+    assert "android.settings.SETTINGS" not in joined
+
+
 def test_setup_session_inspect_skips_recover_after_qr_walk():
     from application.setup_activity_guard import SAMSUNG_SIM_MGR_COMPONENT
 

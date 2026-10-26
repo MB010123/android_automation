@@ -179,6 +179,10 @@ _BLOCKED_APP_PACKAGES = frozenset(
         "com.android.vpndialogs",
         "com.android.certinstaller",
         "com.android.settings.intelligence",
+        "com.samsung.android.game.gamehome",
+        "com.samsung.android.game.gametools",
+        "com.samsung.android.game.gos",
+        "com.enhance.gameservice",
     }
 )
 _BLOCKED_APP_MARKERS = (
@@ -290,6 +294,13 @@ def classify_foreground_activity(
         return ActivityClass(KIND_BLOCKED_APP, component, "gads_settings")
     if package == COMPANION_PACKAGE:
         return ActivityClass(KIND_BLOCKED_APP, component, "companion")
+    if package in {
+        "com.samsung.android.game.gamehome",
+        "com.samsung.android.game.gametools",
+        "com.samsung.android.game.gos",
+        "com.enhance.gameservice",
+    }:
+        return ActivityClass(KIND_BLOCKED_APP, component, "samsung_game")
     if package in CAMERA_PACKAGES:
         if _is_esim_invoked_camera(lowered, previous_kind):
             return ActivityClass(KIND_ESIM_NESTED, component, "esim_camera")

@@ -86,6 +86,8 @@ def test_lockdown_includes_s20_bloatware():
     assert "com.netflix.partner.activation" in LOCKDOWN_PACKAGES
     assert "com.samsung.android.app.spage" in LOCKDOWN_PACKAGES
     assert "com.sec.android.app.kidshome" in LOCKDOWN_PACKAGES
+    assert "com.samsung.android.game.gamehome" in LOCKDOWN_PACKAGES
+    assert "com.samsung.android.game.gametools" in LOCKDOWN_PACKAGES
     assert "com.sec.android.gallery3d" not in LOCKDOWN_PACKAGES
     assert "device_about_phone_screenshot" in SUPPORTED_TASK_TYPES
     assert "airplane_mode" in SUPPORTED_TASK_TYPES

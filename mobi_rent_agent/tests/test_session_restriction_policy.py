@@ -80,6 +80,9 @@ def test_classify_esim_settings_voidfix_and_apps():
         ).kind
         == KIND_ESIM_NESTED
     )
+    assert classify_foreground_activity(
+        "com.samsung.android.game.gamehome/.MainActivity"
+    ).kind == KIND_BLOCKED_APP
     assert classify_foreground_activity("com.android.settings/.Settings").kind == KIND_SETTINGS
     assert (
         classify_foreground_activity("com.android.settings/com.android.settings.Settings").kind

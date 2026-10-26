@@ -613,8 +613,7 @@ class AdminLiveAccessService:
             "platform_password": "",
         }
         if command.action == "settings":
-            # No dedicated GADS Settings endpoint. Admin opens Settings by tap.
-            return True
+            return self._farm_input(session.slot_id, "settings", command)
         if command.action == "tap":
             mapped = self._mapped_touch_command(session.slot_id, command)
             tap = getattr(platform, "tap", None)

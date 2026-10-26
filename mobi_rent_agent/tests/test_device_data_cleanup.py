@@ -405,6 +405,7 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     assert "KEYCODE_WAKEUP" in script
     assert "dismiss-keyguard" in script
     assert "input swipe 540 1800 540 400 300" in script
+    assert "com.samsung.android.game.gamehome" not in script
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
@@ -423,11 +424,13 @@ def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
         command_runner=runner,
     )
     assert result.ok is True
-    script = runner.calls[-1][1][1]
-    assert "wm size 1080x2400; true" in script
-    assert "wm density 420; true" in script
-    assert "wm size reset; true" not in script
-    assert "wm density reset; true" not in script
+    scripts = " ".join(args[1] for _serial, args in runner.calls if args and args[0] == "shell")
+    assert "wm size 1080x2400; true" in scripts
+    assert "wm density 420; true" in scripts
+    assert "wm size reset; true" not in scripts
+    assert "wm density reset; true" not in scripts
+    assert "pm disable-user --user 0 com.samsung.android.game.gamehome" in scripts
+    assert "pm disable-user --user 0 com.samsung.android.game.gametools" in scripts
 
 
 def test_device_screen_prepare_wait_boot_then_unlock():

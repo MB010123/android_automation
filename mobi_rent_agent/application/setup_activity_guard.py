@@ -8,6 +8,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from application.samsung_one_ui import (
+    SAMSUNG_SIM_MGR_COMPONENT,
+    is_samsung_game_package,
+    package_from_component,
+)
+
 PHASE_ESIM = "esim"
 PHASE_VOIDFIX = "voidfix"
 KNOWN_PHASES = frozenset({PHASE_ESIM, PHASE_VOIDFIX})
@@ -22,10 +28,6 @@ AOSP_SIM_SETTINGS_INTENTS = frozenset(
         "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS",
         "android.settings.SIM_CARD_SETTINGS",
     }
-)
-SAMSUNG_SIM_MGR_COMPONENT = (
-    "com.samsung.android.app.telephonyui/"
-    ".netsettings.ui.simcardmanager.SimCardMgrActivity"
 )
 SAMSUNG_MANAGE_EMBEDDED_INTENT = "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS"
 
@@ -152,6 +154,8 @@ def decide_setup_guard(
         return GuardDecision(False, component, current, recover, "activity_unknown")
     package, _, cls = component.partition("/")
     lowered = f"{package}/{cls}".lower()
+    if is_samsung_game_package(package) or is_samsung_game_package(package_from_component(component)):
+        return GuardDecision(False, component, current, recover, "hijacked_package")
     if any(marker in lowered for marker in _LAUNCHERS):
         return GuardDecision(False, component, current, recover, "left_setup")
     if current == PHASE_ESIM:

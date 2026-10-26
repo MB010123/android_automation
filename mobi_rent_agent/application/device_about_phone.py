@@ -7,6 +7,7 @@ import re
 from typing import Any, Callable
 
 from application.device_screen_prepare import WAKE_UNLOCK_COMMANDS, run_best_effort_shell
+from application.samsung_one_ui import is_samsung_device, samsung_device_info_args
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -84,10 +85,19 @@ def run_device_about_phone_screenshot(
 
     warnings: list[str] = []
     run_best_effort_shell(runner, serial, WAKE_UNLOCK_COMMANDS, warnings, "wake_unlock")
+    manufacturer = ""
+    try:
+        manufacturer = runner.run(serial, ["shell", "getprop", "ro.product.manufacturer"]).stdout.strip()
+    except AdbCommandError:
+        manufacturer = ""
+    if is_samsung_device(slot_id=slot_id, serial=serial, manufacturer=manufacturer):
+        launch = " ".join(samsung_device_info_args())
+    else:
+        launch = "am start -a android.settings.DEVICE_INFO_SETTINGS"
     run_best_effort_shell(
         runner,
         serial,
-        ["am start -a android.settings.DEVICE_INFO_SETTINGS"],
+        [launch],
         warnings,
         "about_phone",
     )

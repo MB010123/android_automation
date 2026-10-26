@@ -139,6 +139,10 @@ CROP_UI = _ui(
     _node("Done", rid=f"{GALLERY}menu_edit_app_bar_done", bounds="[540,2088][1008,2178]"),
 )
 WALK_UI_POLLS = [SIM_MANAGER_UI, PROVIDER_UI, CHOOSER_UI, CAPTURE_UI, ALBUMS_UI, GRID_UI, CROP_UI]
+GAME_LAUNCHER_UI = (
+    '<hierarchy><node package="com.samsung.android.game.gamehome" '
+    'text="Game Launcher" clickable="true" bounds="[0,0][1080,2400]"/></hierarchy>'
+)
 
 CONFIRM_UI = _ui(
     _node("Add mobile plan from Mobi Carrier?", clickable=False),
@@ -259,6 +263,20 @@ def test_open_qr_picker_walks_through_done_deletes_qr_and_does_not_go_home():
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in aosp
     # Human confirmation is not auto-tapped in the gated picker path.
     assert "add" not in result.details["taps"]
+
+
+def test_qr_walk_escapes_game_launcher_and_opens_sim_manager():
+    runner = _ActivationRunner(ui_polls=[GAME_LAUNCHER_UI, *WALK_UI_POLLS, CONFIRM_UI])
+    result = _activate(runner, request=_req(mode="open_qr_picker"))
+    assert result.ok is True, (result.error, result.message)
+    joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "am force-stop com.samsung.android.game.gamehome" in joined
+    assert "KEYCODE_HOME" in joined
+    starts = runner.commands("shell", "am", "start")
+    assert starts
+    assert SIM_CARD_MGR_COMPONENT in starts[0]
+    assert "android.settings.SETTINGS" not in joined
+    assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in joined
 
 
 def test_qr_walk_is_skipped_when_already_completed():

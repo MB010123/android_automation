@@ -52,6 +52,12 @@ def test_esim_allows_mobile_network_not_generic_settings_or_launcher():
         phase=PHASE_ESIM, activity="com.sec.android.gallery3d/.Activity"
     )
     assert gallery.allowed is True
+    game = decide_setup_guard(
+        phase=PHASE_ESIM,
+        activity="com.samsung.android.game.gamehome/.MainActivity",
+    )
+    assert game.allowed is False
+    assert game.reason == "hijacked_package"
     assert "android.settings.SIM_CARD_SETTINGS" in AOSP_SIM_SETTINGS_INTENTS
     assert "android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS" in AOSP_SIM_SETTINGS_INTENTS
 

@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Callable
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
+from application.samsung_one_ui import disable_samsung_game_commands, is_samsung_device
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 
@@ -182,6 +183,17 @@ def run_device_screen_prepare(
     run_best_effort_shell(
         runner, serial, wake_unlock_commands(samsung_s20=samsung_s20), warnings, "wake_unlock"
     )
+    samsung = is_samsung_device(
+        slot_id=slot_id, serial=serial, manufacturer=manufacturer
+    ) or samsung_s20
+    if samsung:
+        run_best_effort_shell(
+            runner,
+            serial,
+            disable_samsung_game_commands(),
+            warnings,
+            "disable_game_bloat",
+        )
     package = str(request.payload.get("voidfix_package") or "").strip()
     if package:
         from application.device_voidfix_keepalive import apply_voidfix_keepalive, normalize_voidfix_package

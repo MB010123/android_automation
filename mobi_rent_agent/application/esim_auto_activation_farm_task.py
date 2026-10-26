@@ -59,6 +59,12 @@ from application.remote_access_farm_task import (
     read_qr_walk_marker,
     write_qr_walk_marker,
 )
+from application.samsung_one_ui import (
+    SAMSUNG_SIM_MGR_COMPONENT,
+    escape_samsung_game_hijack,
+    samsung_sim_manager_args,
+    ui_shows_samsung_game,
+)
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
 
@@ -66,10 +72,7 @@ logger = logging.getLogger("farm_agent.esim_auto_activation")
 
 ESIM_AUTO_ACTIVATION_TASK = "esim_auto_activation"
 
-SIM_CARD_MGR_COMPONENT = (
-    "com.samsung.android.app.telephonyui/"
-    ".netsettings.ui.simcardmanager.SimCardMgrActivity"
-)
+SIM_CARD_MGR_COMPONENT = SAMSUNG_SIM_MGR_COMPONENT
 SAMSUNG_ESIM_DEEPLINK_PREFIX = "esimmanagerfromqr://launch/?activation_code="
 PROGRESS_LOG_TAG = "UT.EsimAddProgressState"
 UI_DUMP_REMOTE_PATH = "/sdcard/mobirent_esim_auto_ui.xml"
@@ -705,20 +708,17 @@ def run_esim_auto_activation(
 
 
 def _launch_samsung_sim_manager(runner: AdbCommandRunner, serial: str) -> None:
-    runner.run(
-        serial,
-        [
-            "shell",
-            "am",
-            "start",
-            "-n",
-            SIM_CARD_MGR_COMPONENT,
-            "-e",
-            "rootKey",
-            "SIMCARD_ESIM_ADD_MOBILE_PLAN",
-            "--activity-clear-task",
-        ],
-    )
+    runner.run(serial, ["shell", *samsung_sim_manager_args()])
+
+
+def _escape_game_hijack_and_relaunch(
+    runner: AdbCommandRunner, serial: str, ui_xml: str
+) -> bool:
+    if not ui_shows_samsung_game(ui_xml):
+        return False
+    escape_samsung_game_hijack(runner, serial)
+    _launch_samsung_sim_manager(runner, serial)
+    return True
 
 
 def _walk_one_ui_flow(
@@ -745,11 +745,15 @@ def _walk_one_ui_flow(
     launch_deadline = clock() + float(step_timeout_seconds)
     ui_xml = ""
     relaunched = False
+    hijack_escapes = 0
     while clock() < launch_deadline:
         sleep_fn(float(poll_interval_seconds))
         try:
             ui_xml = ui.dump()
         except AdbCommandError:
+            continue
+        if _escape_game_hijack_and_relaunch(runner, serial, ui_xml) and hijack_escapes < 4:
+            hijack_escapes += 1
             continue
         if is_aosp_sims_screen(ui_xml) and not relaunched:
             # Never stay on AOSP < SIMs>. Re-open One UI SIM Manager once.
@@ -797,6 +801,8 @@ def _walk_one_ui_flow(
             try:
                 ui_xml = ui.dump()
             except AdbCommandError:
+                continue
+            if _escape_game_hijack_and_relaunch(runner, serial, ui_xml):
                 continue
             if ui_failure_marker(ui_xml):
                 return step.name, "failure dialog visible"

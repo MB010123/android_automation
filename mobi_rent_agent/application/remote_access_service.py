@@ -1923,7 +1923,9 @@ class RemoteAccessService:
             return True, {"airplane_state": command.state or "toggled"}
         if not self._session_restrictions:
             if command.action == "settings":
-                # No GADS/Farm settings endpoint. Rollback must not 502 or launch Add eSIM.
+                launched = self._farm_input(session.slot_id, "settings", command)
+                if isinstance(launched, ApiResult):
+                    return launched, {}
                 return True, {}
             return self._forward_control(platform, session, secret, command), {}
         if command.action == "settings":

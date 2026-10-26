@@ -20,10 +20,16 @@ from application.remote_access_farm_task import (
     _is_samsung_renter_device,
     delete_placed_esim_qr,
 )
+from application.samsung_one_ui import (
+    hijack_escape_args,
+    is_samsung_game_package,
+    package_from_component,
+    samsung_settings_args,
+    samsung_setup_relaunch_args,
+)
 from application.setup_activity_guard import (
     PHASE_ESIM,
     PHASE_VOIDFIX,
-    SAMSUNG_SIM_MGR_COMPONENT,
     decide_setup_guard,
     parse_foreground_activity,
     parse_sms_role_holders,
@@ -148,29 +154,39 @@ def run_setup_session_inspect(
         samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, manufacturer)
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, ValueError, TypeError):
         samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, None)
-    if should_recover_setup(
+    hijacked = decision.reason == "hijacked_package" or is_samsung_game_package(
+        package_from_component(activity)
+    )
+    recover_setup = should_recover_setup(
         allowed=decision.allowed,
         qr_walk_completed=qr_walk_completed,
         esim_profile_present=esim_profile_present,
         activation_confirmed=activation_confirmed,
-    ) and recover:
+    )
+    if hijacked:
+        try:
+            for args in hijack_escape_args(activity):
+                _shell(runner, adb_path, serial, args)
+            recovered = True
+        except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+            recovered = False
+    if (recover and recover_setup) or (hijacked and samsung and recover_setup):
         recover_args: list[str] | None = None
-        if samsung and phase == PHASE_ESIM:
-            # Never android.settings.SIM_CARD_SETTINGS / MANAGE_ALL_SIM on One UI.
-            recover_args = [
-                "am",
-                "start",
-                "-n",
-                SAMSUNG_SIM_MGR_COMPONENT,
-                "-e",
-                "rootKey",
-                "SIMCARD_ESIM_ADD_MOBILE_PLAN",
-                "--activity-clear-task",
-            ]
+        if samsung:
+            # Never android.settings.* implicit intents on One UI.
+            recover_args = samsung_setup_relaunch_args(phase=phase)
         elif decision.recover_intent:
             recover_args = ["am", "start", "-a", decision.recover_intent]
         if recover_args:
             try:
+                if not hijacked and activity and not decision.allowed:
+                    current_pkg = package_from_component(activity)
+                    if current_pkg and current_pkg not in {
+                        "com.android.settings",
+                        "com.samsung.android.app.telephonyui",
+                    }:
+                        _shell(runner, adb_path, serial, ["am", "force-stop", current_pkg])
+                        _shell(runner, adb_path, serial, ["input", "keyevent", "KEYCODE_HOME"])
                 _shell(runner, adb_path, serial, recover_args)
                 recovered = True
                 activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
@@ -331,6 +347,24 @@ def run_setup_session_input(
         elif kind == "tap":
             x, y = _native_tap_point(runner, adb_path, serial, payload)
             _shell(runner, adb_path, serial, ["input", "tap", str(x), str(y)])
+        elif kind in {"settings", "android_settings"}:
+            samsung = False
+            try:
+                manufacturer = _shell(
+                    runner, adb_path, serial, ["getprop", "ro.product.manufacturer"]
+                ).strip()
+                samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, manufacturer)
+            except (AdbCommandError, OSError, subprocess.TimeoutExpired, TypeError, ValueError):
+                samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, None)
+            if samsung:
+                _shell(runner, adb_path, serial, samsung_settings_args())
+            else:
+                _shell(
+                    runner,
+                    adb_path,
+                    serial,
+                    ["am", "start", "-a", "android.settings.SETTINGS", "--activity-clear-task"],
+                )
         else:
             return FarmTaskResult(ok=False, http_status=400, error="invalid_control")
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):
