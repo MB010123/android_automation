@@ -184,6 +184,9 @@ def test_schemas_present():
     assert ds_props["phone_number_status"]["enum"] == ["unknown", "known"]
     assert ds_props["cellular_status"]["enum"] == ["unknown"]
     assert "imei1" not in ds_props
+    assert ds_props["setup_ui_state"]["enum"] == ["working", "awaiting_human_click", "completed"]
+    assert "setup_manual_fallback" in ds_props
+    assert "45-second" in ds_props["setup_ui_state"]["description"]
     ds_desc = schemas["DeviceStatusResponse"]["description"]
     assert "slot_msisdn_map" in ds_desc
     assert "SLOT_MSISDN_MAP_PATH" in ds_desc

@@ -8,6 +8,66 @@ export type DisplayRect = {
 };
 
 export const SWIPE_THRESHOLD_PX = 12;
+export const SETUP_WORKING_FALLBACK_MS = 45_000;
+export const SETUP_TIMEOUT_BANNER =
+  "Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.";
+
+export type SetupUiState = "working" | "awaiting_human_click" | "completed";
+
+export type SetupSurfaceDecision = {
+  showSpinner: boolean;
+  showPhone: boolean;
+  controlsEnabled: boolean;
+  timedOut: boolean;
+  banner: string | null;
+  showRetry: boolean;
+};
+
+export function decideSetupSurface(options: {
+  setupUiState?: string | null;
+  elapsedWorkingMs?: number;
+  setupMode?: boolean;
+  serverManualFallback?: boolean;
+  automatedSetupTimedOut?: boolean;
+}): SetupSurfaceDecision {
+  if (!options.setupMode) {
+    return {
+      showSpinner: false,
+      showPhone: true,
+      controlsEnabled: true,
+      timedOut: false,
+      banner: null,
+      showRetry: false,
+    };
+  }
+  const state = String(options.setupUiState || "").trim();
+  const working = state === "working";
+  const timedOut =
+    working &&
+    !!(
+      options.serverManualFallback ||
+      options.automatedSetupTimedOut ||
+      (options.elapsedWorkingMs || 0) >= SETUP_WORKING_FALLBACK_MS
+    );
+  if (working && !timedOut) {
+    return {
+      showSpinner: true,
+      showPhone: false,
+      controlsEnabled: false,
+      timedOut: false,
+      banner: null,
+      showRetry: false,
+    };
+  }
+  return {
+    showSpinner: false,
+    showPhone: true,
+    controlsEnabled: true,
+    timedOut,
+    banner: timedOut ? SETUP_TIMEOUT_BANNER : null,
+    showRetry: timedOut,
+  };
+}
 
 export function mapDisplayToDevice(
   clientX: number,

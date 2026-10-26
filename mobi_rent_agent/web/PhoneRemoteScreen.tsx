@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   mapDisplayToDevice,
   classifyGesture,
+  decideSetupSurface,
   type DisplayRect,
 } from "./phone_remote_screen";
 
@@ -42,6 +43,13 @@ type Props = {
   /** From session JSON. Full normal Android actions from session start. */
   allowedControls?: string[];
   setupMode?: boolean;
+  /** From GET/POST device-status: working | awaiting_human_click | completed. */
+  setupUiState?: "working" | "awaiting_human_click" | "completed" | null;
+  setupUiPrompt?: string | null;
+  /** Server flipped this after 45s of working or a farm walk timeout. */
+  setupManualFallback?: boolean;
+  automatedSetupTimedOut?: boolean;
+  onRetryAutomaticSetup?: () => void;
   /** Admin live view. Does not change customer rental restrictions. */
   adminMode?: boolean;
   customerSessionWarning?: string | null;
@@ -110,6 +118,12 @@ export function PhoneRemoteScreen({
   sendControl,
   disabled,
   allowedControls,
+  setupMode,
+  setupUiState,
+  setupUiPrompt,
+  setupManualFallback,
+  automatedSetupTimedOut,
+  onRetryAutomaticSetup,
   adminMode,
   customerSessionWarning,
 }: Props) {
@@ -120,12 +134,44 @@ export function PhoneRemoteScreen({
     device: { x: number; y: number };
   } | null>(null);
   const sizeRef = useRef({ w: 0, h: 0 });
+  const workingStartedRef = useRef<number | null>(null);
   const [ready, setReady] = useState(false);
   const [dot, setDot] = useState<{ x: number; y: number } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [elapsedWorkingMs, setElapsedWorkingMs] = useState(0);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [ignoreServerFallback, setIgnoreServerFallback] = useState(false);
+
+  useEffect(() => {
+    if (!setupMode || setupUiState !== "working") {
+      workingStartedRef.current = null;
+      setElapsedWorkingMs(0);
+      setIgnoreServerFallback(false);
+      return;
+    }
+    if (workingStartedRef.current == null) {
+      workingStartedRef.current = Date.now();
+    }
+    const tick = () => {
+      const started = workingStartedRef.current;
+      if (started == null) return;
+      setElapsedWorkingMs(Date.now() - started);
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [setupMode, setupUiState, retryNonce]);
+
+  const surface = decideSetupSurface({
+    setupUiState,
+    elapsedWorkingMs,
+    setupMode: !!setupMode,
+    serverManualFallback: !!setupManualFallback && !ignoreServerFallback,
+    automatedSetupTimedOut: !!automatedSetupTimedOut && !ignoreServerFallback,
+  });
 
   const streamReady = sizeRef.current.w > 0 && sizeRef.current.h > 0;
-  const canControl = !!connected && streamReady && !disabled;
+  const canControl = !!connected && streamReady && !disabled && surface.controlsEnabled;
   const allowed = new Set(allowedControls || [
     "tap",
     "swipe",
@@ -253,14 +299,42 @@ export function PhoneRemoteScreen({
     [canControl, dispatch]
   );
 
+  const retryAutomatic = useCallback(() => {
+    workingStartedRef.current = Date.now();
+    setElapsedWorkingMs(0);
+    setIgnoreServerFallback(true);
+    setRetryNonce((value) => value + 1);
+    onRetryAutomaticSetup?.();
+  }, [onRetryAutomaticSetup]);
+
   return (
     <div className="phone-remote-wrap">
+      {setupMode ? <h2 className="phone-setup-title">Set up your phone</h2> : null}
       {adminMode && customerSessionWarning ? (
         <p className="phone-remote-status" role="status">
           {customerSessionWarning}
         </p>
       ) : null}
-      <div className="phone-remote-surface" data-ready={canControl ? "true" : "false"}>
+      {surface.banner ? (
+        <div className="phone-setup-banner" role="status">
+          <p>{surface.banner}</p>
+          {surface.showRetry ? (
+            <button type="button" className="phone-setup-retry" onClick={retryAutomatic}>
+              Retry automatic setup
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {setupUiPrompt && setupUiState === "awaiting_human_click" && !surface.timedOut ? (
+        <p className="phone-setup-prompt" role="status">
+          {setupUiPrompt}
+        </p>
+      ) : null}
+      <div
+        className="phone-remote-surface"
+        data-ready={canControl ? "true" : "false"}
+        data-setup-locked={surface.showSpinner ? "true" : "false"}
+      >
         <canvas ref={canvasRef} aria-label="Your phone screen" />
         <div
           ref={hitRef}
@@ -279,7 +353,13 @@ export function PhoneRemoteScreen({
           onDragStart={(event) => event.preventDefault()}
         />
         {dot ? <span className="phone-remote-dot" style={{ left: dot.x, top: dot.y }} /> : null}
-        {!ready ? (
+        {surface.showSpinner ? (
+          <div className="phone-setup-spinner" role="status" aria-live="polite">
+            <span className="phone-setup-spinner-wheel" aria-hidden="true" />
+            <p>Setting up your eSIM…</p>
+          </div>
+        ) : null}
+        {!ready && !surface.showSpinner ? (
           <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground">
             {adminMode ? "Connecting to the selected phone…" : "Connecting to your phone…"}
           </div>
@@ -339,5 +419,5 @@ export function PhoneRemoteScreen({
   );
 }
 
-export { mapDisplayToDevice, classifyGesture };
+export { mapDisplayToDevice, classifyGesture, decideSetupSurface };
 export type { ControlBody, ControlResult, DisplayRect };

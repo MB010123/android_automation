@@ -509,9 +509,13 @@ caller's own stream as busy.
   "carrier_status": "known",
   "phone_number": null,
   "phone_number_status": "unknown",
-  "cellular_status": "unknown"
+  "cellular_status": "unknown",
+  "setup_ui_state": "working",
+  "setup_manual_fallback": false
 }
 ```
+
+**Set up your phone:** poll `setup_ui_state`. On `working`, hide the live canvas behind a spinner and start a **45-second client timer**. If the server is still `working` after 45 seconds, or `setup_manual_fallback` is true (farm walk timed out), drop the spinner, reveal the canvas, show *Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.*, enable tap/swipe/Back/Home/Recents, and offer **Retry automatic setup**. Copy target: `mobi_rent_agent/web/PhoneRemoteScreen.tsx`.
 
 
 | Field                     | Meaning                                                                                      |

@@ -12,6 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from application.esim_setup_ui_state import (
+    SETUP_TIMEOUT_BANNER,
+    SETUP_WORKING_FALLBACK_SECONDS,
+    decide_setup_surface,
+)
+
 ALLOWED_ACTIONS = frozenset(
     {
         "tap",
@@ -45,6 +51,7 @@ NAV_ACTIONS = frozenset({"back", "home", "recents", "notification_shade", "quick
 SWIPE_THRESHOLD_PX = 12.0
 MAX_TEXT = 64
 _ALLOWED_ORIENTATIONS = frozenset({"portrait", "landscape"})
+SETUP_WORKING_FALLBACK_MS = SETUP_WORKING_FALLBACK_SECONDS * 1000
 
 
 @dataclass(frozen=True)

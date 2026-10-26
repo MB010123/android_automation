@@ -34,6 +34,49 @@
   };
   var NAV = { back: 1, home: 1, recents: 1, notification_shade: 1, quick_settings: 1 };
   var SWIPE_THRESHOLD_PX = 12;
+  var SETUP_WORKING_FALLBACK_MS = 45000;
+  var SETUP_TIMEOUT_BANNER =
+    "Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.";
+
+  function decideSetupSurface(options) {
+    options = options || {};
+    if (!options.setupMode) {
+      return {
+        showSpinner: false,
+        showPhone: true,
+        controlsEnabled: true,
+        timedOut: false,
+        banner: null,
+        showRetry: false,
+      };
+    }
+    var state = String(options.setupUiState || "").trim();
+    var working = state === "working";
+    var timedOut = !!(
+      working &&
+      (options.serverManualFallback ||
+        options.automatedSetupTimedOut ||
+        (options.elapsedWorkingMs || 0) >= SETUP_WORKING_FALLBACK_MS)
+    );
+    if (working && !timedOut) {
+      return {
+        showSpinner: true,
+        showPhone: false,
+        controlsEnabled: false,
+        timedOut: false,
+        banner: null,
+        showRetry: false,
+      };
+    }
+    return {
+      showSpinner: false,
+      showPhone: true,
+      controlsEnabled: true,
+      timedOut: timedOut,
+      banner: timedOut ? SETUP_TIMEOUT_BANNER : null,
+      showRetry: timedOut,
+    };
+  }
 
   function mapDisplayToDevice(clientX, clientY, rect, deviceW, deviceH) {
     if (deviceW <= 0 || deviceH <= 0 || rect.width <= 0 || rect.height <= 0) return null;
@@ -364,8 +407,11 @@
     ALLOWED: ALLOWED,
     FORBIDDEN: FORBIDDEN,
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
+    SETUP_WORKING_FALLBACK_MS: SETUP_WORKING_FALLBACK_MS,
+    SETUP_TIMEOUT_BANNER: SETUP_TIMEOUT_BANNER,
     mapDisplayToDevice: mapDisplayToDevice,
     classifyGesture: classifyGesture,
+    decideSetupSurface: decideSetupSurface,
     PhoneRemoteController: PhoneRemoteController,
     attach: attach,
   };

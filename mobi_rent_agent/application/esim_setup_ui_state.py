@@ -11,6 +11,11 @@ SETUP_UI_WORKING = "working"
 SETUP_UI_AWAITING = "awaiting_human_click"
 SETUP_UI_COMPLETED = "completed"
 SETUP_UI_STATES = frozenset({SETUP_UI_WORKING, SETUP_UI_AWAITING, SETUP_UI_COMPLETED})
+SETUP_WORKING_FALLBACK_SECONDS = 45
+SETUP_TIMEOUT_BANNER = (
+    "Automatic setup timed out after 45 seconds. "
+    "The phone screen has been unlocked so you can complete your eSIM setup manually."
+)
 
 DEFAULT_HUMAN_PROMPT = "Please tap 'Add' / 'Confirm' on the screen below"
 
@@ -63,6 +68,58 @@ class SetupUiClassification:
     prompt: str | None = None
     human_click_label: str | None = None
     reason: str = "unknown"
+
+
+@dataclass(frozen=True)
+class SetupSurfaceDecision:
+    """Customer 'Set up your phone' overlay: spinner vs live canvas."""
+
+    show_spinner: bool
+    show_phone: bool
+    controls_enabled: bool
+    timed_out: bool
+    banner: str | None = None
+    show_retry: bool = False
+
+
+def decide_setup_surface(
+    *,
+    setup_ui_state: str | None = None,
+    elapsed_working_seconds: float = 0.0,
+    setup_mode: bool = False,
+    server_manual_fallback: bool = False,
+    automated_setup_timed_out: bool = False,
+) -> SetupSurfaceDecision:
+    """Hide the phone on ``working`` until 45s elapse (or the farm walk fails)."""
+    if not setup_mode:
+        return SetupSurfaceDecision(
+            show_spinner=False,
+            show_phone=True,
+            controls_enabled=True,
+            timed_out=False,
+        )
+    state = str(setup_ui_state or "").strip()
+    working = state == SETUP_UI_WORKING
+    timed_out = working and (
+        bool(server_manual_fallback)
+        or bool(automated_setup_timed_out)
+        or float(elapsed_working_seconds or 0) >= SETUP_WORKING_FALLBACK_SECONDS
+    )
+    if working and not timed_out:
+        return SetupSurfaceDecision(
+            show_spinner=True,
+            show_phone=False,
+            controls_enabled=False,
+            timed_out=False,
+        )
+    return SetupSurfaceDecision(
+        show_spinner=False,
+        show_phone=True,
+        controls_enabled=True,
+        timed_out=timed_out,
+        banner=SETUP_TIMEOUT_BANNER if timed_out else None,
+        show_retry=timed_out,
+    )
 
 
 def classify_setup_ui(

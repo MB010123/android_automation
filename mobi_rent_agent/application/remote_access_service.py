@@ -39,6 +39,7 @@ from application.esim_setup_ui_state import (
     SETUP_UI_COMPLETED,
     SETUP_UI_STATES,
     SETUP_UI_WORKING,
+    SETUP_WORKING_FALLBACK_SECONDS,
     classify_setup_ui,
     public_setup_ui_body,
 )
@@ -265,6 +266,8 @@ class RemoteAccessService:
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
         self._activity_kind_by_rental: dict[str, str] = {}
         self._qr_walk_started: dict[str, str] = {}
+        self._setup_working_since: dict[str, float] = {}
+        self._setup_manual_unlocked: set[str] = set()
         self._reconnect_cooldown = 30.0
         self._reconnect_last: dict[int, float] = {}
         self._troubleshoot_cooldown = 10.0
@@ -1257,8 +1260,10 @@ class RemoteAccessService:
             auth.rental_id, uploaded_at=self._clock(), qr_sha256=qr_sha256
         )
         self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
+        self._mark_setup_working(auth.rental_id, auth.slot_id)
         body = public_placement_success(details, job_id=job_id)
         body["setup_ui_state"] = SETUP_UI_WORKING
+        body.update(self._apply_setup_fallback(auth.rental_id, SETUP_UI_WORKING, auth.slot_id))
         auto_job_id = str(uuid.uuid4())
         if self._is_samsung_renter_slot(auth.slot_id):
             self._maybe_start_qr_walk(
@@ -1328,6 +1333,7 @@ class RemoteAccessService:
             return
         error_code = str(details.get("error_code") or getattr(response, "error", None) or "activation_failed")
         logger.warning("esim_auto_activation_failed slot=%s job_id=%s error=%s", auth.slot_id, job_id, error_code)
+        self._unlock_setup_manual(auth.rental_id, auth.slot_id)
         self._record(
             auth.slot_id,
             "esim_auto_activation_failed",
@@ -1613,6 +1619,8 @@ class RemoteAccessService:
     def _qr_walk_should_skip(self, session: RemoteAccessSession | None) -> bool:
         if session is None or session.qr_uploaded_at is None:
             return True
+        if session.rental_id in self._setup_manual_unlocked:
+            return True
         if self._qr_walk_consumed(session):
             return True
         sha = str(session.qr_sha256 or "").strip()
@@ -1620,6 +1628,50 @@ class RemoteAccessService:
         if started and (not sha or started == sha):
             return True
         return False
+
+    def _mark_setup_working(self, rental_id: str, slot_id: int | None = None) -> None:
+        rid = str(rental_id or "").strip()
+        if not rid:
+            return
+        self._setup_working_since.setdefault(rid, float(self._clock()))
+        self._maybe_unlock_setup(rid, slot_id)
+
+    def _clear_setup_working(self, rental_id: str) -> None:
+        rid = str(rental_id or "").strip()
+        self._setup_working_since.pop(rid, None)
+        self._setup_manual_unlocked.discard(rid)
+
+    def _unlock_setup_manual(self, rental_id: str, slot_id: int | None = None) -> None:
+        rid = str(rental_id or "").strip()
+        if not rid or rid in self._setup_manual_unlocked:
+            return
+        self._setup_manual_unlocked.add(rid)
+        session = self._store.get(rid)
+        bay = slot_id if slot_id is not None else (session.slot_id if session is not None else None)
+        if bay is not None:
+            self._prepare_device_screen(int(bay), wait_boot=False)
+
+    def _maybe_unlock_setup(self, rental_id: str, slot_id: int | None = None) -> None:
+        rid = str(rental_id or "").strip()
+        if not rid or rid in self._setup_manual_unlocked:
+            return
+        started = self._setup_working_since.get(rid)
+        if started is None:
+            return
+        if float(self._clock()) - float(started) < SETUP_WORKING_FALLBACK_SECONDS:
+            return
+        self._unlock_setup_manual(rid, slot_id)
+
+    def _apply_setup_fallback(
+        self, rental_id: str, state: str, slot_id: int | None = None
+    ) -> dict[str, bool]:
+        if str(state or "").strip() != SETUP_UI_WORKING:
+            self._clear_setup_working(rental_id)
+            return {}
+        self._mark_setup_working(rental_id, slot_id)
+        if rental_id in self._setup_manual_unlocked:
+            return {"setup_manual_fallback": True}
+        return {}
 
     def _maybe_start_qr_walk(
         self,
@@ -1719,7 +1771,10 @@ class RemoteAccessService:
         walk_in_progress: bool = False,
     ) -> dict[str, Any] | ApiResult:
         current = session or self._session_for_slot(int(slot_id))
-        payload: dict[str, Any] = {"phase": PHASE_ESIM, "recover": bool(recover)}
+        recover_now = bool(recover)
+        if current is not None and current.rental_id in self._setup_manual_unlocked:
+            recover_now = False
+        payload: dict[str, Any] = {"phase": PHASE_ESIM, "recover": recover_now}
         if self._voidfix_package:
             payload["voidfix_package"] = self._voidfix_package
         if current is not None:
@@ -1733,7 +1788,12 @@ class RemoteAccessService:
                 payload["activation_confirmed"] = True
             started = self._qr_walk_started.get(current.rental_id)
             payload["walk_in_progress"] = bool(
-                walk_in_progress or (started and not current.qr_walk_completed)
+                walk_in_progress
+                or (
+                    started
+                    and not current.qr_walk_completed
+                    and current.rental_id not in self._setup_manual_unlocked
+                )
             )
         return self._farm_setup_task("setup_session_inspect", slot_id, payload)
 
@@ -1847,6 +1907,7 @@ class RemoteAccessService:
             body["setup_ui_prompt"] = str(prompt)
         elif state != SETUP_UI_AWAITING:
             body.pop("setup_ui_prompt", None)
+        body.update(self._apply_setup_fallback(rental_id, state, slot_id))
         return body
 
     def _navigate_rental_to_add_esim(self, auth: AuthorizedRental) -> dict[str, str]:

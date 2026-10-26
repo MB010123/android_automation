@@ -10,10 +10,13 @@ sys.path.insert(0, str(ROOT))
 from web.phone_remote_screen import (
     ALLOWED_ACTIONS,
     FORBIDDEN_ACTIONS,
+    SETUP_TIMEOUT_BANNER,
+    SETUP_WORKING_FALLBACK_MS,
     DisplayRect,
     PhoneRemoteController,
     classify_gesture,
     control_payload,
+    decide_setup_surface,
     map_display_to_device,
 )
 
@@ -203,3 +206,36 @@ def test_auth_and_rental_id_stay_out_of_control_payloads():
     ):
         assert banned not in body
     assert set(body) <= {"action", "x", "y", "x2", "y2", "text", "orientation"}
+
+
+def test_setup_working_fallback_reveals_phone_after_45_seconds():
+    locked = decide_setup_surface(
+        setup_ui_state="working",
+        elapsed_working_seconds=10,
+        setup_mode=True,
+    )
+    assert locked.show_spinner is True
+    assert locked.controls_enabled is False
+    unlocked = decide_setup_surface(
+        setup_ui_state="working",
+        elapsed_working_seconds=SETUP_WORKING_FALLBACK_MS / 1000,
+        setup_mode=True,
+    )
+    assert unlocked.show_spinner is False
+    assert unlocked.show_phone is True
+    assert unlocked.controls_enabled is True
+    assert unlocked.banner == SETUP_TIMEOUT_BANNER
+    tsx = (ROOT / "web" / "PhoneRemoteScreen.tsx").read_text(encoding="utf-8")
+    ts = (ROOT / "web" / "phone_remote_screen.ts").read_text(encoding="utf-8")
+    js = (ROOT / "web" / "phone_remote_screen.js").read_text(encoding="utf-8")
+    css = (ROOT / "web" / "phone_remote_screen.css").read_text(encoding="utf-8")
+    assert "Set up your phone" in tsx
+    assert "surface.banner" in tsx
+    assert "Retry automatic setup" in tsx
+    assert "phone-setup-spinner" in tsx
+    assert "elapsedWorkingMs" in tsx
+    assert SETUP_TIMEOUT_BANNER in ts
+    assert "45000" in js or "45_000" in ts
+    assert SETUP_TIMEOUT_BANNER in js
+    assert "phone-setup-banner" in css
+    assert "phone-setup-spinner" in css
