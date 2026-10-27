@@ -2,9 +2,8 @@
 
 Windows ``adb shell`` joins argv and drops quotes, so this sends one ``shell``
 argument: ``cmd; true; cmd; true``. Individual Android denials never fail the
-task. Never reboots. During eSIM handoff (``skip_home``) it only wakes the
-panel — it does not send HOME or re-launch settings unless
-``open_esim_settings`` is set.
+task. Never reboots. During eSIM handoff (``skip_home``) it wakes the panel,
+never sends HOME, and brings OEM SIM/eSIM settings to the front.
 """
 from __future__ import annotations
 
@@ -15,6 +14,7 @@ from typing import Any, Callable
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWAITING
 from application.remote_access_farm_task import (
+    detect_device_oem,
     disable_native_camera_commands,
     ensure_esim_setup_screen_open,
 )
@@ -211,8 +211,9 @@ def run_device_screen_prepare(
     samsung = is_samsung_device(
         slot_id=slot_id, serial=serial, manufacturer=manufacturer
     ) or samsung_s20
-    oem = OEM_SAMSUNG if samsung else OEM_PIXEL
-    if samsung:
+    oem = detect_device_oem(runner, serial, slot_id)
+    if samsung or oem == OEM_SAMSUNG:
+        oem = OEM_SAMSUNG
         run_best_effort_shell(
             runner,
             serial,
@@ -228,7 +229,8 @@ def run_device_screen_prepare(
         "disable_camera",
     )
     esim_setup_launched = ""
-    if skip_home and bool(request.payload.get("open_esim_settings", False)):
+    open_esim = skip_home or bool(request.payload.get("open_esim_settings", False))
+    if open_esim:
         esim_setup_launched = ensure_esim_setup_screen_open(runner, serial, oem)
     package = str(request.payload.get("voidfix_package") or "").strip()
     if package:
@@ -266,6 +268,7 @@ def request_device_screen_prepare(
     wait_boot: bool = False,
     voidfix_package: str | None = None,
     skip_home: bool = False,
+    open_esim_settings: bool = False,
 ) -> None:
     """Best-effort VPS → Farm unlock. Never raises; never fails the caller."""
     if farm_client is None:
@@ -273,6 +276,8 @@ def request_device_screen_prepare(
     payload: dict[str, Any] = {"wait_boot": bool(wait_boot)}
     if skip_home:
         payload["skip_home"] = True
+    if open_esim_settings or skip_home:
+        payload["open_esim_settings"] = True
     package = str(voidfix_package or "").strip()
     if package:
         payload["voidfix_package"] = package

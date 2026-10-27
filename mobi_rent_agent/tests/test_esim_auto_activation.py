@@ -174,6 +174,8 @@ class _ActivationRunner(AdbCommandRunner):
             return AdbCommandResult(stdout=self._manufacturer, stderr="")
         if arguments == ["shell", "getprop", "ro.product.brand"]:
             return AdbCommandResult(stdout=self._manufacturer, stderr="")
+        if arguments == ["shell", "getprop", "ro.product.model"]:
+            return AdbCommandResult(stdout=self._manufacturer, stderr="")
         if arguments[:3] in (["shell", "dumpsys", "window"], ["shell", "dumpsys", "activity"]):
             if "samsung" in (self._manufacturer or "").lower():
                 focus = (
@@ -357,6 +359,7 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
     assert starts
     joined = " ".join(" ".join(args) for args in starts)
     assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "--activity-clear-top" in joined
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert SIM_CARD_MGR_COMPONENT not in joined
     all_joined = " ".join(" ".join(args) for _, args in runner.calls)

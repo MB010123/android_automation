@@ -584,11 +584,12 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     assert "wm size" not in scripts
     assert "wm density" not in scripts
     assert "input swipe" not in scripts
-    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "--activity-clear-top" in joined
     assert "input tap" not in joined
     assert "uiautomator" not in joined
     assert result.details["skip_home"] is True
-    assert result.details["esim_setup_launched"] == ""
+    assert result.details["esim_setup_launched"] == "sim_manager"
 
 
 def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
@@ -613,10 +614,10 @@ def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
-    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
     assert "KEYCODE_HOME" not in joined
     assert "input tap" not in joined
-    assert result.details["esim_setup_launched"] == ""
+    assert result.details["esim_setup_launched"] == "sim_manager"
 
 
 def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
@@ -643,11 +644,13 @@ def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
-    assert "android.settings.WIRELESS_SETTINGS" not in joined
+    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "--activity-clear-top" in joined
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert "KEYCODE_HOME" not in joined
     assert "input tap" not in joined
     assert "uiautomator" not in joined
+    assert result.details["esim_setup_launched"] == "android.settings.WIRELESS_SETTINGS"
 
 
 def test_device_screen_prepare_open_esim_settings_launches_once():
@@ -668,6 +671,7 @@ def test_device_screen_prepare_open_esim_settings_launches_once():
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
     assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "--activity-clear-top" in joined
     assert "dumpsys" not in joined
     assert "input tap" not in joined
     assert result.details["esim_setup_launched"] == "android.settings.WIRELESS_SETTINGS"

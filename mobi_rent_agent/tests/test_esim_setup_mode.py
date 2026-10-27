@@ -338,7 +338,9 @@ def test_live_stream_prepare_reopens_esim_settings_without_home(tmp_path: Path):
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
     stream_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert stream_prepares == []
+    assert stream_prepares
+    assert all(t["payload"].get("skip_home") is True for t in stream_prepares)
+    assert all(t["payload"].get("open_esim_settings") is True for t in stream_prepares)
     _mark_ready(store, rental)
     farm.tasks.clear()
     ready_stream = service.open_stream(CUSTOMER_A, rental)
@@ -346,6 +348,7 @@ def test_live_stream_prepare_reopens_esim_settings_without_home(tmp_path: Path):
     ready_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
     assert ready_prepares
     assert all(t["payload"].get("skip_home") is not True for t in ready_prepares)
+    assert all(t["payload"].get("open_esim_settings") is not True for t in ready_prepares)
 
 
 def test_stream_independent_of_setup_guard_and_native_resolution_unchanged(tmp_path: Path):

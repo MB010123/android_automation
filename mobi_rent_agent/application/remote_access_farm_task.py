@@ -290,13 +290,16 @@ def _prop_from_adb(runner: AdbCommandRunner, serial: str, name: str) -> str:
 def detect_device_oem(runner: AdbCommandRunner, serial: str, slot_id: int) -> str:
     manufacturer = _prop_from_adb(runner, serial, "ro.product.manufacturer")
     brand = _prop_from_adb(runner, serial, "ro.product.brand")
+    model = _prop_from_adb(runner, serial, "ro.product.model")
     if _is_samsung_renter_device(int(slot_id), serial, manufacturer):
         return OEM_SAMSUNG
     if _is_samsung_renter_device(int(slot_id), serial, brand):
         return OEM_SAMSUNG
-    blob = f"{manufacturer} {brand}".lower()
+    blob = f"{manufacturer} {brand} {model}".lower()
     if "samsung" in blob:
         return OEM_SAMSUNG
+    if "google" in blob or "pixel" in blob:
+        return OEM_PIXEL
     return OEM_PIXEL
 
 
@@ -414,23 +417,39 @@ def ensure_esim_setup_screen_open(runner: AdbCommandRunner, serial: str, oem: st
 
 
 def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
-    """Open the OEM SIM/eSIM screen once, then stop.
+    """Bring the OEM SIM/eSIM screen to the front, then stop.
 
-    Samsung: SimCardMgrActivity. Pixel: WIRELESS_SETTINGS (live-verified to
-    NetworkDashboardActivity). Never dumpsys, never taps Add eSIM / Gallery.
+    Samsung: SimCardMgrActivity with WIRELESS_SETTINGS fallback.
+    Pixel: WIRELESS_SETTINGS (live-verified to NetworkDashboardActivity).
+    ``--activity-clear-top`` restores a minimized Settings task in front of
+    the launcher. Never dumpsys, never taps Add eSIM / Gallery.
     """
     if oem == OEM_SAMSUNG:
-        _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()])
-        return "sim_manager"
-    _try_shell(runner, serial, ["shell", "am", "start", "-a", PIXEL_WIRELESS_INTENT])
+        if _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()]):
+            return "sim_manager"
+        _try_shell(
+            runner,
+            serial,
+            ["shell", "am", "start", "--activity-clear-top", "-a", PIXEL_WIRELESS_INTENT],
+        )
+        return PIXEL_WIRELESS_INTENT
+    _try_shell(
+        runner,
+        serial,
+        ["shell", "am", "start", "--activity-clear-top", "-a", PIXEL_WIRELESS_INTENT],
+    )
     return PIXEL_WIRELESS_INTENT
 
 
-def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> None:
+def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> bool:
     try:
-        runner.run(serial, arguments)
+        result = runner.run(serial, arguments)
     except AdbCommandError:
-        pass
+        return False
+    text = f"{getattr(result, 'stdout', '') or ''} {getattr(result, 'stderr', '') or ''}".lower()
+    if "error type" in text or "unable to resolve" in text or "does not exist" in text:
+        return False
+    return True
 
 
 def _esim_handoff_verified(runner: AdbCommandRunner, serial: str, oem: str) -> bool:

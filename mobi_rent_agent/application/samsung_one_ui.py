@@ -70,12 +70,12 @@ def samsung_sim_manager_args() -> list[str]:
     return [
         "am",
         "start",
+        "--activity-clear-top",
         "-n",
         SAMSUNG_SIM_MGR_COMPONENT,
         "-e",
         "rootKey",
         "SIMCARD_ESIM_ADD_MOBILE_PLAN",
-        "--activity-clear-task",
     ]
 
 

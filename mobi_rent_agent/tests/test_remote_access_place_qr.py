@@ -595,10 +595,36 @@ def test_samsung_launch_is_sim_manager_only():
     launched = launch_esim_setup_screen(runner, "RFCNB056WEV", OEM_SAMSUNG)
     joined = " ".join(" ".join(args) for args in runner.calls)
     assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "--activity-clear-top" in joined
     assert "dumpsys" not in joined
     assert "input tap" not in joined
     assert launched == "sim_manager"
-    assert "android.settings.SETTINGS" not in joined
+    assert "android.settings.WIRELESS_SETTINGS" not in joined
+
+
+def test_samsung_launch_falls_back_to_wireless_settings():
+    from application.esim_setup_ui_state import OEM_SAMSUNG
+    from application.remote_access_farm_task import launch_esim_setup_screen
+    from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
+
+    class Runner(AdbCommandRunner):
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+            self.calls.append(list(arguments))
+            joined = " ".join(arguments)
+            if SAMSUNG_SIM_MGR_COMPONENT in joined:
+                return AdbCommandResult(stdout="Error type 3\n", stderr="")
+            return AdbCommandResult(stdout="Starting: Intent\n", stderr="")
+
+    runner = Runner()
+    launched = launch_esim_setup_screen(runner, "RFCNB056WEV", OEM_SAMSUNG)
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "--activity-clear-top" in joined
+    assert launched == "android.settings.WIRELESS_SETTINGS"
 
 
 def test_pixel_launch_is_wireless_settings_only():
@@ -617,6 +643,7 @@ def test_pixel_launch_is_wireless_settings_only():
     launched = launch_esim_setup_screen(runner, "18171FDF6005WG", OEM_PIXEL)
     joined = " ".join(" ".join(args) for args in runner.calls)
     assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "--activity-clear-top" in joined
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert "dumpsys" not in joined
     assert "input tap" not in joined

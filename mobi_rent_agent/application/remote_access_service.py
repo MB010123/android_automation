@@ -558,8 +558,7 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            if not self._session_awaiting_human(existing):
-                self._prepare_device_screen(auth.slot_id, wait_boot=False)
+            self._prepare_device_screen(auth.slot_id, wait_boot=False)
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -623,8 +622,7 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        if not self._session_awaiting_human(session):
-            self._prepare_device_screen(auth.slot_id, wait_boot=False)
+        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -713,8 +711,7 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        if not self._session_awaiting_human(session):
-            self._prepare_device_screen(auth.slot_id, wait_boot=False)
+        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         try:
             return opener(
                 device_id=session.device_id,
@@ -1636,14 +1633,17 @@ class RemoteAccessService:
     def _prepare_device_screen(
         self, slot_id: int, *, wait_boot: bool, skip_home: bool | None = None
     ) -> None:
+        session = self._store.active_for_slot(int(slot_id)) or self._store.latest_for_slot(int(slot_id))
+        setup_in_progress = session is not None and not session.setup_complete
         if skip_home is None:
-            skip_home = self._slot_awaiting_esim(slot_id)
+            skip_home = setup_in_progress
         request_device_screen_prepare(
             self._farm,
             int(slot_id),
             wait_boot=wait_boot,
             voidfix_package=self._voidfix_package,
             skip_home=bool(skip_home),
+            open_esim_settings=bool(skip_home),
         )
         self._native_resolution_cache.pop(int(slot_id), None)
 
