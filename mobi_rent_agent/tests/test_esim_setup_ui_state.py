@@ -175,6 +175,15 @@ def test_server_fallback_or_farm_timeout_unlocks_working_spinner():
     assert awaiting.show_spinner is False
     assert awaiting.timed_out is False
     assert awaiting.controls_enabled is True
+    latched = decide_setup_surface(
+        setup_ui_state=SETUP_UI_WORKING,
+        elapsed_working_seconds=1,
+        setup_mode=True,
+        human_handoff_unlocked=True,
+    )
+    assert latched.show_spinner is False
+    assert latched.controls_enabled is True
+    assert latched.timed_out is False
 
 
 def test_device_status_unlocks_manual_fallback_after_45_seconds(tmp_path: Path):

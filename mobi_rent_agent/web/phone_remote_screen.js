@@ -37,6 +37,9 @@
   var SETUP_WORKING_FALLBACK_MS = 45000;
   var SETUP_TIMEOUT_BANNER =
     "Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.";
+  var GALLERY_HANDOFF_PROMPT =
+    "Your QR code is saved to the phone's Gallery! On the screen below, tap 'Add eSIM', choose 'Scan QR code' -> 'Gallery', and select the QR image at the top to finish.";
+  var SETUP_COMPLETED_BANNER = "eSIM Activated!";
 
   function decideSetupSurface(options) {
     options = options || {};
@@ -51,6 +54,18 @@
       };
     }
     var state = String(options.setupUiState || "").trim();
+    var completed = state === "completed";
+    var awaiting = state === "awaiting_human_click" || (!!options.humanHandoffUnlocked && !completed);
+    if (completed || awaiting) {
+      return {
+        showSpinner: false,
+        showPhone: true,
+        controlsEnabled: true,
+        timedOut: false,
+        banner: null,
+        showRetry: false,
+      };
+    }
     var working = state === "working";
     var timedOut = !!(
       working &&
@@ -409,6 +424,8 @@
     SWIPE_THRESHOLD_PX: SWIPE_THRESHOLD_PX,
     SETUP_WORKING_FALLBACK_MS: SETUP_WORKING_FALLBACK_MS,
     SETUP_TIMEOUT_BANNER: SETUP_TIMEOUT_BANNER,
+    GALLERY_HANDOFF_PROMPT: GALLERY_HANDOFF_PROMPT,
+    SETUP_COMPLETED_BANNER: SETUP_COMPLETED_BANNER,
     mapDisplayToDevice: mapDisplayToDevice,
     classifyGesture: classifyGesture,
     decideSetupSurface: decideSetupSurface,

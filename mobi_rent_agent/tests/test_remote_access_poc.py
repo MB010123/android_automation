@@ -25,6 +25,7 @@ from application.auth_service import AuthService
 from application.farm_agent_tasks import FarmTaskRequest, execute_farm_task, parse_farm_task_body
 from application.farm_task_executor import FarmTaskExecutorDeps
 from application.remote_access_farm_task import run_remote_access_place_qr
+from application.esim_setup_ui_state import SIM_MANAGER_HANDOFF_PROMPT
 from application.remote_access_service import (
     PREPARE_FAILED,
     PREPARE_PLACING_QR,
@@ -335,9 +336,7 @@ class FakeFarm:
                 "qr_walk_completed": True,
                 "qr_deleted": bool(esim),
                 "setup_ui_state": "completed" if esim else "awaiting_human_click",
-                "setup_ui_prompt": None
-                if esim
-                else "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation.",
+                "setup_ui_prompt": None if esim else SIM_MANAGER_HANDOFF_PROMPT,
                 "setup_human_click": None if esim else "Add eSIM",
                 "method": payload.get("mode") or "gated_setup",
                 "steps_done": [] if skipped else ["open_sim_manager"],
@@ -378,13 +377,7 @@ class FakeFarm:
                 "setup_ui_state": "completed"
                 if esim
                 else ("awaiting_human_click" if walk_done else "working"),
-                "setup_ui_prompt": None
-                if esim
-                else (
-                    "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation."
-                    if walk_done
-                    else None
-                ),
+                "setup_ui_prompt": None if esim else (SIM_MANAGER_HANDOFF_PROMPT if walk_done else None),
             }
         if task_type == "setup_session_voidfix_cycle":
             body["details"] = {

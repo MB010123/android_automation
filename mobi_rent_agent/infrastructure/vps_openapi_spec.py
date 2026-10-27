@@ -679,9 +679,11 @@ def _schemas() -> dict[str, Any]:
                     "description": (
                         "working: hide the phone and show a spinner while the eSIM is "
                         "downloading. Start a 45-second client timer on this state. "
-                        "awaiting_human_click: reveal the phone so the customer can tap "
-                        "Add eSIM, pick the QR from Gallery, and confirm. "
-                        "completed: hide the phone and finish setup."
+                        "awaiting_human_click: immediately hide the spinner and unlock the "
+                        "live canvas so the customer can tap Add eSIM, pick the QR from "
+                        "Gallery, and confirm. Do not wait for the 45-second timer. Canvas "
+                        "taps must not re-lock the screen. Keep polling until completed. "
+                        "completed: show eSIM Activated! and finish setup."
                     ),
                 },
                 "setup_ui_prompt": {

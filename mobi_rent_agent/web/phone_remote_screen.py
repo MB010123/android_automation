@@ -13,9 +13,17 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from application.esim_setup_ui_state import (
+    GALLERY_HANDOFF_PROMPT,
+    SETUP_COMPLETED_BANNER,
     SETUP_TIMEOUT_BANNER,
     SETUP_WORKING_FALLBACK_SECONDS,
     decide_setup_surface,
+)
+
+_COPY_TARGET_CONSTANTS = (
+    GALLERY_HANDOFF_PROMPT,
+    SETUP_COMPLETED_BANNER,
+    SETUP_TIMEOUT_BANNER,
 )
 
 ALLOWED_ACTIONS = frozenset(

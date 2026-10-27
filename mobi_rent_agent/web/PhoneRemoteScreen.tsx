@@ -16,6 +16,8 @@ import {
   mapDisplayToDevice,
   classifyGesture,
   decideSetupSurface,
+  GALLERY_HANDOFF_PROMPT,
+  SETUP_COMPLETED_BANNER,
   type DisplayRect,
 } from "./phone_remote_screen";
 
@@ -141,12 +143,28 @@ export function PhoneRemoteScreen({
   const [elapsedWorkingMs, setElapsedWorkingMs] = useState(0);
   const [retryNonce, setRetryNonce] = useState(0);
   const [ignoreServerFallback, setIgnoreServerFallback] = useState(false);
+  const [humanHandoffUnlocked, setHumanHandoffUnlocked] = useState(false);
 
   useEffect(() => {
-    if (!setupMode || setupUiState !== "working") {
+    if (!setupMode) {
+      setHumanHandoffUnlocked(false);
+      return;
+    }
+    if (setupUiState === "awaiting_human_click") {
+      setHumanHandoffUnlocked(true);
+    }
+    if (setupUiState === "completed") {
+      setHumanHandoffUnlocked(false);
+    }
+  }, [setupMode, setupUiState]);
+
+  useEffect(() => {
+    if (!setupMode || setupUiState !== "working" || humanHandoffUnlocked) {
       workingStartedRef.current = null;
       setElapsedWorkingMs(0);
-      setIgnoreServerFallback(false);
+      if (setupUiState !== "working" || humanHandoffUnlocked) {
+        setIgnoreServerFallback(false);
+      }
       return;
     }
     if (workingStartedRef.current == null) {
@@ -160,7 +178,7 @@ export function PhoneRemoteScreen({
     tick();
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [setupMode, setupUiState, retryNonce]);
+  }, [setupMode, setupUiState, retryNonce, humanHandoffUnlocked]);
 
   const surface = decideSetupSurface({
     setupUiState,
@@ -168,7 +186,16 @@ export function PhoneRemoteScreen({
     setupMode: !!setupMode,
     serverManualFallback: !!setupManualFallback && !ignoreServerFallback,
     automatedSetupTimedOut: !!automatedSetupTimedOut && !ignoreServerFallback,
+    humanHandoffUnlocked,
   });
+  const setupComplete = setupMode && setupUiState === "completed";
+  const handoffBanner =
+    setupMode &&
+    !setupComplete &&
+    !surface.timedOut &&
+    (setupUiState === "awaiting_human_click" || humanHandoffUnlocked)
+      ? (setupUiPrompt && setupUiPrompt.trim()) || GALLERY_HANDOFF_PROMPT
+      : null;
 
   const streamReady = sizeRef.current.w > 0 && sizeRef.current.h > 0;
   const canControl = !!connected && streamReady && !disabled && surface.controlsEnabled;
@@ -303,6 +330,7 @@ export function PhoneRemoteScreen({
     workingStartedRef.current = Date.now();
     setElapsedWorkingMs(0);
     setIgnoreServerFallback(true);
+    setHumanHandoffUnlocked(false);
     setRetryNonce((value) => value + 1);
     onRetryAutomaticSetup?.();
   }, [onRetryAutomaticSetup]);
@@ -315,6 +343,11 @@ export function PhoneRemoteScreen({
           {customerSessionWarning}
         </p>
       ) : null}
+      {setupComplete ? (
+        <div className="phone-setup-banner phone-setup-banner-success" role="status">
+          <p>{SETUP_COMPLETED_BANNER}</p>
+        </div>
+      ) : null}
       {surface.banner ? (
         <div className="phone-setup-banner" role="status">
           <p>{surface.banner}</p>
@@ -325,9 +358,9 @@ export function PhoneRemoteScreen({
           ) : null}
         </div>
       ) : null}
-      {setupUiPrompt && setupUiState === "awaiting_human_click" && !surface.timedOut ? (
+      {handoffBanner ? (
         <p className="phone-setup-prompt" role="status">
-          {setupUiPrompt}
+          {handoffBanner}
         </p>
       ) : null}
       <div
@@ -419,5 +452,11 @@ export function PhoneRemoteScreen({
   );
 }
 
-export { mapDisplayToDevice, classifyGesture, decideSetupSurface };
+export {
+  mapDisplayToDevice,
+  classifyGesture,
+  decideSetupSurface,
+  GALLERY_HANDOFF_PROMPT,
+  SETUP_COMPLETED_BANNER,
+};
 export type { ControlBody, ControlResult, DisplayRect };

@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from application.esim_setup_ui_state import GALLERY_HANDOFF_PROMPT, SETUP_COMPLETED_BANNER
 from web.phone_remote_screen import (
     ALLOWED_ACTIONS,
     FORBIDDEN_ACTIONS,
@@ -239,3 +240,61 @@ def test_setup_working_fallback_reveals_phone_after_45_seconds():
     assert SETUP_TIMEOUT_BANNER in js
     assert "phone-setup-banner" in css
     assert "phone-setup-spinner" in css
+    assert "phone-setup-banner-success" in css
+
+
+def test_awaiting_human_click_unlocks_immediately_without_waiting_45_seconds():
+    surface = decide_setup_surface(
+        setup_ui_state="awaiting_human_click",
+        elapsed_working_seconds=0,
+        setup_mode=True,
+    )
+    assert surface.show_spinner is False
+    assert surface.show_phone is True
+    assert surface.controls_enabled is True
+    assert surface.timed_out is False
+    assert surface.banner is None
+    tsx = (ROOT / "web" / "PhoneRemoteScreen.tsx").read_text(encoding="utf-8")
+    parent = (ROOT / "web" / "AutomaticEsimSetup.tsx").read_text(encoding="utf-8")
+    ts = (ROOT / "web" / "phone_remote_screen.ts").read_text(encoding="utf-8")
+    js = (ROOT / "web" / "phone_remote_screen.js").read_text(encoding="utf-8")
+    assert "GALLERY_HANDOFF_PROMPT" in tsx
+    assert "SETUP_COMPLETED_BANNER" in tsx
+    assert "humanHandoffUnlocked" in tsx
+    assert "awaiting_human_click" in tsx
+    assert "latchSetupState" in parent
+    assert GALLERY_HANDOFF_PROMPT in ts
+    assert GALLERY_HANDOFF_PROMPT in js
+    assert SETUP_COMPLETED_BANNER in ts
+    assert SETUP_COMPLETED_BANNER in js
+
+
+def test_human_handoff_latch_does_not_re_lock_when_poll_returns_working():
+    latched = decide_setup_surface(
+        setup_ui_state="working",
+        elapsed_working_seconds=1,
+        setup_mode=True,
+        human_handoff_unlocked=True,
+    )
+    assert latched.show_spinner is False
+    assert latched.controls_enabled is True
+    assert latched.timed_out is False
+    completed = decide_setup_surface(
+        setup_ui_state="completed",
+        elapsed_working_seconds=1,
+        setup_mode=True,
+        human_handoff_unlocked=True,
+    )
+    assert completed.show_spinner is False
+    assert completed.controls_enabled is True
+
+
+def test_admin_cleanup_is_always_enabled_during_active_rental():
+    src = (ROOT / "web" / "AdminSlotCleanup.tsx").read_text(encoding="utf-8")
+    assert "This phone has an active rental. Release it before cleaning" not in src
+    assert "/admin/slots/" in src and "/clean" in src
+    assert '"preserve_esim": preserveEsim' in src or "preserve_esim: preserveEsim" in src
+    assert "Clean Phone (Keep eSIM)" in src
+    assert "Full Wipe & Delete eSIM" in src
+    assert "Phone cleaned (eSIM and active rental preserved)." in src
+    assert "admin-slot-cleanup-spinner" in src

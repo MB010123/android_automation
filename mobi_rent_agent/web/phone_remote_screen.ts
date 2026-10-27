@@ -11,6 +11,9 @@ export const SWIPE_THRESHOLD_PX = 12;
 export const SETUP_WORKING_FALLBACK_MS = 45_000;
 export const SETUP_TIMEOUT_BANNER =
   "Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.";
+export const GALLERY_HANDOFF_PROMPT =
+  "Your QR code is saved to the phone's Gallery! On the screen below, tap 'Add eSIM', choose 'Scan QR code' -> 'Gallery', and select the QR image at the top to finish.";
+export const SETUP_COMPLETED_BANNER = "eSIM Activated!";
 
 export type SetupUiState = "working" | "awaiting_human_click" | "completed";
 
@@ -29,6 +32,7 @@ export function decideSetupSurface(options: {
   setupMode?: boolean;
   serverManualFallback?: boolean;
   automatedSetupTimedOut?: boolean;
+  humanHandoffUnlocked?: boolean;
 }): SetupSurfaceDecision {
   if (!options.setupMode) {
     return {
@@ -41,6 +45,19 @@ export function decideSetupSurface(options: {
     };
   }
   const state = String(options.setupUiState || "").trim();
+  const completed = state === "completed";
+  const awaiting =
+    state === "awaiting_human_click" || (!!options.humanHandoffUnlocked && !completed);
+  if (completed || awaiting) {
+    return {
+      showSpinner: false,
+      showPhone: true,
+      controlsEnabled: true,
+      timedOut: false,
+      banner: null,
+      showRetry: false,
+    };
+  }
   const working = state === "working";
   const timedOut =
     working &&

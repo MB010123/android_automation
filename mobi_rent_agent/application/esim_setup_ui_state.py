@@ -18,9 +18,12 @@ SETUP_TIMEOUT_BANNER = (
 )
 
 DEFAULT_HUMAN_PROMPT = "Please tap 'Add' / 'Confirm' on the screen below"
-SIM_MANAGER_HANDOFF_PROMPT = (
-    "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation."
+GALLERY_HANDOFF_PROMPT = (
+    "Your QR code is saved to the phone's Gallery! On the screen below, tap 'Add eSIM', "
+    "choose 'Scan QR code' -> 'Gallery', and select the QR image at the top to finish."
 )
+SIM_MANAGER_HANDOFF_PROMPT = GALLERY_HANDOFF_PROMPT
+SETUP_COMPLETED_BANNER = "eSIM Activated!"
 
 WORKING_TEXT_MARKERS = (
     "checking network info",
@@ -92,8 +95,13 @@ def decide_setup_surface(
     setup_mode: bool = False,
     server_manual_fallback: bool = False,
     automated_setup_timed_out: bool = False,
+    human_handoff_unlocked: bool = False,
 ) -> SetupSurfaceDecision:
-    """Hide the phone on ``working`` until 45s elapse (or the farm walk fails)."""
+    """Hide the phone on ``working`` until 45s elapse (or the farm walk fails).
+
+    ``awaiting_human_click`` unlocks immediately. Once the customer has been
+    handed off, later ``working`` polls must not re-lock the canvas.
+    """
     if not setup_mode:
         return SetupSurfaceDecision(
             show_spinner=False,
@@ -102,6 +110,15 @@ def decide_setup_surface(
             timed_out=False,
         )
     state = str(setup_ui_state or "").strip()
+    completed = state == SETUP_UI_COMPLETED
+    awaiting = state == SETUP_UI_AWAITING or (bool(human_handoff_unlocked) and not completed)
+    if completed or awaiting:
+        return SetupSurfaceDecision(
+            show_spinner=False,
+            show_phone=True,
+            controls_enabled=True,
+            timed_out=False,
+        )
     working = state == SETUP_UI_WORKING
     timed_out = working and (
         bool(server_manual_fallback)
