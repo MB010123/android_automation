@@ -178,6 +178,7 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
     )
     copied = [" ".join(args) for _, args in runner.calls]
     assert any("cp" in line and "/sdcard/Pictures/esim_qr.png" in line for line in copied)
+    assert any("cp" in line and "/sdcard/Download/esim_qr.png" in line for line in copied)
     assert any("cp" in line and "/sdcard/DCIM/esim_qr.png" in line for line in copied)
     scans = [
         " ".join(args)
@@ -185,9 +186,11 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
         if args[:3] == ["shell", "am", "broadcast"]
     ]
     assert any("file:///sdcard/Pictures/esim_qr.png" in line for line in scans)
+    assert any("file:///sdcard/Download/esim_qr.png" in line for line in scans)
     assert any("file:///sdcard/DCIM/esim_qr.png" in line for line in scans)
     assert result.details["gallery_aliases"] == [
         "/sdcard/Pictures/esim_qr.png",
+        "/sdcard/Download/esim_qr.png",
         "/sdcard/DCIM/esim_qr.png",
     ]
 

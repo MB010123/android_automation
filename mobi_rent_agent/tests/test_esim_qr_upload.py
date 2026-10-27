@@ -328,6 +328,8 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert result.http_status == 200, result.body
     assert result.body["placed"] is True
+    assert result.body["setup_ui_state"] == "awaiting_human_click"
+    assert "Add eSIM" in str(result.body.get("setup_ui_prompt") or "")
     assert result.body["auto_activation"]["started"] is True
     assert result.body["auto_activation"]["job_id"]
     _assert_safe_body(result.body)

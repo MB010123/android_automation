@@ -619,9 +619,11 @@ def _schemas() -> dict[str, Any]:
                 "(never a placeholder). `cellular_status` is always `unknown` (no approved "
                 "live radio reader; not inferred from Wi-Fi/ADB). IMEI1 is not returned. "
                 "Includes integer `slot_id` and ADB `serial` from slot_map. "
-                "Spinner-gated eSIM setup exposes `setup_ui_state` "
-                "(`working` | `awaiting_human_click` | `completed`) so the frontend "
-                "hides the phone behind a spinner except for the 1–2 human confirmation taps. "
+                "Hybrid Guided eSIM setup exposes `setup_ui_state` "
+                "(`working` | `awaiting_human_click` | `completed`). After the QR is placed, "
+                "Samsung SIM Manager opens and `setup_ui_state` becomes `awaiting_human_click` "
+                "so the customer can tap Add eSIM, pick the QR from Gallery, and confirm. "
+                "`working` is only for download/activation progress. "
                 "If `working` lasts 45 seconds (client timer) or automated setup times out, "
                 "`setup_manual_fallback` is true: drop the spinner, reveal the live phone, "
                 "and allow taps/navigation. `setup_ui_state` stays `working`. "
@@ -663,10 +665,10 @@ def _schemas() -> dict[str, Any]:
                     "type": "string",
                     "enum": ["working", "awaiting_human_click", "completed"],
                     "description": (
-                        "working: hide the phone and show a spinner while the bot walks "
-                        "SIM Manager / Gallery or the eSIM is downloading. "
-                        "Start a 45-second client timer on this state. "
-                        "awaiting_human_click: reveal the phone only for Add/Confirm/Download. "
+                        "working: hide the phone and show a spinner while the eSIM is "
+                        "downloading. Start a 45-second client timer on this state. "
+                        "awaiting_human_click: reveal the phone so the customer can tap "
+                        "Add eSIM, pick the QR from Gallery, and confirm. "
                         "completed: hide the phone and finish setup."
                     ),
                 },

@@ -71,11 +71,13 @@ def _place_qr_config_gate(agent_config: AgentConfig | None) -> FarmTaskResult | 
 DCIM_CAMERA_DIR = "/sdcard/DCIM/Camera"
 DCIM_DIR = "/sdcard/DCIM"
 PICTURES_DIR = "/sdcard/Pictures"
-ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR})
+DOWNLOAD_DIR = "/sdcard/Download"
+ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR})
 SAMSUNG_S20_SERIAL = "RFCNB056WEV"
 SAMSUNG_USER_QR_SLOT = 21
 SAMSUNG_GALLERY_QR_PATHS = (
     f"{PICTURES_DIR}/esim_qr.png",
+    f"{DOWNLOAD_DIR}/esim_qr.png",
     f"{DCIM_DIR}/esim_qr.png",
 )
 PLACED_ESIM_QR_PATHS = SAMSUNG_GALLERY_QR_PATHS
@@ -142,7 +144,7 @@ def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool
 def delete_placed_esim_qr(runner: AdbCommandRunner, serial: str) -> list[str]:
     """Remove Gallery aliases and hashed QR files so they cannot be re-picked."""
     removed: list[str] = []
-    directories = (PICTURES_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
+    directories = (PICTURES_DIR, DOWNLOAD_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
     targets = list(PLACED_ESIM_QR_PATHS)
     for directory in directories:
         try:

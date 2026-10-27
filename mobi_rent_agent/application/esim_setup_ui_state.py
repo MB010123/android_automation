@@ -18,6 +18,9 @@ SETUP_TIMEOUT_BANNER = (
 )
 
 DEFAULT_HUMAN_PROMPT = "Please tap 'Add' / 'Confirm' on the screen below"
+SIM_MANAGER_HANDOFF_PROMPT = (
+    "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation."
+)
 
 WORKING_TEXT_MARKERS = (
     "checking network info",
@@ -58,7 +61,7 @@ AWAITING_PROMPT_MARKERS = (
 
 AWAITING_BUTTONS = frozenset({"add", "download", "confirm", "turn on", "ok"})
 GALLERY_DONE_MARKERS = ("done",)
-# SIM manager after a finished walk is not a human-gated click.
+# Hybrid Guided Flow: SIM Manager is the customer handoff screen.
 SIM_MANAGER_MARKERS = ("sim manager", "add esim")
 
 
@@ -133,8 +136,9 @@ def classify_setup_ui(
 ) -> SetupUiClassification:
     """Map a live screen to spinner / reveal-phone / finished.
 
-    ``walk_in_progress`` wins over awaiting so the frontend keeps the spinner
-    while the bot is still tapping Gallery / Done.
+    Hybrid Guided Flow: SIM Manager with Add eSIM is ``awaiting_human_click``
+    so the customer can tap through Gallery and confirm. ``walk_in_progress``
+    still hides Gallery only when an operator one-UI walk is actively tapping.
     """
     if activation_confirmed or esim_profile_present:
         return SetupUiClassification(SETUP_UI_COMPLETED, reason="esim_installed")
@@ -143,7 +147,12 @@ def classify_setup_ui(
     lowered = f"{ui_xml or ''} {activity or ''}".lower()
     if not lowered.strip():
         if walk_completed:
-            return SetupUiClassification(SETUP_UI_WORKING, reason="post_walk_unknown")
+            return SetupUiClassification(
+                SETUP_UI_AWAITING,
+                prompt=SIM_MANAGER_HANDOFF_PROMPT,
+                human_click_label="Add eSIM",
+                reason="post_walk_unknown",
+            )
         return SetupUiClassification(SETUP_UI_WORKING, reason="ui_unknown")
     if any(marker in lowered for marker in COMPLETED_TEXT_MARKERS):
         return SetupUiClassification(SETUP_UI_COMPLETED, reason="success_copy")
@@ -153,9 +162,12 @@ def classify_setup_ui(
     if awaiting is not None:
         return awaiting
     if walk_completed:
-        if any(marker in lowered for marker in SIM_MANAGER_MARKERS):
-            return SetupUiClassification(SETUP_UI_COMPLETED, reason="back_on_sim_manager")
-        return SetupUiClassification(SETUP_UI_WORKING, reason="post_walk_transition")
+        return SetupUiClassification(
+            SETUP_UI_AWAITING,
+            prompt=SIM_MANAGER_HANDOFF_PROMPT,
+            human_click_label="Add eSIM",
+            reason="post_walk_handoff",
+        )
     return SetupUiClassification(SETUP_UI_WORKING, reason="deterministic_flow")
 
 
@@ -176,7 +188,24 @@ def _awaiting_human(lowered: str) -> SetupUiClassification | None:
             human_click_label=label,
             reason="gallery_confirm",
         )
+    if _sim_manager_handoff(lowered):
+        return SetupUiClassification(
+            SETUP_UI_AWAITING,
+            prompt=SIM_MANAGER_HANDOFF_PROMPT,
+            human_click_label="Add eSIM",
+            reason="sim_manager_handoff",
+        )
     return None
+
+
+def _sim_manager_handoff(lowered: str) -> bool:
+    if "can't add" in lowered:
+        return False
+    if any(marker in lowered for marker in AWAITING_PROMPT_MARKERS):
+        return False
+    if "sim manager" in lowered:
+        return True
+    return any(marker in lowered for marker in SIM_MANAGER_MARKERS)
 
 
 def _first_button(lowered: str, labels: frozenset[str] | tuple[str, ...]) -> str | None:

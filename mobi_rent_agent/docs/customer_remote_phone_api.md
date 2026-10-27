@@ -528,7 +528,7 @@ caller's own stream as busy.
 }
 ```
 
-**Set up your phone:** poll `setup_ui_state`. On `working`, hide the live canvas behind a spinner and start a **45-second client timer**. If the server is still `working` after 45 seconds, or `setup_manual_fallback` is true (farm walk timed out), drop the spinner, reveal the canvas, show *Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.*, enable tap/swipe/Back/Home/Recents, and offer **Retry automatic setup**. Copy target: `mobi_rent_agent/web/PhoneRemoteScreen.tsx`.
+**Set up your phone:** poll `setup_ui_state`. After a Samsung QR upload the farm pushes the image to Gallery, opens SIM Manager, and returns `awaiting_human_click` immediately so the customer can tap **Add eSIM**, pick the QR from Gallery, and confirm. Keep polling activation status; `esim_activated` / `completed` still fire when the profile lands. On `working` (download/activation progress), hide the live canvas behind a spinner and start a **45-second client timer**. If the server is still `working` after 45 seconds, or `setup_manual_fallback` is true, drop the spinner, reveal the canvas, show *Automatic setup timed out after 45 seconds. The phone screen has been unlocked so you can complete your eSIM setup manually.*, enable tap/swipe/Back/Home/Recents, and offer **Retry automatic setup**. Copy target: `mobi_rent_agent/web/PhoneRemoteScreen.tsx`.
 
 
 | Field                     | Meaning                                                                                      |

@@ -1,13 +1,8 @@
-"""Samsung S20 zero-touch eSIM activation Farm task.
+"""Samsung S20 eSIM Farm task.
 
-Primary method: the real One UI walk (SIM manager → Add eSIM → Other ways to
-connect → Scan QR code → Open Gallery → Pictures album → newest image → Done),
-verified live on Slot 21 (RFCNB056WEV, One UI 5.1). Each step is checked via
-``uiautomator`` dumps before advancing; progress is tracked via
-``UT.EsimAddProgressState`` logcat states.
-
-Secondary method: the ``esimmanagerfromqr://`` deep link when the payload
-carries an explicit ``activation_code`` (smoke tests / operator tooling).
+Customer Hybrid Guided Flow (gated_setup / open_qr_picker) opens SIM Manager
+and stops. Operator one-UI walk still covers Gallery → Done plus logcat
+``UT.EsimAddProgressState``. Deep link: explicit ``activation_code``.
 """
 from __future__ import annotations
 
@@ -232,41 +227,35 @@ def _activate(runner: AdbCommandRunner, **kwargs: Any):
     )
 
 
-def test_open_qr_picker_walks_through_done_deletes_qr_and_does_not_go_home():
-    runner = _ActivationRunner(ui_polls=WALK_UI_POLLS + [CONFIRM_UI])
+def test_open_qr_picker_stops_at_sim_manager_and_keeps_qr():
+    runner = _ActivationRunner(ui_polls=[SIM_MANAGER_UI, SIM_MANAGER_UI])
     result = _activate(runner, request=_req(mode="open_qr_picker"))
     assert result.ok is True, (result.error, result.message)
     assert result.details["method"] == "open_qr_picker"
     assert result.details["opened"] is True
     assert result.details["activated"] is False
     assert result.details["qr_walk_completed"] is True
-    assert result.details["qr_deleted"] is True
+    assert result.details["qr_deleted"] is False
     assert result.details["setup_ui_state"] == "awaiting_human_click"
-    assert result.details["steps_done"] == [
-        "open_sim_manager",
-        "add_esim",
-        "other_ways_to_connect",
-        "scan_qr_code",
-        "open_gallery",
-        "open_album",
-        "pick_newest_image",
-        "confirm_done",
-    ]
+    assert "Add eSIM" in str(result.details.get("setup_ui_prompt") or "")
+    assert result.details["steps_done"] == ["open_sim_manager"]
+    assert result.details["taps"] == []
     rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
-    assert any(args[-1].endswith("esim_qr.png") for args in rms)
-    # Wake/home happen at the start of the walk; cleanup must not send home again.
+    assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)
+    dismiss = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "dismiss-keyguard" in dismiss
+    # Wake/home happen at the start; cleanup must not send home again.
     homes = [args for _, args in runner.calls if args == ["shell", "input", "keyevent", "3"]]
     assert len(homes) == 1
     assert SIM_CARD_MGR_COMPONENT in runner.commands("shell", "am", "start")[0]
     aosp = " ".join(" ".join(args) for _, args in runner.calls)
     assert "SIM_CARD_SETTINGS" not in aosp
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in aosp
-    # Human confirmation is not auto-tapped in the gated picker path.
-    assert "add" not in result.details["taps"]
+    assert runner.tap_points() == []
 
 
 def test_qr_walk_escapes_game_launcher_and_opens_sim_manager():
-    runner = _ActivationRunner(ui_polls=[GAME_LAUNCHER_UI, *WALK_UI_POLLS, CONFIRM_UI])
+    runner = _ActivationRunner(ui_polls=[GAME_LAUNCHER_UI, SIM_MANAGER_UI, SIM_MANAGER_UI])
     result = _activate(runner, request=_req(mode="open_qr_picker"))
     assert result.ok is True, (result.error, result.message)
     joined = " ".join(" ".join(args) for _, args in runner.calls)
@@ -285,8 +274,12 @@ def test_qr_walk_is_skipped_when_already_completed():
     assert result.ok is True
     assert result.details["skipped"] is True
     assert result.details["qr_walk_completed"] is True
+    assert result.details["qr_deleted"] is False
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
     assert runner.commands("shell", "am", "start") == []
     assert runner.tap_points() == []
+    rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
+    assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)
 
 
 def test_aosp_sims_fragment_is_detected():

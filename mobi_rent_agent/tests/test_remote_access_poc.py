@@ -325,25 +325,27 @@ class FakeFarm:
         if task_type == "remote_access_activation_status" and self.activation_details:
             body["details"] = self.activation_details
         if task_type == "esim_auto_activation":
-            skipped = bool(payload.get("qr_walk_completed") or payload.get("esim_profile_present"))
+            esim = bool(payload.get("esim_profile_present"))
+            skipped = bool(payload.get("qr_walk_completed") or esim)
             body["details"] = {
                 "ok": True,
                 "opened": not skipped,
                 "activated": False,
                 "skipped": skipped,
                 "qr_walk_completed": True,
-                "qr_deleted": True,
-                "setup_ui_state": "working" if skipped else "awaiting_human_click",
-                "setup_ui_prompt": None if skipped else "Please tap 'Add' on the screen below",
+                "qr_deleted": bool(esim),
+                "setup_ui_state": "completed" if esim else "awaiting_human_click",
+                "setup_ui_prompt": None
+                if esim
+                else "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation.",
+                "setup_human_click": None if esim else "Add eSIM",
                 "method": payload.get("mode") or "gated_setup",
+                "steps_done": [] if skipped else ["open_sim_manager"],
             }
         if task_type == "setup_session_inspect":
             allowed = bool(self.inspect_allowed) and not self.inspect_unknown
-            walk_done = bool(
-                payload.get("qr_walk_completed")
-                or payload.get("esim_profile_present")
-                or payload.get("activation_confirmed")
-            )
+            esim = bool(payload.get("esim_profile_present") or payload.get("activation_confirmed"))
+            walk_done = bool(payload.get("qr_walk_completed") or esim)
             recovered = bool(payload.get("recover")) and not allowed and not walk_done
             if self.inspect_unknown:
                 activity = None
@@ -373,7 +375,16 @@ class FakeFarm:
                 "voidfix_is_default_sms": True,
                 "voidfix_running": True,
                 "qr_walk_completed": walk_done,
-                "setup_ui_state": "completed" if walk_done else "working",
+                "setup_ui_state": "completed"
+                if esim
+                else ("awaiting_human_click" if walk_done else "working"),
+                "setup_ui_prompt": None
+                if esim
+                else (
+                    "Tap 'Add eSIM', choose your QR from Gallery, then confirm activation."
+                    if walk_done
+                    else None
+                ),
             }
         if task_type == "setup_session_voidfix_cycle":
             body["details"] = {

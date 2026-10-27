@@ -16,6 +16,7 @@ from application.esim_setup_ui_state import (
     SETUP_UI_COMPLETED,
     SETUP_UI_WORKING,
     SETUP_WORKING_FALLBACK_SECONDS,
+    SIM_MANAGER_HANDOFF_PROMPT,
     classify_setup_ui,
     decide_setup_surface,
 )
@@ -55,10 +56,14 @@ def test_classifier_walk_in_progress_hides_gallery():
     assert hit.reason == "walk_in_progress"
 
 
-def test_classifier_sim_manager_after_walk_is_completed():
+def test_classifier_sim_manager_is_handoff():
     hit = classify_setup_ui(SIM_MANAGER_UI, walk_completed=True)
-    assert hit.state == SETUP_UI_COMPLETED
-    assert hit.reason == "back_on_sim_manager"
+    assert hit.state == SETUP_UI_AWAITING
+    assert hit.reason == "sim_manager_handoff"
+    assert hit.prompt == SIM_MANAGER_HANDOFF_PROMPT
+    before_walk = classify_setup_ui(SIM_MANAGER_UI)
+    assert before_walk.state == SETUP_UI_AWAITING
+    assert before_walk.reason == "sim_manager_handoff"
 
 
 def test_classifier_installed_profile_is_completed():
@@ -95,25 +100,21 @@ def test_samsung_status_and_control_expose_setup_ui_state(tmp_path: Path):
     assert created.http_status == 201, created.body
     uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert uploaded.http_status == 200
-    assert uploaded.body["setup_ui_state"] == SETUP_UI_WORKING
+    assert uploaded.body["setup_ui_state"] == SETUP_UI_AWAITING
+    assert "Add eSIM" in str(uploaded.body.get("setup_ui_prompt") or "")
     session = store.get(rental)
     assert session is not None
     assert session.qr_sha256 == hashlib.sha256(PNG_BYTES).hexdigest()
     assert session.qr_walk_completed is True
     status = service.device_status_for_customer(CUSTOMER_A, rental)
     assert status.http_status == 200
-    assert status.body["setup_ui_state"] in {
-        SETUP_UI_WORKING,
-        SETUP_UI_AWAITING,
-        SETUP_UI_COMPLETED,
-    }
+    assert status.body["setup_ui_state"] == SETUP_UI_AWAITING
     activation = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert activation.http_status == 200
-    assert "setup_ui_state" in activation.body
-    store.set_setup_ui_state(rental, SETUP_UI_AWAITING)
+    assert activation.body["setup_ui_state"] == SETUP_UI_AWAITING
     tapped = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 10, "y": 20})
     assert tapped.http_status == 200
-    assert tapped.body["setup_ui_state"] == SETUP_UI_WORKING
+    assert tapped.body["setup_ui_state"] == SETUP_UI_AWAITING
     farm.tasks.clear()
     service._launch_add_esim(21)
     auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]

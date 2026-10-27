@@ -40,6 +40,7 @@ from application.esim_setup_ui_state import (
     SETUP_UI_STATES,
     SETUP_UI_WORKING,
     SETUP_WORKING_FALLBACK_SECONDS,
+    SIM_MANAGER_HANDOFF_PROMPT,
     classify_setup_ui,
     public_setup_ui_body,
 )
@@ -687,12 +688,6 @@ class RemoteAccessService:
             return ApiResult(502, error_body("gads_unavailable"))
         body = {"ok": True, "action": decision.command.action, "forwarded": True}
         body.update(restriction)
-        if command.action in {"tap", "swipe"}:
-            current = self._store.get(auth.rental_id) or session
-            if str(current.setup_ui_state or "") == SETUP_UI_AWAITING:
-                self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
-                body["setup_ui_state"] = SETUP_UI_WORKING
-                return ApiResult(200, body)
         body.update(self._live_setup_ui_fields(auth.rental_id, auth.slot_id))
         return ApiResult(200, body)
 
@@ -921,6 +916,9 @@ class RemoteAccessService:
             body["native_resolution_unavailable"] = unavailable or "wm_size_unreported"
         body.update(self._inventory_identity_for_authorized_rental(auth))
         if own is not None:
+            if self._should_poll_setup_ui(own):
+                self._observe_activation(auth, force=False)
+                own = self._store.get(auth.rental_id) or own
             body.update(self._live_setup_ui_fields(auth.rental_id, auth.slot_id, session=own))
         return ApiResult(200, body)
 
@@ -1259,13 +1257,22 @@ class RemoteAccessService:
         self._store.mark_qr_uploaded(
             auth.rental_id, uploaded_at=self._clock(), qr_sha256=qr_sha256
         )
-        self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
-        self._mark_setup_working(auth.rental_id, auth.slot_id)
+        samsung = self._is_samsung_renter_slot(auth.slot_id)
         body = public_placement_success(details, job_id=job_id)
-        body["setup_ui_state"] = SETUP_UI_WORKING
-        body.update(self._apply_setup_fallback(auth.rental_id, SETUP_UI_WORKING, auth.slot_id))
+        if samsung:
+            self._prepare_device_screen(auth.slot_id, wait_boot=False)
+            self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING)
+            self._clear_setup_working(auth.rental_id)
+            body["setup_ui_state"] = SETUP_UI_AWAITING
+            body["setup_ui_prompt"] = SIM_MANAGER_HANDOFF_PROMPT
+            body["setup_human_click"] = "Add eSIM"
+        else:
+            self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
+            self._mark_setup_working(auth.rental_id, auth.slot_id)
+            body["setup_ui_state"] = SETUP_UI_WORKING
+            body.update(self._apply_setup_fallback(auth.rental_id, SETUP_UI_WORKING, auth.slot_id))
         auto_job_id = str(uuid.uuid4())
-        if self._is_samsung_renter_slot(auth.slot_id):
+        if samsung:
             self._maybe_start_qr_walk(
                 auth,
                 image_base64=base64.b64encode(image_bytes).decode("ascii"),
@@ -1273,6 +1280,15 @@ class RemoteAccessService:
                 qr_sha256=qr_sha256,
             )
         body.update(self._navigate_rental_to_add_esim(auth))
+        refreshed = self._store.get(auth.rental_id)
+        if refreshed is not None and refreshed.setup_ui_state in SETUP_UI_STATES:
+            body["setup_ui_state"] = refreshed.setup_ui_state
+            if refreshed.setup_ui_state == SETUP_UI_AWAITING:
+                body["setup_ui_prompt"] = str(
+                    body.get("setup_ui_prompt") or SIM_MANAGER_HANDOFF_PROMPT
+                )
+            else:
+                body.pop("setup_ui_prompt", None)
         if self._qr_walk_started.get(auth.rental_id) == qr_sha256:
             body["auto_activation"] = {"started": True, "job_id": auto_job_id}
         return ApiResult(200, body)
@@ -1285,7 +1301,7 @@ class RemoteAccessService:
         *,
         mode: str = "open_qr_picker",
     ) -> None:
-        """Open Samsung SIM Manager and advance to the Gallery QR picker."""
+        """Open Samsung SIM Manager and hand off Add eSIM / Gallery to the customer."""
         try:
             response = self._farm.run_task(
                 task_type=ESIM_AUTO_ACTIVATION_TASK,
@@ -1317,13 +1333,13 @@ class RemoteAccessService:
             ui_state = str(details.get("setup_ui_state") or "").strip()
             if ui_state not in SETUP_UI_STATES:
                 ui_state = SETUP_UI_COMPLETED if details.get("activated") else SETUP_UI_AWAITING
-            if details.get("skipped") and ui_state == SETUP_UI_AWAITING:
-                ui_state = SETUP_UI_WORKING
             self._store.mark_qr_walk_completed(auth.rental_id, setup_ui_state=ui_state)
             if ui_state == SETUP_UI_COMPLETED or details.get("activated") is True:
                 self._store.set_setup_ui_state(
                     auth.rental_id, SETUP_UI_COMPLETED, setup_complete=True
                 )
+            elif ui_state == SETUP_UI_AWAITING:
+                self._clear_setup_working(auth.rental_id)
             logger.info("esim_auto_activation_done slot=%s job_id=%s", auth.slot_id, job_id)
             self._record(
                 auth.slot_id,
@@ -1690,7 +1706,6 @@ class RemoteAccessService:
             return
         sha = str(qr_sha256 or session.qr_sha256 or "").strip()
         self._qr_walk_started[auth.rental_id] = sha or "pending"
-        self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
         auto_job_id = job_id or str(uuid.uuid4())
         self._runner(
             lambda: self._run_auto_activation_flow(
@@ -1786,15 +1801,7 @@ class RemoteAccessService:
                 payload["esim_profile_present"] = True
             if str(current.activation_observed or "").strip().lower() == "confirmed":
                 payload["activation_confirmed"] = True
-            started = self._qr_walk_started.get(current.rental_id)
-            payload["walk_in_progress"] = bool(
-                walk_in_progress
-                or (
-                    started
-                    and not current.qr_walk_completed
-                    and current.rental_id not in self._setup_manual_unlocked
-                )
-            )
+            payload["walk_in_progress"] = bool(walk_in_progress)
         return self._farm_setup_task("setup_session_inspect", slot_id, payload)
 
     def _launch_add_esim(
@@ -1877,9 +1884,7 @@ class RemoteAccessService:
             None,
             activity,
             walk_completed=bool(current.qr_walk_completed),
-            walk_in_progress=walk_in_progress or bool(
-                self._qr_walk_started.get(rental_id) and not current.qr_walk_completed
-            ),
+            walk_in_progress=walk_in_progress,
             activation_confirmed=confirmed,
             esim_profile_present=esim_present,
         )

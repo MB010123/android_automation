@@ -14,6 +14,7 @@ from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import classify_setup_ui, public_setup_ui_body
 from application.remote_access_farm_task import (
     DCIM_CAMERA_DIR,
+    DOWNLOAD_DIR,
     PICTURES_DIR,
     QR_PREFIX,
     QR_WALK_MARKER_PATH,
@@ -222,14 +223,11 @@ def run_setup_session_inspect(
         esim_profile_present=esim_profile_present,
     )
     qr_deleted: list[str] = []
-    lowered_ui = (ui_xml or "").lower()
     consume_qr = (
-        qr_walk_completed
-        or esim_profile_present
+        esim_profile_present
         or activation_confirmed
         or classification.state == "completed"
-        or classification.reason in {"confirm_dialog", "confirm_button", "success_copy", "esim_installed"}
-        or "pinch or spread" in lowered_ui
+        or classification.reason in {"success_copy", "esim_installed"}
     )
     if consume_qr:
         qr_deleted = _delete_qr_files(runner, adb_path, serial)
@@ -301,7 +299,7 @@ def _delete_qr_files(
         for path in PLACED_ESIM_QR_PATHS:
             _shell(runner, adb_path, serial, ["rm", "-f", path])
             removed.append(path)
-        for directory in (PICTURES_DIR, DCIM_CAMERA_DIR, "/sdcard/DCIM"):
+        for directory in (PICTURES_DIR, DOWNLOAD_DIR, DCIM_CAMERA_DIR, "/sdcard/DCIM"):
             listing = _shell(runner, adb_path, serial, ["ls", directory])
             for name in (listing or "").split():
                 if name.startswith(QR_PREFIX):
@@ -447,7 +445,7 @@ def run_setup_session_safe_cleanup(
     runner = command_runner
     removed = False
     try:
-        for directory in (DCIM_CAMERA_DIR, PICTURES_DIR):
+        for directory in (DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR):
             listing = _shell(runner, adb_path, serial, ["ls", directory])
             for name in (listing or "").split():
                 if not name.startswith(QR_PREFIX):
