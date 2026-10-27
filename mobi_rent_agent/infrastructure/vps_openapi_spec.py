@@ -1929,9 +1929,14 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "post": {
                 "tags": ["Farm management"],
                 "summary": "About Phone screenshot plus IMEI/EID",
+                "description": (
+                    "Farm bay maps through slot_map (Phone 4 → slot 4). "
+                    "When the UI dump or screenshot times out, returns 200 with stored "
+                    "admin IMEI/EID and fallback=true instead of 502/504."
+                ),
                 "security": bearer,
                 "parameters": [bay_param],
-                "responses": {"200": {"description": "PNG data URL and identity fields"}},
+                "responses": {"200": {"description": "PNG data URL and identity fields, or stored IMEI/EID fallback"}},
             }
         },
         "/farm/slots/{bay}/disable-rental": {
@@ -2074,9 +2079,13 @@ def _paths(webhook_path: str) -> dict[str, Any]:
             "get": {
                 "tags": ["Admin"],
                 "summary": "About Phone screenshot (IMEI / IMEI2 / EID)",
+                "description": (
+                    "Same About Phone task as /farm/slots/{bay}/about-phone-screenshot. "
+                    "Returns 200 with stored admin IMEI/EID when Farm Agent times out."
+                ),
                 "security": bearer,
                 "parameters": [bay_param],
-                "responses": {"200": {"description": "Screenshot and parsed identity"}},
+                "responses": {"200": {"description": "Screenshot and parsed identity, or stored IMEI/EID fallback"}},
             }
         },
         "/devices/{bay}/airplane-mode": {

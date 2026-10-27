@@ -22,6 +22,8 @@ ERROR_MESSAGES: dict[str, str] = {
     "provisioning_failed": "Provisioning did not complete on the Farm Agent",
     "action_not_supported": "Farm Agent does not support this operation",
     "timeout": "The operation timed out",
+    "farm_timeout": "The Farm Agent timed out",
+    "about_phone_not_open": "About phone did not open; stored device identity is returned instead",
     "unauthorized": "Missing or invalid credentials",
     "idempotency_conflict": "Idempotency key reused with different payload",
     "missing_idempotency_key": "idempotency_key is required",

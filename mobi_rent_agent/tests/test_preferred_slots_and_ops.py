@@ -11,9 +11,10 @@ from application.device_airplane_mode import parse_airplane_state, run_airplane_
 from application.device_data_cleanup_farm_task import LOCKDOWN_PACKAGES
 from application.farm_task_types import FarmTaskRequest, SUPPORTED_TASK_TYPES
 from application.preferred_slots import parse_preferred_next_slot_ids, sort_available_bays
-from application.vps_farm_management_service import VpsFarmManagementService
+from application.vps_farm_management_service import HEAVY_FARM_TASK_TIMEOUT_SECONDS, VpsFarmManagementService
 from application.vps_job_worker import VpsJobWorker
 from application.vps_lovable_routes import parse_route
+from infrastructure.farm_task_client import FarmTaskClient, FarmTaskResponse, farm_http_timeout, is_timeout_error
 from infrastructure.adb_companion import AdbCommandResult, AdbCommandRunner
 from infrastructure.device_cleanup_store import DeviceCleanupStore
 from infrastructure.slot_assignment_store import SlotAssignmentStore
@@ -42,10 +43,10 @@ def _health():
     return {
         "ok": True,
         "role": "farm",
-        "mapped_slots": [1, 2, 21],
+        "mapped_slots": [1, 2, 4, 21],
         "offline_slots": [],
-        "slot_count": 3,
-        "adb_online": 3,
+        "slot_count": 4,
+        "adb_online": 4,
     }
 
 
@@ -71,12 +72,12 @@ def _farm_svc(tmp_path: Path, farm=None):
         event_store=events,
         job_worker=worker,
         farm_status_fetcher=_health,
-        known_farm_slots={1, 2, 21},
+        known_farm_slots={1, 2, 4, 21},
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         auth_store=tenant,
         cleanup_store=cleanup,
         farm_task_client=farm,
-        slot_serial_map={21: "RFCNB056WEV", 1: "SER-1", 2: "SER-2"},
+        slot_serial_map={21: "RFCNB056WEV", 1: "SER-1", 2: "SER-2", 4: "SER-4"},
     )
     return svc, reservations, assign, cleanup, tenant
 
@@ -106,7 +107,7 @@ def test_available_list_puts_bay_21_first(tmp_path: Path):
     assert result.http_status == 200
     bays = [row["bay"] for row in result.body["available"]]
     assert bays[0] == 21
-    assert set(bays) == {1, 2, 21}
+    assert set(bays) == {1, 2, 4, 21}
 
 
 def test_force_available_clears_holds(tmp_path: Path):
@@ -158,6 +159,10 @@ def test_farm_and_admin_routes_parse():
     assert air is not None and air.kind == "devices_airplane_mode"
     about = parse_route("/admin/devices/21/about-phone-screenshot")
     assert about is not None and about.kind == "admin_device_about_phone"
+    about4 = parse_route("/farm/slots/4/about-phone-screenshot")
+    assert about4 is not None and about4.kind == "farm_about_phone" and about4.farm_bay == 4
+    admin4 = parse_route("/admin/devices/4/about-phone-screenshot")
+    assert admin4 is not None and admin4.kind == "admin_device_about_phone" and admin4.farm_bay == 4
     disable = parse_route("/farm/slots/21/disable-rental")
     assert disable is not None and disable.kind == "farm_disable_rental"
     enable = parse_route("/farm/slots/2/enable-rental")
@@ -286,3 +291,191 @@ def test_about_phone_and_reboot_farm_ops(tmp_path: Path):
     assert "device_about_phone_screenshot" in types
     assert "reboot" in types
     assert "device_screen_prepare" in types
+    about_task = next(t for t in farm.tasks if t["type"] == "device_about_phone_screenshot")
+    assert about_task["timeout_seconds"] == HEAVY_FARM_TASK_TIMEOUT_SECONDS
+
+
+STORED_IMEI1 = "353456789012345"
+STORED_IMEI2 = "353456789012352"
+STORED_EID = "89012345678901234567890123456789"
+
+
+class _TimeoutFarm:
+    def __init__(self) -> None:
+        self.tasks: list[dict] = []
+
+    def run_task(self, **kwargs):
+        self.tasks.append(dict(kwargs))
+        return FarmTaskResponse(ok=False, http_status=0, body={}, error="timeout")
+
+
+class _UnreachableFarm:
+    def run_task(self, **kwargs):
+        raise ConnectionError("farm down")
+
+
+class _NotOpenFarm:
+    def run_task(self, **kwargs):
+        return FarmTaskResponse(
+            ok=False,
+            http_status=422,
+            body={
+                "details": {
+                    "ok": False,
+                    "slot_id": kwargs["farm_slot_id"],
+                    "serial": "SER-4",
+                    "about_page_verified": False,
+                }
+            },
+            error="about_phone_not_open",
+        )
+
+
+def _seed_admin_identity(tenant, bay: int = 4) -> None:
+    tenant.slots[bay] = {
+        "motherboard_slot_num": bay,
+        "imei1": STORED_IMEI1,
+        "imei2": STORED_IMEI2,
+        "eid": STORED_EID,
+    }
+
+
+def test_about_phone_routes_slot_4_to_farm_slot_id(tmp_path: Path):
+    farm = FakeFarm()
+    svc, *_ = _farm_svc(tmp_path, farm=farm)
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert farm.tasks[-1]["type"] == "device_about_phone_screenshot"
+    assert farm.tasks[-1]["slot"] == 4
+    assert result.body["slot_id"] == 4
+    assert result.body["serial"] == "SER-4"
+    assert result.body["fallback"] is False
+
+
+def test_about_phone_timeout_serves_stored_imei_eid(tmp_path: Path):
+    farm = _TimeoutFarm()
+    svc, *_rest, tenant = _farm_svc(tmp_path, farm=farm)
+    _seed_admin_identity(tenant, 4)
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert result.body["ok"] is True
+    assert result.body["fallback"] is True
+    assert result.body["fallback_reason"] == "timeout"
+    assert result.body["imei1"] == STORED_IMEI1
+    assert result.body["imei2"] == STORED_IMEI2
+    assert result.body["eid"] == STORED_EID
+    assert result.body["serial"] == "SER-4"
+    assert result.body["image_base64"] is None
+    assert farm.tasks[-1]["farm_slot_id"] == 4
+    assert farm.tasks[-1]["timeout_seconds"] == HEAVY_FARM_TASK_TIMEOUT_SECONDS
+
+
+def test_about_phone_unreachable_serves_stored_identity(tmp_path: Path):
+    svc, *_rest, tenant = _farm_svc(tmp_path, farm=None)
+    _seed_admin_identity(tenant, 4)
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert result.body["fallback"] is True
+    assert result.body["imei2"] == STORED_IMEI2
+    assert result.body["eid"] == STORED_EID
+
+
+def test_about_phone_farm_exception_is_fallback_not_502(tmp_path: Path):
+    svc, *_rest, tenant = _farm_svc(tmp_path, farm=_UnreachableFarm())
+    _seed_admin_identity(tenant, 4)
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert result.body["fallback"] is True
+    assert result.body["fallback_reason"] == "farm_unreachable"
+    assert result.body["imei1"] == STORED_IMEI1
+
+
+def test_about_phone_not_open_falls_back_without_gateway_error(tmp_path: Path):
+    svc, *_rest, tenant = _farm_svc(tmp_path, farm=_NotOpenFarm())
+    _seed_admin_identity(tenant, 4)
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert result.body["fallback"] is True
+    assert result.body["fallback_reason"] == "about_phone_not_open"
+    assert result.body["about_page_verified"] is False
+    assert result.body["imei2"] == STORED_IMEI2
+
+
+def test_about_phone_mapped_slot_skips_farm_health_stall(tmp_path: Path):
+    def boom_health():
+        raise AssertionError("mapped slot must not wait on farm health")
+
+    jobs = VpsJobStore(tmp_path / "jobs.sqlite")
+    assign = SlotAssignmentStore(tmp_path / "assign.sqlite")
+    reservations = SlotReservationStore(tmp_path / "slot_reservations.sqlite")
+    events = SlotEventStore(tmp_path / "events.sqlite")
+    cleanup = DeviceCleanupStore(tmp_path / "cleanup.sqlite")
+    tenant = MemoryTenant()
+    _seed_admin_identity(tenant, 4)
+    worker = SyncWorker(
+        job_store=jobs,
+        assignment_store=assign,
+        event_store=events,
+        farm_task_client=None,
+        poll_interval_seconds=3600.0,
+        auth_store=tenant,
+    )
+    svc = VpsFarmManagementService(
+        job_store=jobs,
+        assignment_store=assign,
+        reservation_store=reservations,
+        event_store=events,
+        job_worker=worker,
+        farm_status_fetcher=boom_health,
+        known_farm_slots={1, 2, 21},
+        rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        auth_store=tenant,
+        cleanup_store=cleanup,
+        farm_task_client=None,
+        slot_serial_map={4: "SER-4"},
+    )
+    result = svc.about_phone_screenshot(4)
+    assert result.http_status == 200
+    assert result.body["serial"] == "SER-4"
+    assert result.body["eid"] == STORED_EID
+
+
+def test_farm_task_client_timeout_is_timeout_not_unreachable():
+    class Session:
+        def post(self, url, json=None, headers=None, timeout=None):
+            assert timeout == farm_http_timeout(90.0)
+            raise __import__("requests").Timeout("Read timed out")
+
+    client = FarmTaskClient("http://farm.test", "tok", session=Session())
+    response = client.run_task(
+        task_type="device_about_phone_screenshot",
+        farm_slot_id=4,
+        payload={},
+        job_id="about-4",
+        timeout_seconds=90.0,
+    )
+    assert response.ok is False
+    assert response.http_status == 0
+    assert response.error == "timeout"
+    assert is_timeout_error(response.error) is True
+
+
+def test_farm_task_client_retries_connection_then_unreachable():
+    class Session:
+        def __init__(self) -> None:
+            self.posts = 0
+
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.posts += 1
+            raise __import__("requests").ConnectionError("refused")
+
+    session = Session()
+    client = FarmTaskClient("http://farm.test", "tok", session=session)
+    response = client.run_task(
+        task_type="device_about_phone_screenshot",
+        farm_slot_id=4,
+        payload={},
+        job_id="about-4",
+    )
+    assert response.error == "farm_unreachable"
+    assert session.posts == 2

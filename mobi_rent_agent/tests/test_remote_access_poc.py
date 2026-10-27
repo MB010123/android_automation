@@ -272,8 +272,24 @@ class FakeFarm:
         self.input_timeout = False
         self.place_qr_extra: dict[str, Any] | None = None
 
-    def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
-        self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
+    def run_task(
+        self,
+        *,
+        task_type: str,
+        farm_slot_id: int,
+        payload: dict,
+        job_id: str,
+        timeout_seconds: float | None = None,
+    ) -> FarmTaskResponse:
+        self.tasks.append(
+            {
+                "type": task_type,
+                "slot": farm_slot_id,
+                "payload": payload,
+                "job_id": job_id,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
         if task_type in {"airplane_cycle", "airplane_mode"}:
             if self.airplane_timeout:
                 raise TimeoutError("farm_timeout")

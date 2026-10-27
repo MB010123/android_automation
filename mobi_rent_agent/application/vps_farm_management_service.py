@@ -20,6 +20,7 @@ from application.vps_api_contract import (
     job_response_body,
     provisioning_phase,
 )
+from infrastructure.farm_task_client import is_timeout_error
 from application.device_data_cleanup_farm_task import parse_preserve_esim
 from application.slot_identity import serial_for_slot, serial_from_farm_slots
 from application.vps_farm_inventory import (
@@ -71,6 +72,9 @@ def _optional_text(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+HEAVY_FARM_TASK_TIMEOUT_SECONDS = 90.0
 
 
 def _truthy(value: Any) -> bool:
@@ -197,6 +201,8 @@ class VpsFarmManagementService:
         if not 1 <= slot <= MAX_FARM_SLOT_ID:
             return False
         if slot in self._known_slots:
+            return True
+        if slot in self._slot_serial_map:
             return True
         if allow_cleanup_hold and self._cleanup.is_required(slot):
             return True
@@ -867,6 +873,8 @@ class VpsFarmManagementService:
         bay: int,
         task_type: str,
         payload: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: float | None = None,
     ) -> ApiResult:
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
@@ -874,11 +882,12 @@ class VpsFarmManagementService:
         if client is None:
             return ApiResult(503, error_body("farm_unreachable"))
         try:
-            response = client.run_task(
+            response = self._run_farm_task(
+                client,
                 task_type=task_type,
                 farm_slot_id=int(bay),
                 payload=payload or {},
-                job_id=str(uuid.uuid4()),
+                timeout_seconds=timeout_seconds,
             )
         except Exception:
             logger.warning("farm_task_failed type=%s bay=%s", task_type, bay)
@@ -891,6 +900,11 @@ class VpsFarmManagementService:
         if not getattr(response, "ok", False):
             error = str(getattr(response, "error", None) or "farm_unreachable")
             status = int(getattr(response, "http_status", 0) or 502)
+            if is_timeout_error(error) or status == 0 and "timed out" in error.lower():
+                fail = error_body("timeout")
+                fail["slot_id"] = int(bay)
+                fail["serial"] = details.get("serial") or self._serial_for(bay)
+                return ApiResult(504, fail)
             if status < 400:
                 status = 502
             fail = error_body(error if error in ERROR_MESSAGES else "farm_unreachable")
@@ -903,6 +917,70 @@ class VpsFarmManagementService:
         details.setdefault("slot_id", int(bay))
         details.setdefault("serial", self._serial_for(bay))
         return ApiResult(200, details)
+
+    def _run_farm_task(
+        self,
+        client: Any,
+        *,
+        task_type: str,
+        farm_slot_id: int,
+        payload: dict[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {
+            "task_type": task_type,
+            "farm_slot_id": int(farm_slot_id),
+            "payload": payload,
+            "job_id": str(uuid.uuid4()),
+        }
+        if timeout_seconds is not None:
+            try:
+                return client.run_task(**kwargs, timeout_seconds=timeout_seconds)
+            except TypeError:
+                return client.run_task(**kwargs)
+        return client.run_task(**kwargs)
+
+    def _stored_device_identity(self, bay: int) -> dict[str, str | None]:
+        row = self._tenant_slot_row(bay)
+        radio = self._tenant_radio_fields(bay)
+        return {
+            "serial": self._serial_for(bay),
+            "imei1": _optional_text(row.get("imei1")),
+            "imei2": radio.get("imei2") or _optional_text(row.get("imei2")),
+            "eid": _optional_text(row.get("eid")),
+        }
+
+    def _about_phone_body(
+        self,
+        bay: int,
+        *,
+        stored: dict[str, str | None],
+        farm_details: dict[str, Any] | None = None,
+        fallback: bool = False,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        details = farm_details or {}
+        warnings = details.get("warnings")
+        if not isinstance(warnings, list):
+            warnings = []
+        live_image = details.get("image_base64") if not fallback else None
+        if fallback:
+            warnings = list(warnings)
+            if reason and reason not in warnings:
+                warnings.append(reason)
+        return {
+            "ok": True,
+            "slot_id": int(bay),
+            "serial": _optional_text(details.get("serial")) or stored.get("serial"),
+            "imei1": _optional_text(details.get("imei1")) or stored.get("imei1"),
+            "imei2": _optional_text(details.get("imei2")) or stored.get("imei2"),
+            "eid": _optional_text(details.get("eid")) or stored.get("eid"),
+            "image_base64": live_image if isinstance(live_image, str) and live_image else None,
+            "about_page_verified": bool(details.get("about_page_verified")) and not fallback,
+            "fallback": fallback,
+            "fallback_reason": reason if fallback else None,
+            "warnings": warnings,
+        }
 
     def force_available(self, bay: int) -> ApiResult:
         """Clear reservation, assignment, cleanup hold, and rental lock."""
@@ -1050,7 +1128,52 @@ class VpsFarmManagementService:
         return ApiResult(200, public)
 
     def about_phone_screenshot(self, bay: int) -> ApiResult:
-        return self._farm_task_result(bay, "device_about_phone_screenshot", {})
+        """About Phone screenshot, or stored admin IMEI/EID when Farm is slow."""
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        stored = self._stored_device_identity(bay)
+        client = self._farm_tasks
+        if client is None:
+            return ApiResult(
+                200,
+                self._about_phone_body(bay, stored=stored, fallback=True, reason="farm_unreachable"),
+            )
+        try:
+            response = self._run_farm_task(
+                client,
+                task_type="device_about_phone_screenshot",
+                farm_slot_id=int(bay),
+                payload={},
+                timeout_seconds=HEAVY_FARM_TASK_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.warning("about_phone_farm_failed bay=%s", bay)
+            return ApiResult(
+                200,
+                self._about_phone_body(bay, stored=stored, fallback=True, reason="farm_unreachable"),
+            )
+        details: dict[str, Any] = {}
+        raw_body = getattr(response, "body", None)
+        if isinstance(raw_body, dict):
+            inner = raw_body.get("details")
+            details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
+        if getattr(response, "ok", False):
+            return ApiResult(200, self._about_phone_body(bay, stored=stored, farm_details=details))
+        error = str(getattr(response, "error", None) or "farm_unreachable")
+        reason = "timeout" if is_timeout_error(error) else (
+            error if error in ERROR_MESSAGES else "farm_unreachable"
+        )
+        logger.warning("about_phone_farm_fallback bay=%s reason=%s", bay, reason)
+        return ApiResult(
+            200,
+            self._about_phone_body(
+                bay,
+                stored=stored,
+                farm_details=details,
+                fallback=True,
+                reason=reason,
+            ),
+        )
 
     def _safe_customer_cleanup(self, bay: int, rental_id: str) -> None:
         client = self._farm_tasks
