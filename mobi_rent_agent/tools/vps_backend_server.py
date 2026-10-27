@@ -1530,6 +1530,7 @@ def main() -> int:
     admin_live_access_service, admin_live_access_store = _build_admin_live_access_service(
         config,
         farm_task_client=farm_task_client,
+        farm_status_fetcher=_farm_status,
         event_store=event_store,
         assignment_store=assignment_store,
         cleanup_store=cleanup_store,
@@ -1734,6 +1735,7 @@ def _build_admin_live_access_service(
     config: Any,
     *,
     farm_task_client: FarmTaskClient | None,
+    farm_status_fetcher: Any = None,
     event_store: SlotEventStore,
     assignment_store: SlotAssignmentStore,
     cleanup_store: DeviceCleanupStore,
@@ -1780,6 +1782,7 @@ def _build_admin_live_access_service(
         platform=platform,
         store=store,
         farm_task_client=farm_task_client,
+        farm_status_fetcher=farm_status_fetcher,
         event_recorder=event_store.append if event_store is not None else None,
         assignment_store=assignment_store,
         cleanup_store=cleanup_store,

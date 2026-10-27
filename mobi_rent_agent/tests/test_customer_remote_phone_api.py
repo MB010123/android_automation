@@ -233,6 +233,21 @@ def test_requires_manual_action_does_not_block_remote_access(tmp_path: Path):
     assert getattr(stream, "device_id") == SLOT1_SERIAL
 
 
+def test_adb_online_allows_create_when_gads_not_live(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform()
+    platform.online[SLOT1_SERIAL] = False
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        farm_status=lambda: {"ok": True, "offline_slots": [], "mapped_slots": [1], "slot_count": 1},
+    )
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+
+
 def test_phone_offline_is_not_busy(tmp_path: Path):
     tenant = MemoryTenant()
     platform = FakePlatform()

@@ -92,6 +92,7 @@ class AdminLiveAccessService:
         platform: Any,
         store: AdminLiveAccessStore,
         farm_task_client: Any = None,
+        farm_status_fetcher: Callable[[], dict[str, Any]] | None = None,
         event_recorder: Callable[[int, str, str], None] | None = None,
         assignment_store: Any = None,
         cleanup_store: Any = None,
@@ -111,6 +112,7 @@ class AdminLiveAccessService:
         self._platform = platform
         self._store = store
         self._farm = farm_task_client
+        self._farm_status = farm_status_fetcher
         self._record = event_recorder
         self._assignments = assignment_store
         self._cleanup = cleanup_store
@@ -595,11 +597,32 @@ class AdminLiveAccessService:
                 ),
             )
         if not status.online:
+            if self._adb_online(int(slot_id)) is True:
+                logger.info(
+                    "admin_live_access_ready slot=%s registered=true gads_online=false adb_online=true",
+                    slot_id,
+                )
+                return device_id, self._platform
             return ApiResult(
                 409,
                 error_body("phone_offline", message="The selected phone is offline"),
             )
         return device_id, self._platform
+
+    def _adb_online(self, slot_id: int) -> bool | None:
+        if self._farm_status is None:
+            return None
+        try:
+            farm = self._farm_status()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(farm, dict) or "offline_slots" not in farm:
+            return None
+        try:
+            offline = {int(item) for item in (farm.get("offline_slots") or [])}
+        except (TypeError, ValueError):
+            return None
+        return int(slot_id) not in offline
 
     def _forward_control(
         self,

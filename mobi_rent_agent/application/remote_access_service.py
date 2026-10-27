@@ -453,6 +453,8 @@ class RemoteAccessService:
         if not status.registered:
             return ApiResult(503, error_body("phone_unavailable"))
         if not status.online:
+            if self._adb_online(auth.slot_id) is True:
+                return None
             return ApiResult(409, error_body("phone_offline"))
         return None
 

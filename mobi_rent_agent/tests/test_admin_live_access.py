@@ -498,6 +498,20 @@ def test_offline_and_gads_failures_are_safe(tmp_path: Path):
     assert offline.body["error"] == "phone_offline"
     assert "SERIAL" not in json.dumps(offline.body)
 
+
+def test_adb_online_allows_live_view_when_gads_not_live(tmp_path: Path):
+    platform = FakePlatform(registered={SLOT1_SERIAL, SLOT2_SERIAL})
+    platform.online[SLOT1_SERIAL] = False
+    svc, _, _, _ = _admin_service(tmp_path, platform=platform)
+    svc._farm_status = lambda: {
+        "ok": True,
+        "offline_slots": [],
+        "mapped_slots": [1, 2],
+    }
+    opened = svc.create_session(_admin(), 1)
+    assert opened.http_status == 201
+    assert opened.body["serial"] == SLOT1_SERIAL
+
     platform.online[SLOT1_SERIAL] = True
     platform.status_error = "gads_unreachable: Timeout"
     failed = svc.create_session(_admin(), 1)
