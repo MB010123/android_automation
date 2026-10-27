@@ -158,6 +158,14 @@ def test_samsung_status_and_control_expose_setup_ui_state(tmp_path: Path):
     assert activation.http_status == 200
     assert activation.body["setup_ui_state"] == SETUP_UI_AWAITING
     farm.tasks.clear()
+    inspect = service._inspect_session(21, recover=False)
+    assert inspect["serial"] == serial
+    assert inspect["online"] is True
+    assert inspect["connected"] is True
+    assert inspect["adb_state"] == "device"
+    assert inspect["setup_ui_state"] == SETUP_UI_AWAITING
+    assert not any(t["type"] == "setup_session_inspect" for t in farm.tasks)
+    farm.tasks.clear()
     tapped = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 10, "y": 20})
     assert tapped.http_status == 200
     assert tapped.body["setup_ui_state"] == SETUP_UI_AWAITING

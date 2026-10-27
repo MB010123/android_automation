@@ -1080,7 +1080,7 @@ class RemoteAccessService:
         if self._farm_status is not None:
             try:
                 farm = self._farm_status()
-                farm_ok = bool(isinstance(farm, dict) and farm.get("ok") is not False)
+                farm_ok = bool(isinstance(farm, dict) and not farm_agent_unavailable(farm))
             except Exception:  # noqa: BLE001
                 farm_ok = False
         adb_online = phone_body.get("adb_online") if phone.http_status == 200 else None
@@ -1278,6 +1278,9 @@ class RemoteAccessService:
         self._store.mark_qr_walk_completed(auth.rental_id, setup_ui_state=SETUP_UI_AWAITING)
         self._clear_setup_working(auth.rental_id)
         body = public_placement_success(details, job_id=job_id)
+        identity = self._slot_live_identity(auth.slot_id)
+        body["online"] = bool(identity.get("online"))
+        body["connected"] = bool(identity.get("connected"))
         body["setup_ui_state"] = SETUP_UI_AWAITING
         body["setup_ui_prompt"] = prompt
         body["setup_human_click"] = click_label
@@ -1903,10 +1906,14 @@ class RemoteAccessService:
     ) -> dict[str, Any] | ApiResult:
         current = session or self._session_for_slot(int(slot_id))
         if current is not None and self._session_awaiting_human(current):
+            identity = self._slot_live_identity(int(slot_id))
+            if current.rental_id:
+                identity["stream_path"] = f"/rentals/{current.rental_id}/remote-access/stream"
             return {
                 "allowed": True,
                 "setup_ui_state": SETUP_UI_AWAITING,
                 "qr_walk_completed": True,
+                **identity,
             }
         recover_now = bool(recover)
         if current is not None and current.rental_id in self._setup_manual_unlocked:
@@ -2100,7 +2107,7 @@ class RemoteAccessService:
             session_restrictions=self._session_restrictions,
         )
         body["slot_id"] = int(session.slot_id)
-        body["serial"] = self._devices.get(int(session.slot_id))
+        body.update(self._slot_live_identity(int(session.slot_id)))
         return body
 
     def _forward_restricted_control(
@@ -2525,6 +2532,25 @@ class RemoteAccessService:
         logger.info("gads_ready slot=%s", auth.slot_id)
         self._store.set_prepare_state(auth.rental_id, PREPARE_READY, detail="customer_can_install_esim_manually")
         logger.info("customer_activation_required slot=%s", auth.slot_id)
+
+    def _slot_live_identity(self, slot_id: int) -> dict[str, Any]:
+        """Mapped serial + ADB reachability without dumpsys / inspect."""
+        serial = self._devices.get(int(slot_id))
+        adb_online = self._adb_online(int(slot_id))
+        online = adb_online is True
+        identity: dict[str, Any] = {
+            "serial": serial,
+            "online": online,
+            "connected": online,
+            "device_online": online,
+            "adb_connected": online,
+            "adb_online": adb_online,
+        }
+        if adb_online is True:
+            identity["adb_state"] = "device"
+        elif adb_online is False:
+            identity["adb_state"] = "missing"
+        return identity
 
     def _adb_online(self, slot_id: int) -> bool | None:
         if self._farm_status is None:

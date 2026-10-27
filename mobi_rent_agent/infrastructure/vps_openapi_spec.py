@@ -154,6 +154,7 @@ def _schemas() -> dict[str, Any]:
                 "slot_id": {"type": "integer", "minimum": 1, "maximum": 32, "example": 21},
                 "serial": {"type": "string", "example": "RFCNB056WEV"},
                 "adb_state": {"type": "string", "example": "device"},
+                "online": {"type": "boolean", "example": True},
             },
         },
         "DeviceDataCleanupResponse": {

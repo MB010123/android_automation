@@ -255,6 +255,9 @@ def test_owned_slot1_qr_upload_still_succeeds(tmp_path: Path):
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert result.http_status == 200
+    assert result.body["online"] is True
+    assert result.body["connected"] is True
+    assert "serial" not in result.body
     assert farm.tasks[0]["slot"] == 1
     assert "serial" not in farm.tasks[0]["payload"]
     assert "image_base64" in farm.tasks[0]["payload"]

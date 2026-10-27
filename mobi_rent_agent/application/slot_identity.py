@@ -116,8 +116,41 @@ def farm_slot_entries(
             state = "offline"
         else:
             state = "device"
-        slots.append({"slot_id": bay, "serial": serial, "adb_state": state})
+        slots.append(
+            {
+                "slot_id": bay,
+                "serial": serial,
+                "adb_state": state,
+                "online": state == "device",
+            }
+        )
     return slots
+
+
+def serial_from_farm_slots(farm: Mapping[str, Any] | None, bay: int) -> str | None:
+    """Read a mapped serial from Farm health ``slots[]`` without a local slot_map."""
+    if not isinstance(farm, Mapping):
+        return None
+    try:
+        wanted = int(bay)
+    except (TypeError, ValueError):
+        return None
+    raw = farm.get("slots")
+    if not isinstance(raw, list):
+        return None
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            slot_id = int(item.get("slot_id"))
+        except (TypeError, ValueError):
+            continue
+        if slot_id != wanted:
+            continue
+        serial = str(item.get("serial") or "").strip()
+        if serial:
+            return serial
+    return None
 
 
 def overlay_farm_slot_identity(

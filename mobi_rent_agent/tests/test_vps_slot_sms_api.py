@@ -139,6 +139,31 @@ def test_offline_and_farm_unreachable(tmp_path: Path):
     assert svc2.enqueue_send(SLOT1, _payload()).http_status == 503
 
 
+def test_partial_farm_ok_false_does_not_block_online_slot(tmp_path: Path):
+    farm = MockFarmClient()
+    store = OutboundMessageStore(tmp_path / "partial.sqlite")
+
+    def status() -> dict:
+        return {
+            "ok": False,
+            "role": "farm",
+            "mapped_slots": [1, 2],
+            "offline_slots": [2],
+            "slot_count": 2,
+            "adb_online": 1,
+        }
+
+    svc = VpsSlotSmsService(
+        message_store=store,
+        farm_client=farm,
+        farm_status_fetcher=status,
+        known_farm_slots={1, 2},
+        rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        max_dispatch_attempts=1,
+    )
+    assert svc.enqueue_send(SLOT1, _payload()).http_status == 202
+
+
 def test_idempotency_same_message_id(tmp_path: Path):
     farm = MockFarmClient()
     svc = _service(tmp_path, farm=farm)

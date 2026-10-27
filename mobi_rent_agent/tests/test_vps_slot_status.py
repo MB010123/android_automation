@@ -58,6 +58,8 @@ class FarmStub:
         if self.error:
             body["error"] = self.error
             body["ok"] = False
+        if getattr(self, "slots", None):
+            body["slots"] = list(self.slots)
         return body
 
 
@@ -161,6 +163,14 @@ def _payload() -> dict:
 
 
 # --- status derivation -------------------------------------------------------
+
+
+def test_status_serial_comes_from_farm_health_slots(tmp_path: Path):
+    fx = Fixture(tmp_path)
+    fx.farm.slots = [{"slot_id": 1, "serial": "PIXEL-SLOT-1", "adb_state": "device", "online": True}]
+    fx.beat()
+    body = fx.status_of()
+    assert body["serial"] == "PIXEL-SLOT-1"
 
 
 def test_status_unknown_without_heartbeat(tmp_path: Path):

@@ -21,7 +21,7 @@ from application.vps_api_contract import (
     provisioning_phase,
 )
 from application.device_data_cleanup_farm_task import parse_preserve_esim
-from application.slot_identity import serial_for_slot
+from application.slot_identity import serial_for_slot, serial_from_farm_slots
 from application.vps_farm_inventory import (
     farm_agent_unavailable,
     mapped_farm_slots,
@@ -224,12 +224,14 @@ class VpsFarmManagementService:
         if farm_slot is None:
             return ApiResult(404, error_body("slot_not_found"))
         physical = mapped
+        farm_body: dict[str, Any] | None = None
         if physical is None:
             farm = self._load_farm()
             if isinstance(farm, ApiResult):
                 if farm_slot not in self._known_slots:
                     return ApiResult(404, error_body("slot_not_found"))
             else:
+                farm_body = farm
                 physical = mapped_farm_slots(farm)
         if physical is not None and farm_slot not in physical:
             return ApiResult(404, error_body("slot_not_found"))
@@ -312,7 +314,7 @@ class VpsFarmManagementService:
             tenant_owner=body.get("user_id"),
         )
         body.update(hold)
-        body["serial"] = self._serial_for(farm_slot)
+        body["serial"] = self._serial_for(farm_slot) or serial_from_farm_slots(farm_body, farm_slot)
         if hold["hold_reason"] != "none" or hold["connection_reason"] != "none":
             logger.info(
                 "slot_status bay=%s hold=%s occupancy=%s cleanup=%s connection=%s/%s",
@@ -845,6 +847,21 @@ class VpsFarmManagementService:
     def _serial_for(self, bay: int) -> str | None:
         return serial_for_slot(self._slot_serial_map, bay)
 
+    def _ingest_farm_serials(self, farm: dict[str, Any]) -> None:
+        raw = farm.get("slots")
+        if not isinstance(raw, list):
+            return
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                bay = int(item.get("slot_id"))
+            except (TypeError, ValueError):
+                continue
+            serial = str(item.get("serial") or "").strip()
+            if serial:
+                self._slot_serial_map[bay] = serial
+
     def _farm_task_result(
         self,
         bay: int,
@@ -1350,6 +1367,8 @@ class VpsFarmManagementService:
             return ApiResult(503, error_body("farm_unreachable"))
         if farm_agent_unavailable(farm):
             return ApiResult(503, error_body("farm_unreachable"))
+        if isinstance(farm, dict):
+            self._ingest_farm_serials(farm)
         return farm
 
     def _slot_reserved_by_other(self, bay: int, rental_id: str) -> bool:

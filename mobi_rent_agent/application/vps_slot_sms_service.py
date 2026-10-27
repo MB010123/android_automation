@@ -12,6 +12,7 @@ from typing import Any, Callable
 import requests
 
 from application.vps_api_contract import error_body
+from application.vps_farm_inventory import farm_agent_unavailable
 from infrastructure.farm_sms_client import FarmSmsClient
 from infrastructure.outbound_message_store import OutboundMessageRecord, OutboundMessageStore
 from infrastructure.redact import redact_phone
@@ -128,7 +129,7 @@ class VpsSlotSmsService:
         except (requests.RequestException, OSError, ConnectionError):
             logger.warning("farm_unreachable message_id=pending slot=%s", farm_slot)
             return SlotSmsEnqueueResult(503, {"error": "farm_unreachable"})
-        if not farm.get("ok"):
+        if farm_agent_unavailable(farm):
             return SlotSmsEnqueueResult(503, {"error": "farm_unreachable"})
         offline = farm.get("offline_slots") or []
         if farm_slot in offline:

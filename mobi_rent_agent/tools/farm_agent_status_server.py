@@ -84,7 +84,9 @@ def build_farm_status(*, adb_path: str, slot_map: dict[int, str]) -> dict[str, A
         else:
             offline_slots.append(slot_id)
     return {
-        "ok": online == len(slot_map) and len(slot_map) > 0,
+        # Agent + ADB list succeeded. Individual bays use offline_slots / adb_state.
+        # One missing phone must not mark the whole farm unreachable.
+        "ok": len(slot_map) > 0,
         "role": "farm",
         "slot_count": len(slot_map),
         "adb_online": online,

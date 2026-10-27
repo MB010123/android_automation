@@ -749,7 +749,7 @@ class Handler(BaseHTTPRequestHandler):
             public_id = row.get("slot_id")
             row["public_slot_id"] = public_id
             row["slot_id"] = bay
-            if "serial" not in row:
+            if not row.get("serial"):
                 row["serial"] = (self.slot_serial_map or {}).get(bay)
             slots.append(row)
         out["slots"] = slots

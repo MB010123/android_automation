@@ -101,6 +101,27 @@ def test_farm_health_reports_mapped_slots_from_slot_map():
     assert 2 not in body["mapped_slots"]
 
 
+def test_farm_health_ok_when_some_mapped_serials_are_offline(monkeypatch):
+    from tools import farm_agent_status_server as server
+
+    monkeypatch.setattr(
+        server,
+        "_adb_device_states",
+        lambda adb_path: {"SER-A": "device"},
+    )
+    body = server.build_farm_status(adb_path="adb", slot_map={1: "SER-A", 2: "SER-B"})
+    assert body["ok"] is True
+    assert body["adb_online"] == 1
+    assert body["offline_slots"] == [2]
+    by_id = {item["slot_id"]: item for item in body["slots"]}
+    assert by_id[1]["serial"] == "SER-A"
+    assert by_id[1]["online"] is True
+    assert by_id[1]["adb_state"] == "device"
+    assert by_id[2]["serial"] == "SER-B"
+    assert by_id[2]["online"] is False
+    assert by_id[2]["adb_state"] == "missing"
+
+
 def test_farm_maps_only_slot_1_only_slot_1_is_inventory(tmp_path: Path):
     svc, _r, _t = _svc(tmp_path, health=_health(mapped=[1]))
     listed = svc.list_all_slots()
@@ -136,8 +157,8 @@ def test_durably_reserved_slot_is_unavailable(tmp_path: Path):
 
 
 def test_one_offline_slot_does_not_hide_unrelated_mapped_slots(tmp_path: Path):
-    # Real Farm health sets ok=false when any mapped serial is not ADB "device".
-    svc, _r, _t = _svc(tmp_path, health=_health(mapped=[1, 3], offline=[3], ok=False))
+    # Individual offline bays stay in offline_slots; Farm Agent itself stays reachable.
+    svc, _r, _t = _svc(tmp_path, health=_health(mapped=[1, 3], offline=[3], ok=True))
     assert farm_agent_unavailable(_health(mapped=[1, 3], offline=[3], ok=False)) is False
     assert _bays(svc) == {1}
     assert 3 not in _bays(svc)
