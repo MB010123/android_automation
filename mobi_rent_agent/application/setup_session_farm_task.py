@@ -11,7 +11,12 @@ from typing import Any
 
 from application.device_display_size import map_touch_to_native, parse_wm_size
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
-from application.esim_setup_ui_state import classify_setup_ui, public_setup_ui_body
+from application.esim_setup_ui_state import (
+    OEM_PIXEL,
+    OEM_SAMSUNG,
+    classify_setup_ui,
+    public_setup_ui_body,
+)
 from application.remote_access_farm_task import (
     DCIM_CAMERA_DIR,
     DOWNLOAD_DIR,
@@ -20,6 +25,7 @@ from application.remote_access_farm_task import (
     QR_WALK_MARKER_PATH,
     _is_samsung_renter_device,
     delete_placed_esim_qr,
+    launch_esim_setup_screen,
 )
 from application.samsung_one_ui import (
     hijack_escape_args,
@@ -174,7 +180,6 @@ def run_setup_session_inspect(
     if (recover and recover_setup) or (hijacked and samsung and recover_setup):
         recover_args: list[str] | None = None
         if samsung:
-            # Never android.settings.* implicit intents on One UI.
             recover_args = samsung_setup_relaunch_args(phase=phase)
         elif decision.recover_intent:
             recover_args = ["am", "start", "-a", decision.recover_intent]
@@ -182,13 +187,21 @@ def run_setup_session_inspect(
             try:
                 if not hijacked and activity and not decision.allowed:
                     current_pkg = package_from_component(activity)
-                    if current_pkg and current_pkg not in {
-                        "com.android.settings",
-                        "com.samsung.android.app.telephonyui",
-                    }:
+                    if (
+                        current_pkg
+                        and current_pkg not in {
+                            "com.android.settings",
+                            "com.samsung.android.app.telephonyui",
+                        }
+                        and "launcher" not in current_pkg.lower()
+                    ):
                         _shell(runner, adb_path, serial, ["am", "force-stop", current_pkg])
-                        _shell(runner, adb_path, serial, ["input", "keyevent", "KEYCODE_HOME"])
-                _shell(runner, adb_path, serial, recover_args)
+                if runner is not None and phase == PHASE_ESIM:
+                    launch_esim_setup_screen(
+                        runner, serial, OEM_SAMSUNG if samsung else OEM_PIXEL
+                    )
+                else:
+                    _shell(runner, adb_path, serial, recover_args)
                 recovered = True
                 activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
                 activity = parse_foreground_activity(activities)

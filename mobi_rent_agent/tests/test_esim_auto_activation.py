@@ -246,9 +246,8 @@ def test_open_qr_picker_stops_at_sim_manager_and_keeps_qr():
     assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)
     dismiss = " ".join(" ".join(args) for _, args in runner.calls)
     assert "dismiss-keyguard" in dismiss
-    # Wake/home happen at the start; cleanup must not send home again.
     homes = [args for _, args in runner.calls if args == ["shell", "input", "keyevent", "3"]]
-    assert len(homes) == 1
+    assert homes == []
     assert SIM_CARD_MGR_COMPONENT in runner.commands("shell", "am", "start")[0]
     aosp = " ".join(" ".join(args) for _, args in runner.calls)
     assert "SIM_CARD_SETTINGS" not in aosp

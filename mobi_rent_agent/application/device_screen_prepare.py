@@ -93,11 +93,18 @@ def is_samsung_s20(
     return any(upper.startswith(prefix) for prefix in _SAMSUNG_S20_MODEL_PREFIXES)
 
 
-def wake_unlock_commands(*, samsung_s20: bool) -> tuple[str, ...]:
+def wake_unlock_commands(*, samsung_s20: bool, skip_home: bool = False) -> tuple[str, ...]:
     """Wake/unlock script. S20 stays on FHD+ so stream and taps share one size."""
     size = f"wm size {SAMSUNG_S20_SIZE}" if samsung_s20 else "wm size reset"
     density = f"wm density {SAMSUNG_S20_DENSITY}" if samsung_s20 else "wm density reset"
-    return (size, density) + WAKE_UNLOCK_COMMANDS[2:]
+    commands = (size, density) + WAKE_UNLOCK_COMMANDS[2:]
+    if skip_home:
+        commands = tuple(
+            command
+            for command in commands
+            if "KEYCODE_HOME" not in command and command.strip() != "input keyevent 3"
+        )
+    return commands
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
@@ -149,6 +156,7 @@ def run_device_screen_prepare(
     if not serial:
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
     wait_boot = bool(request.payload.get("wait_boot", False))
+    skip_home = bool(request.payload.get("skip_home", False))
     runner = command_runner or AdbCommandRunner(
         adb_path, timeout_seconds=SCREEN_PREPARE_TIMEOUT_SECONDS
     )
@@ -181,7 +189,11 @@ def run_device_screen_prepare(
         slot_id=slot_id, serial=serial, manufacturer=manufacturer, model=model
     )
     run_best_effort_shell(
-        runner, serial, wake_unlock_commands(samsung_s20=samsung_s20), warnings, "wake_unlock"
+        runner,
+        serial,
+        wake_unlock_commands(samsung_s20=samsung_s20, skip_home=skip_home),
+        warnings,
+        "wake_unlock",
     )
     samsung = is_samsung_device(
         slot_id=slot_id, serial=serial, manufacturer=manufacturer
@@ -227,11 +239,14 @@ def request_device_screen_prepare(
     *,
     wait_boot: bool = False,
     voidfix_package: str | None = None,
+    skip_home: bool = False,
 ) -> None:
     """Best-effort VPS → Farm unlock. Never raises; never fails the caller."""
     if farm_client is None:
         return
     payload: dict[str, Any] = {"wait_boot": bool(wait_boot)}
+    if skip_home:
+        payload["skip_home"] = True
     package = str(voidfix_package or "").strip()
     if package:
         payload["voidfix_package"] = package

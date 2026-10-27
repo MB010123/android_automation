@@ -535,7 +535,31 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     assert "KEYCODE_WAKEUP" in script
     assert "dismiss-keyguard" in script
     assert "input swipe 540 1800 540 400 300" in script
+    assert "KEYCODE_HOME" in script
     assert "com.samsung.android.game.gamehome" not in script
+
+
+def test_device_screen_prepare_skip_home_omits_keycode_home():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    runner = CleanupRunner()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep-skip-home",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"skip_home": True},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    scripts = " ".join(args[1] for _serial, args in runner.calls if args and args[0] == "shell")
+    assert "KEYCODE_WAKEUP" in scripts
+    assert "dismiss-keyguard" in scripts
+    assert "KEYCODE_HOME" not in scripts
+    assert "input keyevent 3" not in scripts
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():

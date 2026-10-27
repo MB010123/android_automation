@@ -32,7 +32,11 @@ from application.esim_setup_ui_state import (
     handoff_prompt_for_oem,
 )
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
-from application.samsung_one_ui import samsung_sim_manager_args
+from application.samsung_one_ui import (
+    package_from_component,
+    samsung_network_args,
+    samsung_sim_manager_args,
+)
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
 from infrastructure.esim_qr_security import esim_fetch_url_is_public_https, esim_fetch_url_is_safe
@@ -98,6 +102,31 @@ PIXEL_ESIM_INTENTS = (
     "android.settings.WIRELESS_SETTINGS",
 )
 SAMSUNG_ESIM_FALLBACK_INTENT = "android.settings.WIRELESS_SETTINGS"
+HANDOFF_UI_DUMP_PATH = "/sdcard/mobirent_esim_handoff.xml"
+LAUNCHER_PACKAGES = frozenset(
+    {
+        "com.sec.android.app.launcher",
+        "com.google.android.apps.nexuslauncher",
+        "com.android.launcher3",
+        "com.samsung.android.launcher",
+        "com.android.launcher",
+    }
+)
+SAMSUNG_HANDOFF_PACKAGES = frozenset(
+    {
+        "com.samsung.android.app.telephonyui",
+        "com.samsung.android.euicc",
+    }
+)
+PIXEL_HANDOFF_PACKAGES = frozenset(
+    {
+        "com.google.android.euicc",
+        "com.android.euicc",
+    }
+)
+SAMSUNG_SIM_ROW_LABELS = ("SIM manager", "SIM card manager")
+PIXEL_SIM_ROW_LABELS = ("SIMs",)
+_BOUNDS_RE = re.compile(r"-?\d+")
 _EMBEDDED_ID_RE = re.compile(r"(?:iccId|IccId|mIccId|cardId|mCardId)=([A-Za-z0-9]+)")
 QR_PREFIX = "mobirent_esim_qr_"
 QR_WALK_MARKER_PATH = f"{PICTURES_DIR}/.mobirent_qr_walk_done"
@@ -249,6 +278,7 @@ def detect_device_oem(runner: AdbCommandRunner, serial: str, slot_id: int) -> st
 
 
 def wake_and_unlock_device(runner: AdbCommandRunner, serial: str) -> None:
+    """Wake and dismiss the keyguard. Does not send KEYCODE_HOME."""
     try:
         runner.run(serial, ["shell", "input", "keyevent", "224"])
     except AdbCommandError:
@@ -256,7 +286,6 @@ def wake_and_unlock_device(runner: AdbCommandRunner, serial: str) -> None:
     for args in (
         ["shell", "wm", "dismiss-keyguard"],
         ["shell", "input", "keyevent", "82"],
-        ["shell", "input", "keyevent", "3"],
     ):
         try:
             runner.run(serial, args)
@@ -264,24 +293,137 @@ def wake_and_unlock_device(runner: AdbCommandRunner, serial: str) -> None:
             pass
 
 
-def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
-    """Open the OEM eSIM/SIM screen. Public intents/components only."""
-    if oem == OEM_SAMSUNG:
+def read_foreground_component(runner: AdbCommandRunner, serial: str) -> str:
+    """Foreground activity from dumpsys window, then activity activities."""
+    from application.setup_activity_guard import parse_foreground_activity
+
+    for args in (
+        ["shell", "dumpsys", "window"],
+        ["shell", "dumpsys", "activity", "activities"],
+    ):
         try:
-            runner.run(serial, ["shell", *samsung_sim_manager_args()])
-            return "sim_manager"
-        except AdbCommandError:
-            runner.run(serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
-            return SAMSUNG_ESIM_FALLBACK_INTENT
-    launched = PIXEL_ESIM_INTENTS[0]
-    for intent in PIXEL_ESIM_INTENTS:
-        try:
-            runner.run(serial, ["shell", "am", "start", "-a", intent])
-            launched = intent
-            break
+            text = runner.run(serial, args).stdout or ""
         except AdbCommandError:
             continue
+        hit = parse_foreground_activity(text)
+        if hit:
+            return hit
+    return ""
+
+
+def foreground_is_launcher(component: str | None) -> bool:
+    pkg = package_from_component(component).strip().lower()
+    if not pkg:
+        return False
+    if pkg in LAUNCHER_PACKAGES:
+        return True
+    return "launcher" in pkg
+
+
+def esim_handoff_is_open(component: str, oem: str, ui_xml: str = "") -> bool:
+    if foreground_is_launcher(component):
+        return False
+    blob = f"{component} {ui_xml}".lower()
+    if oem == OEM_SAMSUNG:
+        if any(package in blob for package in SAMSUNG_HANDOFF_PACKAGES):
+            return True
+        return "add esim" in blob or "add mobile plan" in blob
+    if any(package in blob for package in PIXEL_HANDOFF_PACKAGES):
+        return True
+    return "add sim" in blob or "set up an esim" in blob or "download a sim" in blob
+
+
+def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
+    """Open the OEM eSIM/SIM screen and verify it is not the launcher.
+
+    SimCardMgrActivity is often not exported. If the foreground window is
+    still a home launcher, fall back to Wireless/Settings and tap
+    SIM manager (Samsung) or SIMs (Pixel).
+    """
+    if oem == OEM_SAMSUNG:
+        _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()])
+        if _esim_handoff_verified(runner, serial, oem):
+            return "sim_manager"
+        _try_shell(runner, serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
+        if _tap_through_to_esim_handoff(runner, serial, oem):
+            return SAMSUNG_ESIM_FALLBACK_INTENT
+        _try_shell(runner, serial, ["shell", *samsung_network_args()])
+        if _tap_through_to_esim_handoff(runner, serial, oem):
+            return "network_dashboard"
+        return "sim_manager_unconfirmed"
+    launched = PIXEL_ESIM_INTENTS[0]
+    for intent in PIXEL_ESIM_INTENTS:
+        _try_shell(runner, serial, ["shell", "am", "start", "-a", intent])
+        launched = intent
+        if _esim_handoff_verified(runner, serial, oem):
+            return intent
+    _try_shell(runner, serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
+    if _tap_through_to_esim_handoff(runner, serial, oem):
+        return SAMSUNG_ESIM_FALLBACK_INTENT
     return launched
+
+
+def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> None:
+    try:
+        runner.run(serial, arguments)
+    except AdbCommandError:
+        pass
+
+
+def _esim_handoff_verified(runner: AdbCommandRunner, serial: str, oem: str) -> bool:
+    component = read_foreground_component(runner, serial)
+    if not component:
+        return True
+    return esim_handoff_is_open(component, oem)
+
+
+def _dump_handoff_ui(runner: AdbCommandRunner, serial: str) -> str:
+    try:
+        runner.run(serial, ["shell", "uiautomator", "dump", HANDOFF_UI_DUMP_PATH])
+        return runner.run(serial, ["shell", "cat", HANDOFF_UI_DUMP_PATH]).stdout or ""
+    except AdbCommandError:
+        return ""
+
+
+def _tap_through_to_esim_handoff(runner: AdbCommandRunner, serial: str, oem: str) -> bool:
+    labels = SAMSUNG_SIM_ROW_LABELS if oem == OEM_SAMSUNG else PIXEL_SIM_ROW_LABELS
+    ui_xml = _dump_handoff_ui(runner, serial)
+    component = read_foreground_component(runner, serial)
+    if esim_handoff_is_open(component, oem, ui_xml):
+        return True
+    if oem == OEM_SAMSUNG:
+        connections = _find_ui_label_center(ui_xml, ("Connections",))
+        if connections is not None:
+            _try_shell(
+                runner,
+                serial,
+                ["shell", "input", "tap", str(connections[0]), str(connections[1])],
+            )
+            ui_xml = _dump_handoff_ui(runner, serial)
+    target = _find_ui_label_center(ui_xml, labels)
+    if target is None:
+        return False
+    _try_shell(runner, serial, ["shell", "input", "tap", str(target[0]), str(target[1])])
+    ui_xml = _dump_handoff_ui(runner, serial)
+    component = read_foreground_component(runner, serial)
+    return esim_handoff_is_open(component, oem, ui_xml)
+
+
+def _find_ui_label_center(ui_xml: str, labels: tuple[str, ...]) -> tuple[int, int] | None:
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(ui_xml or "")
+    except ET.ParseError:
+        return None
+    needles = tuple(label.lower() for label in labels if label)
+    for node in root.iter("node"):
+        text = f"{node.get('text') or ''} {node.get('content-desc') or ''}".lower()
+        if any(needle in text for needle in needles):
+            nums = [int(value) for value in _BOUNDS_RE.findall(node.get("bounds") or "")]
+            if len(nums) >= 4:
+                return (nums[0] + nums[2]) // 2, (nums[1] + nums[3]) // 2
+    return None
 
 
 def esim_subscription_token(isub: str) -> str:

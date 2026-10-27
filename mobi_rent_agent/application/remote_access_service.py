@@ -1267,9 +1267,9 @@ class RemoteAccessService:
         )
         self._record_esim_baseline(auth.rental_id, details)
         self._qr_walk_started.pop(auth.rental_id, None)
-        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING, setup_complete=False)
         self._clear_setup_working(auth.rental_id)
+        self._prepare_device_screen(auth.slot_id, wait_boot=False, skip_home=True)
         body = public_placement_success(details, job_id=job_id)
         body["setup_ui_state"] = SETUP_UI_AWAITING
         body["setup_ui_prompt"] = prompt
@@ -1617,9 +1617,21 @@ class RemoteAccessService:
             return None
         return row if isinstance(row, dict) and row else None
 
-    def _prepare_device_screen(self, slot_id: int, *, wait_boot: bool) -> None:
+    def _slot_awaiting_esim(self, slot_id: int) -> bool:
+        session = self._store.active_for_slot(int(slot_id)) or self._store.latest_for_slot(int(slot_id))
+        return bool(session and str(session.setup_ui_state or "") == SETUP_UI_AWAITING)
+
+    def _prepare_device_screen(
+        self, slot_id: int, *, wait_boot: bool, skip_home: bool | None = None
+    ) -> None:
+        if skip_home is None:
+            skip_home = self._slot_awaiting_esim(slot_id)
         request_device_screen_prepare(
-            self._farm, int(slot_id), wait_boot=wait_boot, voidfix_package=self._voidfix_package
+            self._farm,
+            int(slot_id),
+            wait_boot=wait_boot,
+            voidfix_package=self._voidfix_package,
+            skip_home=bool(skip_home),
         )
         self._native_resolution_cache.pop(int(slot_id), None)
 

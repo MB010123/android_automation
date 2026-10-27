@@ -278,15 +278,16 @@ def test_farm_inspect_recover_flag_still_launches_sim_profiles():
     )
     assert result.ok is True
     assert result.details["recovered"] is True
-    assert any(
-        call[1][:4] == ["shell", "am", "start", "-a"] and call[1][4] == RECOVER_INTENT_ESIM
-        for call in runner.calls
+    starts = " ".join(
+        " ".join(call[1]) for call in runner.calls if call[1][:3] == ["shell", "am", "start"]
     )
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in starts
+    assert "android.settings.WIRELESS_SETTINGS" in starts
     joined = " ".join(" ".join(call[1]) for call in runner.calls)
     assert "factory" not in joined.lower()
     assert "wipe" not in joined
-    assert "euicc" not in joined.lower()
-    assert "provision" not in joined.lower()
+    assert "EuiccManager" not in joined
+    assert "provision_esim" not in joined.lower()
 
 
 def test_ready_mode_preserves_home_and_recents(tmp_path: Path):

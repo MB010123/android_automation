@@ -575,3 +575,77 @@ def test_provisioning_allowed_slot_ids_unchanged(monkeypatch):
     result = _place(runner, slot_map=_slot_map_1_to_20(), request=_inline_req(2), agent_config=qr_config)
     assert result.ok is True
     assert qr_config.provisioning_allowed_slot_ids == (1,)
+
+
+def test_samsung_sim_manager_falls_back_when_launcher_stays_focused():
+    from application.esim_setup_ui_state import OEM_SAMSUNG
+    from application.remote_access_farm_task import launch_esim_setup_screen
+
+    connections_ui = (
+        "<?xml version='1.0'?><hierarchy>"
+        '<node text="Connections" bounds="[0,200][200,280]"/>'
+        '<node text="SIM manager" bounds="[72,1001][400,1069]"/>'
+        "</hierarchy>"
+    )
+    sim_manager_ui = (
+        "<?xml version='1.0'?><hierarchy>"
+        '<node text="SIM manager" bounds="[0,80][400,140]"/>'
+        '<node text="Add eSIM" bounds="[72,1001][400,1069]"/>'
+        "</hierarchy>"
+    )
+    launcher_focus = (
+        "mCurrentFocus=Window{abc u0 com.sec.android.app.launcher/"
+        "com.sec.android.app.launcher.Launcher}"
+    )
+    telephony_focus = (
+        "mCurrentFocus=Window{def u0 com.samsung.android.app.telephonyui/"
+        ".netsettings.ui.simcardmanager.SimCardMgrActivity}"
+    )
+
+    class Runner(AdbCommandRunner):
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+            self.opened_wireless = False
+            self.tapped = False
+
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+            self.calls.append(list(arguments))
+            if tuple(arguments[:3]) in {
+                ("shell", "dumpsys", "window"),
+                ("shell", "dumpsys", "activity"),
+            }:
+                if self.tapped:
+                    return AdbCommandResult(stdout=telephony_focus, stderr="")
+                return AdbCommandResult(stdout=launcher_focus, stderr="")
+            if arguments[:4] == ["shell", "am", "start", "-a"] and "WIRELESS_SETTINGS" in arguments:
+                self.opened_wireless = True
+            if arguments[:3] == ["shell", "input", "tap"]:
+                self.tapped = True
+            if arguments[:2] == ["shell", "cat"] and str(arguments[-1]).endswith(".xml"):
+                xml = sim_manager_ui if self.tapped else connections_ui
+                return AdbCommandResult(stdout=xml, stderr="")
+            return AdbCommandResult(stdout="", stderr="")
+
+    runner = Runner()
+    launched = launch_esim_setup_screen(runner, "RFCNB056WEV", OEM_SAMSUNG)
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert "WIRELESS_SETTINGS" in joined
+    assert "input tap" in joined
+    assert runner.tapped is True
+    assert launched == "android.settings.WIRELESS_SETTINGS"
+    assert "android.settings.SETTINGS" not in joined
+
+
+def test_place_qr_does_not_send_home_key():
+    runner = _QrRunner(remote_size=len(PNG_BYTES))
+    request = _req()
+    request.farm_slot_id = 21
+    result = _place(runner, slot_map={21: "RFCNB056WEV"}, request=request)
+    assert result.ok is True
+    homes = [
+        args
+        for _, args in runner.calls
+        if args == ["shell", "input", "keyevent", "3"]
+        or args == ["shell", "input", "keyevent", "KEYCODE_HOME"]
+    ]
+    assert homes == []

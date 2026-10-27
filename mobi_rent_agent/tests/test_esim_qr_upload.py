@@ -339,6 +339,9 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     assert auto[-1]["payload"]["rental_id"] == rental
     assert auto[-1]["payload"]["mode"] == "gated_setup"
     assert auto[-1]["payload"]["qr_walk_completed"] is False
+    prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert prepares
+    assert all(t["payload"].get("skip_home") is True for t in prepares)
     farm.tasks.clear()
     again = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert again.http_status == 200
