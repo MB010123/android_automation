@@ -410,29 +410,26 @@ def enable_native_cameras(runner: AdbCommandRunner, serial: str) -> None:
 
 
 def ensure_esim_setup_screen_open(runner: AdbCommandRunner, serial: str, oem: str) -> str:
-    """Re-open OEM SIM/eSIM settings when dumpsys shows Home or an unrelated app.
-
-    Never taps Add eSIM / Gallery. Leaves Gallery/Photos/euicc alone so the
-    renter can finish the hybrid flow.
-    """
-    component = read_foreground_component(runner, serial)
-    if esim_live_screen_is_open(component, oem):
-        return "already_open"
+    """Always force-open OEM SIM/eSIM settings. Existing profiles do not skip."""
     return launch_esim_setup_screen(runner, serial, oem)
 
 
 def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
     """Open the OEM SIM/eSIM screen, then stop. No Gallery/Add eSIM taps.
 
-    Uses public intents and dumpsys only. uiautomator dumps interrupt the
-    GADS MediaProjection stream, so this path never dumps XML or taps
-    Add eSIM / Scan QR / Gallery.
+    Always starts the public OEM intent, even when an eSIM is already
+    installed. uiautomator dumps interrupt the GADS MediaProjection stream,
+    so this path never dumps XML or taps Add eSIM / Scan QR / Gallery.
     """
     if oem == OEM_SAMSUNG:
         _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()])
         if _esim_handoff_verified(runner, serial, oem):
             return "sim_manager"
-        _try_shell(runner, serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
+        _try_shell(
+            runner,
+            serial,
+            ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT, "--activity-clear-task"],
+        )
         if _esim_handoff_verified(runner, serial, oem):
             return SAMSUNG_ESIM_FALLBACK_INTENT
         _try_shell(runner, serial, ["shell", *samsung_network_args()])
@@ -440,7 +437,11 @@ def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) ->
             return "network_dashboard"
         return "sim_manager_unconfirmed"
     for intent in PIXEL_ESIM_INTENTS:
-        _try_shell(runner, serial, ["shell", "am", "start", "-a", intent])
+        _try_shell(
+            runner,
+            serial,
+            ["shell", "am", "start", "-a", intent, "--activity-clear-task"],
+        )
         if _esim_handoff_verified(runner, serial, oem):
             return intent
     return "pixel_sims_unconfirmed"

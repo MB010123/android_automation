@@ -284,10 +284,12 @@ def test_qr_walk_is_skipped_when_already_completed():
     result = _activate(runner, request=_req(mode="gated_setup", qr_walk_completed=True))
     assert result.ok is True
     assert result.details["skipped"] is True
+    assert result.details["opened"] is True
     assert result.details["qr_walk_completed"] is True
     assert result.details["qr_deleted"] is False
     assert result.details["setup_ui_state"] == "awaiting_human_click"
-    assert runner.commands("shell", "am", "start") == []
+    starts = runner.commands("shell", "am", "start")
+    assert starts and SIM_CARD_MGR_COMPONENT in starts[0]
     assert runner.tap_points() == []
     rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
     assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)

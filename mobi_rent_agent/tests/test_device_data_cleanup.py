@@ -590,7 +590,7 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     assert result.details["skip_home"] is True
 
 
-def test_device_screen_prepare_skip_home_keeps_open_sim_manager():
+def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
     from application.device_screen_prepare import run_device_screen_prepare
     from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
 
@@ -606,15 +606,16 @@ def test_device_screen_prepare_skip_home_keeps_open_sim_manager():
             job_id="prep-already-open",
             task_type="device_screen_prepare",
             farm_slot_id=21,
-            payload={"skip_home": True},
+            payload={"skip_home": True, "esim_profile_present": True},
         ),
         command_runner=runner,
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
-    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
     assert "KEYCODE_HOME" not in joined
-    assert result.details["esim_setup_launched"] == "already_open"
+    assert "input tap" not in joined
+    assert result.details["esim_setup_launched"] == "sim_manager"
 
 
 def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
@@ -632,13 +633,17 @@ def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
             job_id="prep-pixel-home",
             task_type="device_screen_prepare",
             farm_slot_id=1,
-            payload={"setup_ui_state": "awaiting_human_click"},
+            payload={
+                "setup_ui_state": "awaiting_human_click",
+                "esim_profile_present": True,
+            },
         ),
         command_runner=runner,
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "--activity-clear-task" in joined
     assert "KEYCODE_HOME" not in joined
     assert "input tap" not in joined
     assert "uiautomator" not in joined
