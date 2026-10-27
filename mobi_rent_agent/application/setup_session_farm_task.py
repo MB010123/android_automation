@@ -46,7 +46,6 @@ from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 
 logger = logging.getLogger("farm_agent.setup_session")
 
-UI_DUMP_REMOTE_PATH = "/sdcard/mobirent_setup_ui.xml"
 SYSTEM_SMS_PACKAGES = frozenset(
     {
         "com.google.android.apps.messaging",
@@ -226,14 +225,16 @@ def run_setup_session_inspect(
         qr_walk_completed = _marker_says_walk_done(
             runner, adb_path, serial, str(payload.get("qr_sha256") or "")
         )
-    ui_xml = _dump_setup_ui(runner, adb_path, serial)
+    # Never uiautomator-dump during eSIM setup: the dump interrupts GADS
+    # MediaProjection and drops the remote stream after QR handoff.
     classification = classify_setup_ui(
-        ui_xml,
+        None,
         activity,
         walk_completed=qr_walk_completed,
         walk_in_progress=bool(payload.get("walk_in_progress", False)),
         activation_confirmed=activation_confirmed,
         esim_profile_present=esim_profile_present,
+        oem=OEM_SAMSUNG if samsung else OEM_PIXEL,
     )
     qr_deleted: list[str] = []
     consume_qr = (
@@ -263,18 +264,6 @@ def run_setup_session_inspect(
         **public_setup_ui_body(classification),
     }
     return FarmTaskResult(ok=True, http_status=200, details=details)
-
-
-def _dump_setup_ui(
-    runner: AdbCommandRunner | None,
-    adb_path: str,
-    serial: str,
-) -> str:
-    try:
-        _shell(runner, adb_path, serial, ["uiautomator", "dump", UI_DUMP_REMOTE_PATH])
-        return _shell(runner, adb_path, serial, ["cat", UI_DUMP_REMOTE_PATH])
-    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
-        return ""
 
 
 def _marker_says_walk_done(

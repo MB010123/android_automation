@@ -73,6 +73,8 @@ _ESIM_ACTIVITY_MARKERS = (
     "provisionembedded",
     "simcardmgr",
     "simcardmanager",
+    "spaactivity",
+    "settings.spa",
 )
 _VOIDFIX_ACTIVITY_MARKERS = (
     "requestrole",

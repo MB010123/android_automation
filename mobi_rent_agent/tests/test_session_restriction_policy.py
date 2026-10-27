@@ -94,7 +94,13 @@ def test_classify_esim_settings_voidfix_and_apps():
         ).kind
         == KIND_SETTINGS
     )
-    assert classify_foreground_activity("com.android.settings/.spa.SpaActivity").kind == KIND_SETTINGS
+    assert classify_foreground_activity("com.android.settings/.spa.SpaActivity").kind == KIND_ESIM_NESTED
+    assert (
+        classify_foreground_activity(
+            "com.android.settings/.Settings$NetworkDashboardActivity"
+        ).kind
+        == KIND_ESIM_NESTED
+    )
     assert (
         classify_foreground_activity(
             "com.android.settings/.Settings$MobileNetworkListActivity"
@@ -124,10 +130,6 @@ def test_classify_esim_settings_voidfix_and_apps():
     )
     assert (
         classify_foreground_activity("com.android.settings/.system.SystemDashboardFragment").kind
-        == KIND_SETTINGS
-    )
-    assert (
-        classify_foreground_activity("com.android.settings/.Settings$NetworkDashboardActivity").kind
         == KIND_SETTINGS
     )
     assert (
@@ -237,6 +239,12 @@ def test_settings_and_back_decisions():
     assert tap_settings.escape_settings is True
     tap_homepage = decide_restriction(action="tap", activity="com.android.settings/.Settings")
     assert tap_homepage.escape_settings is True and tap_homepage.launch_esim is True
+    tap_spa = decide_restriction(action="tap", activity="com.android.settings/.spa.SpaActivity")
+    assert tap_spa.send_home is False and tap_spa.escape_settings is False
+    tap_network = decide_restriction(
+        action="tap", activity="com.android.settings/.Settings$NetworkDashboardActivity"
+    )
+    assert tap_network.send_home is False and tap_network.escape_settings is False
     settings_from_homepage = decide_restriction(
         action="settings", activity="com.android.settings/.Settings"
     )

@@ -281,9 +281,12 @@ def test_farm_inspect_recover_flag_still_launches_sim_profiles():
     starts = " ".join(
         " ".join(call[1]) for call in runner.calls if call[1][:3] == ["shell", "am", "start"]
     )
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in starts
+    assert "android.settings.WIRELESS_SETTINGS" in starts
     assert "android.settings.SETTINGS" in starts
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in starts
     joined = " ".join(" ".join(call[1]) for call in runner.calls)
+    assert "uiautomator" not in joined
+    assert "input tap" not in joined
     assert "factory" not in joined.lower()
     assert "wipe" not in joined
     assert "EuiccManager" not in joined

@@ -280,6 +280,9 @@ def test_setup_session_inspect_uses_mapped_serial():
     assert result.ok is True
     assert result.details["allowed"] is True
     assert any(call[1][:2] == ["shell", "dumpsys"] for call in runner.calls)
+    inspect_joined = " ".join(" ".join(call[1]) for call in runner.calls)
+    assert "uiautomator" not in inspect_joined
+    assert "input tap" not in inspect_joined
     slot_map = {1: "SERIAL-A"}
     runner = FakeRunner()
     req = FarmTaskRequest(job_id="j", task_type="reboot", farm_slot_id=1, payload={})
@@ -299,7 +302,7 @@ def test_setup_session_inspect_recover_uses_samsung_sim_manager():
     slot_map = {21: "RFCNB056WEV"}
     runner = FakeRunner()
     runner.dumpsys_activity = (
-        "mResumedActivity: ActivityRecord{abc u0 com.android.settings/.spa.SpaActivity t1}"
+        "mResumedActivity: ActivityRecord{abc u0 com.android.settings/.homepage.SettingsHomepageActivity t1}"
     )
     req = FarmTaskRequest(
         job_id="j",

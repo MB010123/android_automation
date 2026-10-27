@@ -76,13 +76,16 @@ AWAITING_PROMPT_MARKERS = (
 AWAITING_BUTTONS = frozenset({"add", "download", "confirm", "turn on", "ok"})
 GALLERY_DONE_MARKERS = ("done",)
 # Hybrid Guided Flow: SIM Manager is the customer handoff screen.
-SIM_MANAGER_MARKERS = ("sim manager", "add esim")
+SIM_MANAGER_MARKERS = ("sim manager", "add esim", "simcardmgr", "simcardmanager")
 PIXEL_SIMS_MARKERS = (
     "add sim",
     "set up an esim",
     "download a sim instead",
     "use a different photo",
     "download a sim",
+    "spaactivity",
+    "networkdashboard",
+    "embeddedsubscription",
 )
 
 

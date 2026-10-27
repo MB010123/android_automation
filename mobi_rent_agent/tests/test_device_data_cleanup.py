@@ -569,6 +569,9 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     assert "dismiss-keyguard" in scripts
     assert "KEYCODE_HOME" not in scripts
     assert "input keyevent 3" not in scripts
+    assert "wm size" not in scripts
+    assert "wm density" not in scripts
+    assert "input swipe" not in scripts
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():

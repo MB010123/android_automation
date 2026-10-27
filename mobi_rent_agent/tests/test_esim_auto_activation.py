@@ -1,8 +1,7 @@
 """Samsung S20 eSIM Farm task.
 
-Customer Hybrid Guided Flow (gated_setup / open_qr_picker) opens SIM Manager
-and stops. Operator one-UI walk still covers Gallery → Done plus logcat
-``UT.EsimAddProgressState``. Deep link: explicit ``activation_code``.
+Hybrid Guided Flow opens SIM Manager / Pixel SIMs and stops. The renter
+taps Add eSIM / Add SIM and picks the QR from Gallery/Photos.
 """
 from __future__ import annotations
 
@@ -183,7 +182,7 @@ class _ActivationRunner(AdbCommandRunner):
                 )
             else:
                 focus = (
-                    "mCurrentFocus=Window{abc u0 com.android.settings/.Settings}"
+                    "mCurrentFocus=Window{abc u0 com.android.settings/.spa.SpaActivity}"
                 )
             return AdbCommandResult(stdout=focus, stderr="")
         if arguments[:3] == ["shell", "logcat", "-d"]:
@@ -272,12 +271,11 @@ def test_qr_walk_escapes_game_launcher_and_opens_sim_manager():
     result = _activate(runner, request=_req(mode="open_qr_picker"))
     assert result.ok is True, (result.error, result.message)
     joined = " ".join(" ".join(args) for _, args in runner.calls)
-    assert "am force-stop com.samsung.android.game.gamehome" in joined
-    assert "KEYCODE_HOME" in joined
     starts = runner.commands("shell", "am", "start")
     assert starts
     assert SIM_CARD_MGR_COMPONENT in starts[0]
-    assert "android.settings.SETTINGS" not in joined
+    assert result.details["activated"] is False
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in joined
 
 
@@ -301,130 +299,36 @@ def test_aosp_sims_fragment_is_detected():
     assert is_aosp_sims_screen(SIM_MANAGER_UI) is False
 
 
-def test_ui_walk_success_taps_every_screen_and_reports_states():
+def test_hybrid_flow_never_taps_add_esim_or_gallery():
     runner = _ActivationRunner(
         logcat_polls=[SEARCHING_LOG, DOWNLOADED_LOG],
         ui_polls=WALK_UI_POLLS + [CONFIRM_UI],
     )
     result = _activate(runner)
     assert result.ok is True, (result.error, result.message)
-    assert result.details["method"] == "one_ui_flow"
-    assert result.details["activated"] is True
-    assert result.details["final_state"] == "DOWNLOAD_COMPLETE"
-    assert result.details["steps_done"] == [
-        "open_sim_manager",
-        "add_esim",
-        "other_ways_to_connect",
-        "scan_qr_code",
-        "open_gallery",
-        "open_album",
-        "pick_newest_image",
-        "confirm_done",
-    ]
-    # SIM manager launched directly via the exported activity, no deep link.
-    starts = runner.commands("shell", "am", "start")
-    assert len(starts) == 1 and SIM_CARD_MGR_COMPONENT in starts[0]
-    # Taps land on the real controls: Add eSIM row, Other ways, Scan QR code,
-    # gallery button, Pictures album tile (not the bottom tab), first image,
-    # Done, then the Add confirm dialog.
-    assert runner.tap_points() == [
-        (236, 1035),   # Add eSIM
-        (540, 1934),   # Other ways to connect
-        (245, 1203),   # Scan QR code
-        (765, 2127),   # Open Gallery
-        (891, 547),    # Pictures album tile
-        (150, 447),    # newest image in grid
-        (774, 2133),   # Gallery crop Done
-        (540, 2094),   # Add (confirm dialog)
-    ]
-    assert result.details["taps"][-1] == "add"
-    # Cleanup returns home.
-    assert ["shell", "input", "keyevent", "3"] in [args for _, args in runner.calls]
-
-
-def test_ui_walk_skips_provider_screen_when_absent():
-    # Some One UI variants jump straight from Add eSIM to the chooser.
-    polls = [SIM_MANAGER_UI, CHOOSER_UI, CHOOSER_UI, CAPTURE_UI, ALBUMS_UI, GRID_UI, CROP_UI]
-    runner = _ActivationRunner(logcat_polls=[DOWNLOADED_LOG], ui_polls=polls)
-    result = _activate(runner)
-    assert result.ok is True, (result.error, result.message)
-    assert "other_ways_to_connect:skipped" in result.details["steps_done"]
-
-
-def test_ui_walk_step_failure_reports_step_name():
-    # The chooser never appears after tapping "Other ways to connect".
-    polls = [SIM_MANAGER_UI, PROVIDER_UI, PROVIDER_UI]
-    runner = _ActivationRunner(logcat_polls=[""], ui_polls=polls)
-    result = _activate(runner)
-    assert result.ok is False
-    assert result.error == "ui_flow_step_failed"
-    assert result.details["failed_step"] == "other_ways_to_connect"
-    assert result.details["steps_done"][-1] == "other_ways_to_connect"
-
-
-def test_ui_walk_failure_dialog_mid_walk_aborts():
-    polls = [SIM_MANAGER_UI, PROVIDER_UI, CHOOSER_UI, FAILED_UI]
-    runner = _ActivationRunner(logcat_polls=[""], ui_polls=polls)
-    result = _activate(runner)
-    assert result.ok is False
-    assert result.error == "ui_flow_step_failed"
-    assert result.details["screen_hint"] == "failure dialog visible"
-
-
-def test_ui_walk_not_found_reports_activation_failed():
-    runner = _ActivationRunner(
-        logcat_polls=[SEARCHING_LOG, NOT_FOUND_LOG],
-        ui_polls=WALK_UI_POLLS + [SEARCHING_UI],
-    )
-    result = _activate(runner)
-    assert result.ok is False
-    assert result.error == "activation_failed"
-    assert result.details["final_state"] == "NOT_FOUND"
+    assert result.details["method"] == "gated_setup"
     assert result.details["activated"] is False
+    assert result.details["opened"] is True
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    assert result.details["steps_done"] == ["open_sim_manager"]
+    starts = runner.commands("shell", "am", "start")
+    assert starts and SIM_CARD_MGR_COMPONENT in starts[0]
+    assert runner.tap_points() == []
+    joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "esimmanagerfromqr" not in joined
+    assert ["shell", "input", "keyevent", "3"] not in [args for _, args in runner.calls]
 
 
-def test_ui_walk_failure_dialog_after_done_is_detected():
-    runner = _ActivationRunner(
-        logcat_polls=[SEARCHING_LOG],
-        ui_polls=WALK_UI_POLLS + [FAILED_UI],
-    )
-    result = _activate(runner)
-    assert result.ok is False
-    assert result.error == "activation_failed"
-    assert "can't add esim" in (result.message or "")
-    # The failure dialog's OK button is never tapped as a *confirm* action
-    # (no confirm labels recorded), but cleanup taps it once to dismiss the
-    # dialog, which survives back/home presses on One UI.
-    assert result.details["taps"] == [
-        "add_esim",
-        "other_ways_to_connect",
-        "scan_qr_code",
-        "open_gallery",
-        "open_album",
-        "pick_newest_image",
-        "confirm_done",
-    ]
-    assert runner.tap_points().count((540, 2094)) == 1  # cleanup dismissal
-
-
-def test_deeplink_method_used_for_explicit_activation_code():
-    runner = _ActivationRunner(
-        logcat_polls=[SEARCHING_LOG, SEARCHING_LOG, DOWNLOADED_LOG],
-        ui_polls=[SEARCHING_UI, CONFIRM_UI],
-    )
+def test_valid_activation_code_still_does_not_provision():
+    runner = _ActivationRunner(ui_polls=[SIM_MANAGER_UI])
     result = _activate(runner, request=_req(activation_code=LPA_CODE))
     assert result.ok is True, (result.error, result.message)
-    assert result.details["method"] == "deeplink"
-    assert result.details["activated"] is True
-    assert result.details["smdp_address"] == "smdp.example.com"
-    assert result.details["taps"] == ["add"]
-    starts = runner.commands("shell", "am", "start")
-    assert len(starts) == 1
-    deeplink = starts[0][-1]
-    assert deeplink == f"'{SAMSUNG_ESIM_DEEPLINK_PREFIX}{LPA_CODE}'"
-    assert "%24" not in deeplink and "%3A" not in deeplink  # raw, not URL-encoded
-    # The activation code never leaks into the task result.
+    assert result.details["activated"] is False
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "esimmanagerfromqr" not in joined
     assert LPA_CODE not in json.dumps(result.details)
+    assert runner.tap_points() == []
 
 
 PIXEL_SIMS_UI = _ui(
@@ -451,8 +355,7 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
     starts = runner.commands("shell", "am", "start")
     assert starts
     joined = " ".join(" ".join(args) for args in starts)
-    assert "android.settings.SETTINGS" in joined
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
     assert SIM_CARD_MGR_COMPONENT not in joined
     all_joined = " ".join(" ".join(args) for _, args in runner.calls)
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in all_joined

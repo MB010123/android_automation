@@ -233,6 +233,8 @@ def test_samsung_esim_gallery_and_picker_taps_are_not_redirected(tmp_path: Path)
         "com.google.android.documentsui/.picker.PickActivity",
         "com.samsung.android.biometrics.app.setting/.FingerprintActivity",
         "com.android.settings/.network.telephony.MobileNetworkActivity",
+        "com.android.settings/.spa.SpaActivity",
+        "com.android.settings/.Settings$NetworkDashboardActivity",
     ):
         farm.inspect_activity = activity
         farm.inspect_allowed = True
@@ -468,7 +470,6 @@ def test_unrelated_wifi_apps_system_settings_redirect_to_add_esim(tmp_path: Path
     _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
     for activity in (
         "com.android.settings/.wifi.WifiSettings",
-        "com.android.settings/.Settings$NetworkDashboardActivity",
         "com.android.settings/.applications.ManageApplications",
         "com.android.settings/.system.SystemDashboardFragment",
     ):

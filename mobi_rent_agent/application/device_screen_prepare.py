@@ -96,17 +96,21 @@ def is_samsung_s20(
 
 
 def wake_unlock_commands(*, samsung_s20: bool, skip_home: bool = False) -> tuple[str, ...]:
-    """Wake/unlock script. S20 stays on FHD+ so stream and taps share one size."""
+    """Wake/unlock script. S20 stays on FHD+ so stream and taps share one size.
+
+    ``skip_home`` is used while the customer is on the eSIM handoff screen.
+    Do not reset ``wm size`` / density or swipe — those drop the GADS
+    MediaProjection stream.
+    """
+    if skip_home:
+        return (
+            "settings put global stay_on_while_plugged_in 7",
+            "input keyevent KEYCODE_WAKEUP",
+            "wm dismiss-keyguard",
+        )
     size = f"wm size {SAMSUNG_S20_SIZE}" if samsung_s20 else "wm size reset"
     density = f"wm density {SAMSUNG_S20_DENSITY}" if samsung_s20 else "wm density reset"
-    commands = (size, density) + WAKE_UNLOCK_COMMANDS[2:]
-    if skip_home:
-        commands = tuple(
-            command
-            for command in commands
-            if "KEYCODE_HOME" not in command and command.strip() != "input keyevent 3"
-        )
-    return commands
+    return (size, density) + WAKE_UNLOCK_COMMANDS[2:]
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:

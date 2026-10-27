@@ -118,6 +118,10 @@ _ESIM_NESTED_MARKERS = (
     "lpa",
     "tsm",
     "simcardmgr",
+    "spaactivity",
+    "settings.spa",
+    "/.spa.",
+    "networkdashboard",
     "simcardmanager",
     "captureactivity",
 )
@@ -143,10 +147,6 @@ _SETTINGS_GENERIC_MARKERS = (
     "homepage",
     "deeplinkhomepage",
     "searchactivity",
-    "networkdashboard",
-    "spaactivity",
-    "settings.spa",
-    "/.spa.",
 )
 _SENSITIVE_SETTINGS_MARKERS = (
     "security",

@@ -100,6 +100,20 @@ def test_classifier_pixel_sims_is_handoff():
     assert hit.reason == "pixel_sims_handoff"
     assert hit.prompt == PIXEL_HANDOFF_PROMPT
     assert hit.human_click_label == "Add SIM"
+    spa = classify_setup_ui(
+        None,
+        "com.android.settings/.spa.SpaActivity",
+        oem="pixel",
+    )
+    assert spa.state == SETUP_UI_AWAITING
+    assert spa.reason == "pixel_sims_handoff"
+    sim_mgr = classify_setup_ui(
+        None,
+        "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity",
+        oem="samsung",
+    )
+    assert sim_mgr.state == SETUP_UI_AWAITING
+    assert sim_mgr.reason == "sim_manager_handoff"
 
 
 def test_guard_does_not_recover_after_walk_or_profile():
