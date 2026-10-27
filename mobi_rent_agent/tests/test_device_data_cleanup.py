@@ -45,6 +45,7 @@ class CleanupRunner(AdbCommandRunner):
         self._state = state
         self.fail_on = fail_on
         self.calls: list[tuple[str, list[str]]] = []
+        self.dumpsys_activity = ""
 
     def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
         self.calls.append((serial, arguments))
@@ -55,6 +56,11 @@ class CleanupRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="", stderr="")
         if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
             return AdbCommandResult(stdout="1", stderr="")
+        if tuple(arguments[:3]) in {
+            ("shell", "dumpsys", "window"),
+            ("shell", "dumpsys", "activity"),
+        }:
+            return AdbCommandResult(stdout=self.dumpsys_activity, stderr="")
         if self.fail_on and self.fail_on in joined:
             raise AdbCommandError("injected failure")
         if arguments[:2] == ["shell", "pm"] and arguments[2] == "clear" and arguments[3].endswith(".missing"):
@@ -550,8 +556,13 @@ def test_device_screen_prepare_resets_display_and_unlocks():
 
 def test_device_screen_prepare_skip_home_omits_keycode_home():
     from application.device_screen_prepare import run_device_screen_prepare
+    from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
 
     runner = CleanupRunner()
+    runner.dumpsys_activity = (
+        "mCurrentFocus=Window{abc u0 com.sec.android.app.launcher/"
+        "com.sec.android.app.launcher.Launcher}"
+    )
     result = run_device_screen_prepare(
         adb_path="adb",
         slot_map={21: S20_SERIAL},
@@ -565,13 +576,72 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     )
     assert result.ok is True
     scripts = " ".join(args[1] for _serial, args in runner.calls if args and args[0] == "shell")
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
     assert "KEYCODE_WAKEUP" in scripts
     assert "dismiss-keyguard" in scripts
-    assert "KEYCODE_HOME" not in scripts
-    assert "input keyevent 3" not in scripts
+    assert "KEYCODE_HOME" not in joined
+    assert "input keyevent 3" not in joined
     assert "wm size" not in scripts
     assert "wm density" not in scripts
     assert "input swipe" not in scripts
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "input tap" not in joined
+    assert "uiautomator" not in joined
+    assert result.details["skip_home"] is True
+
+
+def test_device_screen_prepare_skip_home_keeps_open_sim_manager():
+    from application.device_screen_prepare import run_device_screen_prepare
+    from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
+
+    runner = CleanupRunner()
+    runner.dumpsys_activity = (
+        "mCurrentFocus=Window{abc u0 com.samsung.android.app.telephonyui/"
+        ".netsettings.ui.simcardmanager.SimCardMgrActivity}"
+    )
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep-already-open",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"skip_home": True},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
+    assert "KEYCODE_HOME" not in joined
+    assert result.details["esim_setup_launched"] == "already_open"
+
+
+def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    runner = CleanupRunner()
+    runner.dumpsys_activity = (
+        "mCurrentFocus=Window{abc u0 com.google.android.apps.nexuslauncher/"
+        ".NexusLauncherActivity}"
+    )
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={1: PIXEL_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep-pixel-home",
+            task_type="device_screen_prepare",
+            farm_slot_id=1,
+            payload={"setup_ui_state": "awaiting_human_click"},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "KEYCODE_HOME" not in joined
+    assert "input tap" not in joined
+    assert "uiautomator" not in joined
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():

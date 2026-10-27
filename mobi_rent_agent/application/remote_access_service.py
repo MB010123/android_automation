@@ -1619,7 +1619,12 @@ class RemoteAccessService:
 
     def _slot_awaiting_esim(self, slot_id: int) -> bool:
         session = self._store.active_for_slot(int(slot_id)) or self._store.latest_for_slot(int(slot_id))
-        return bool(session and str(session.setup_ui_state or "") == SETUP_UI_AWAITING)
+        if session is None or session.setup_complete:
+            return False
+        if str(session.setup_ui_state or "") == SETUP_UI_AWAITING:
+            return True
+        phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
+        return phase == PHASE_ESIM
 
     def _prepare_device_screen(
         self, slot_id: int, *, wait_boot: bool, skip_home: bool | None = None

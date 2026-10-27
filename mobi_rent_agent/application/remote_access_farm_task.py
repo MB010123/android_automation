@@ -134,6 +134,17 @@ SAMSUNG_HANDOFF_PACKAGES = frozenset(
         "com.samsung.android.euicc",
     }
 )
+ESIM_LIVE_PACKAGES = SAMSUNG_HANDOFF_PACKAGES | {
+    PIXEL_SETTINGS_PACKAGE,
+    "com.google.android.euicc",
+    "com.android.euicc",
+    "com.sec.android.gallery3d",
+    "com.samsung.android.gallery3d",
+    "com.google.android.apps.photos",
+    "com.google.android.documentsui",
+    "com.android.documentsui",
+    "com.google.android.photospicker",
+}
 PIXEL_HANDOFF_TEXT = (
     "add sim",
     "set up an esim",
@@ -349,6 +360,16 @@ def oem_setup_screen_is_open(component: str | None, oem: str) -> bool:
     return pkg in {"com.google.android.euicc", "com.android.euicc"}
 
 
+def esim_live_screen_is_open(component: str | None, oem: str) -> bool:
+    """Foreground is SIM/eSIM settings or the customer's Gallery/Photos picker."""
+    if oem_setup_screen_is_open(component, oem):
+        return True
+    if not component or foreground_is_launcher(component):
+        return False
+    pkg = package_from_component(component).strip().lower()
+    return pkg in ESIM_LIVE_PACKAGES
+
+
 def esim_handoff_is_open(component: str, oem: str, ui_xml: str = "") -> bool:
     if oem_setup_screen_is_open(component, oem):
         return True
@@ -386,6 +407,18 @@ def disable_native_cameras(runner: AdbCommandRunner, serial: str, oem: str) -> N
 def enable_native_cameras(runner: AdbCommandRunner, serial: str) -> None:
     for command in enable_native_camera_commands():
         _try_shell(runner, serial, ["shell", *command.split()])
+
+
+def ensure_esim_setup_screen_open(runner: AdbCommandRunner, serial: str, oem: str) -> str:
+    """Re-open OEM SIM/eSIM settings when dumpsys shows Home or an unrelated app.
+
+    Never taps Add eSIM / Gallery. Leaves Gallery/Photos/euicc alone so the
+    renter can finish the hybrid flow.
+    """
+    component = read_foreground_component(runner, serial)
+    if esim_live_screen_is_open(component, oem):
+        return "already_open"
+    return launch_esim_setup_screen(runner, serial, oem)
 
 
 def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
