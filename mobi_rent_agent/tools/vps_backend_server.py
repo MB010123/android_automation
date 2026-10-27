@@ -934,6 +934,8 @@ class Handler(BaseHTTPRequestHandler):
             result = farm.enable_rental(bay)
         elif kind == "admin_device_cleanup_verified" and bay is not None:
             result = farm.verify_cleanup(bay, body)
+        elif kind in {"farm_clean", "admin_device_clean", "admin_slot_clean"} and bay is not None:
+            result = farm.run_device_data_cleanup(bay, body, require_farm=True)
         elif kind in {"farm_reboot", "admin_device_reboot"} and bay is not None:
             result = farm.reboot_slot(bay)
         elif kind in {

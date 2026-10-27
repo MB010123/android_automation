@@ -20,6 +20,7 @@ from application.vps_api_contract import (
     job_response_body,
     provisioning_phase,
 )
+from application.device_data_cleanup_farm_task import parse_preserve_esim
 from application.slot_identity import serial_for_slot
 from application.vps_farm_inventory import (
     farm_agent_unavailable,
@@ -686,7 +687,7 @@ class VpsFarmManagementService:
         *,
         require_farm: bool = True,
     ) -> ApiResult:
-        """Wipe renter data over Farm ADB. Never reboots or touches eSIM profiles."""
+        """Wipe renter data over Farm ADB. ``preserve_esim`` defaults true."""
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         body = payload if isinstance(payload, dict) else {}
@@ -701,12 +702,23 @@ class VpsFarmManagementService:
             lockdown = lockdown.strip().lower() not in {"0", "false", "no"}
         else:
             lockdown = bool(lockdown) if lockdown is not None else True
-        farm_payload = {"lockdown": lockdown}
+        preserve_esim = parse_preserve_esim(body)
+        farm_payload = {"lockdown": lockdown, "preserve_esim": preserve_esim}
         client = self._farm_tasks
         if client is None:
             if require_farm:
                 return ApiResult(503, error_body("farm_unreachable"))
-            return ApiResult(200, self._cleanup_completed_body(bay, mapped, lockdown, cleared=[]))
+            return ApiResult(
+                200,
+                self._cleanup_completed_body(
+                    bay,
+                    mapped,
+                    lockdown,
+                    cleared=[],
+                    esim_preserved=preserve_esim,
+                    rebooted=False,
+                ),
+            )
         try:
             response = client.run_task(
                 task_type="device_data_cleanup",
@@ -726,7 +738,7 @@ class VpsFarmManagementService:
             fail["slot_id"] = int(bay)
             fail["serial"] = mapped
             fail["status"] = "cleanup_failed"
-            fail["esim_preserved"] = True
+            fail["esim_preserved"] = preserve_esim
             fail["rebooted"] = False
             return ApiResult(status, fail)
         details = {}
@@ -741,6 +753,10 @@ class VpsFarmManagementService:
         lockdown_applied = bool(details.get("lockdown_applied", lockdown))
         raw_warnings = details.get("warnings")
         warnings = [str(item) for item in raw_warnings] if isinstance(raw_warnings, list) else []
+        esim_preserved = details.get("esim_preserved")
+        if esim_preserved is None:
+            esim_preserved = preserve_esim
+        rebooted = bool(details.get("rebooted", False))
         return ApiResult(
             200,
             self._cleanup_completed_body(
@@ -749,6 +765,8 @@ class VpsFarmManagementService:
                 lockdown_applied,
                 cleared=[str(item) for item in cleared],
                 warnings=warnings,
+                esim_preserved=bool(esim_preserved),
+                rebooted=rebooted,
             ),
         )
 
@@ -760,14 +778,16 @@ class VpsFarmManagementService:
         *,
         cleared: list[str],
         warnings: list[str] | None = None,
+        esim_preserved: bool = True,
+        rebooted: bool = False,
     ) -> dict[str, Any]:
         return {
             "ok": True,
             "slot_id": int(bay),
             "serial": serial,
             "status": "cleanup_completed",
-            "esim_preserved": True,
-            "rebooted": False,
+            "esim_preserved": bool(esim_preserved),
+            "rebooted": bool(rebooted),
             "cleared": cleared,
             "lockdown_applied": lockdown_applied,
             "warnings": list(warnings or []),

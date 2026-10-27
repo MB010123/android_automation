@@ -164,8 +164,8 @@ def _schemas() -> dict[str, Any]:
                 "slot_id": {"type": "integer", "minimum": 1, "maximum": 32, "example": 21},
                 "serial": {"type": "string", "nullable": True, "example": "RFCNB056WEV"},
                 "status": {"type": "string", "example": "cleanup_completed"},
-                "esim_preserved": {"type": "boolean", "enum": [True]},
-                "rebooted": {"type": "boolean", "enum": [False]},
+                "esim_preserved": {"type": "boolean"},
+                "rebooted": {"type": "boolean"},
                 "cleared": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -192,6 +192,14 @@ def _schemas() -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "serial": {"type": "string", "example": "RFCNB056WEV"},
+                "preserve_esim": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "true (default): clean user data and keep eSIM profiles. "
+                        "false: factory reset / recovery wipe that removes eSIM profiles."
+                    ),
+                },
                 "lockdown": {"type": "boolean", "default": True},
                 "force": {
                     "type": "boolean",
@@ -930,6 +938,14 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "required": True,
         "schema": {"type": "integer", "minimum": 1, "maximum": 32},
         "example": 4,
+    }
+    admin_slot_param = {
+        "name": "slot_id",
+        "in": "path",
+        "required": True,
+        "schema": {"type": "string"},
+        "description": "Farm bay (1–32), slot UUID, or ADB serial",
+        "example": "21",
     }
     action_param = {
         "name": "action",
@@ -1727,12 +1743,13 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "/farm/slots/{bay}/auto-cleanup": {
             "post": {
                 "tags": ["Farm management"],
-                "summary": "Wipe renter data over ADB without reboot or eSIM changes",
+                "summary": "Wipe renter data over ADB",
                 "description": (
                     "Farm-service token or admin JWT. Resolves the ADB serial from `slot_map.json`. "
                     "Optional body `serial` is verified against that map. Optional `lockdown` "
                     "(default true) disables Play Store, Galaxy Store, browsers, and file managers. "
-                    "Never reboots and never deletes eSIM profiles. Gallery and Settings stay enabled."
+                    "`preserve_esim` defaults true (clean phone, keep eSIM). `preserve_esim=false` "
+                    "factory-resets the device and removes eSIM profiles. Never EuiccManager."
                 ),
                 "security": bearer,
                 "parameters": [bay_param],
@@ -1757,6 +1774,102 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "403": {"description": "admin_forbidden"},
                     "404": {"description": "slot_not_found"},
                     "409": {"description": "serial_mismatch | device_offline"},
+                },
+            }
+        },
+        "/farm/slots/{bay}/clean": {
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Clean phone (keep or wipe eSIM)",
+                "description": (
+                    "Same as `/admin/slots/{slot_id}/clean`. `preserve_esim` defaults true."
+                ),
+                "security": bearer,
+                "parameters": [bay_param],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/DeviceDataCleanupRequest"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Cleanup completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceDataCleanupResponse"},
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "serial_mismatch | device_offline"},
+                },
+            }
+        },
+        "/admin/slots/{slot_id}/clean": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Clean Phone (Keep eSIM) or Full Wipe & Delete eSIM",
+                "description": (
+                    "Admin JWT or farm-service token. Body `preserve_esim` defaults true: "
+                    "ADB `pm clear`, cache, accounts, and launcher reset without touching the "
+                    "eUICC partition. `preserve_esim=false` factory-resets (`FACTORY_RESET` / "
+                    "`adb reboot recovery`) and removes eSIM profiles. Never EuiccManager."
+                ),
+                "security": bearer,
+                "parameters": [admin_slot_param],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/DeviceDataCleanupRequest"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Cleanup completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceDataCleanupResponse"},
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "admin_forbidden"},
+                    "404": {"description": "slot_not_found"},
+                    "409": {"description": "serial_mismatch | device_offline"},
+                    "503": {"$ref": "#/components/responses/FarmUnreachable"},
+                },
+            }
+        },
+        "/admin/devices/{bay}/clean": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Clean phone (same as /admin/slots/{slot_id}/clean)",
+                "security": bearer,
+                "parameters": [bay_param],
+                "requestBody": {
+                    "required": False,
+                    "content": {
+                        "application/json": {
+                            "schema": {"$ref": "#/components/schemas/DeviceDataCleanupRequest"},
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Cleanup completed",
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": "#/components/schemas/DeviceDataCleanupResponse"},
+                            }
+                        },
+                    },
                 },
             }
         },

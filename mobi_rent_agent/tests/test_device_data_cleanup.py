@@ -11,8 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.device_data_cleanup_farm_task import (
+    ACCOUNT_CLEAR_PACKAGES,
+    FACTORY_RESET_COMMANDS,
+    LAUNCHER_CLEAR_PACKAGES,
     LOCKDOWN_PACKAGES,
     PRESERVED_PACKAGES,
+    parse_preserve_esim,
     run_device_data_cleanup,
 )
 from application.farm_agent_tasks import parse_farm_task_body
@@ -47,6 +51,10 @@ class CleanupRunner(AdbCommandRunner):
         joined = " ".join(arguments)
         if arguments == ["get-state"]:
             return AdbCommandResult(stdout=self._state, stderr="")
+        if arguments == ["wait-for-device"] or arguments[:1] == ["reboot"]:
+            return AdbCommandResult(stdout="", stderr="")
+        if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
+            return AdbCommandResult(stdout="1", stderr="")
         if self.fail_on and self.fail_on in joined:
             raise AdbCommandError("injected failure")
         if arguments[:2] == ["shell", "pm"] and arguments[2] == "clear" and arguments[3].endswith(".missing"):
@@ -106,7 +114,15 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     assert details["esim_preserved"] is True
     assert details["rebooted"] is False
     assert details["lockdown_applied"] is True
-    assert details["cleared"] == ["files", "call_log", "contacts", "sms_mms", "browsers"]
+    assert details["cleared"] == [
+        "files",
+        "call_log",
+        "contacts",
+        "sms_mms",
+        "browsers",
+        "accounts",
+        "launchers",
+    ]
     assert details["warnings"] == []
     assert [args[0] for _serial, args in runner.calls] == ["get-state", "shell"]
     script = runner.calls[1][1][1]
@@ -130,6 +146,13 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
         assert f"pm disable-user --user 0 {package}" in script
     for package in PRESERVED_PACKAGES:
         assert f"disable-user --user 0 {package}" not in script
+    for package in ACCOUNT_CLEAR_PACKAGES:
+        assert f"pm clear {package}" in script
+    for package in LAUNCHER_CLEAR_PACKAGES:
+        assert f"pm clear {package}" in script
+    assert "WIPE_ESIMS" not in script
+    assert "FACTORY_RESET" not in script
+    assert "MASTER_CLEAR" not in script
 
 
 def test_cleanup_lockdown_false_skips_disable():
@@ -217,6 +240,8 @@ class MockCleanupFarm:
         self.calls.append(dict(kwargs))
         if self.fail:
             return FarmTaskResponse(ok=False, http_status=self.http_status, body={}, error=self.error)
+        payload = kwargs.get("payload") if isinstance(kwargs.get("payload"), dict) else {}
+        preserve = parse_preserve_esim(payload if isinstance(payload, dict) else {})
         return FarmTaskResponse(
             ok=True,
             http_status=200,
@@ -226,9 +251,17 @@ class MockCleanupFarm:
                     "slot_id": kwargs.get("farm_slot_id"),
                     "serial": S20_SERIAL,
                     "status": "cleanup_completed",
-                    "esim_preserved": True,
-                    "rebooted": False,
-                    "cleared": ["files", "call_log", "contacts", "sms_mms", "browsers"],
+                    "esim_preserved": preserve,
+                    "rebooted": not preserve,
+                    "cleared": [
+                        "files",
+                        "call_log",
+                        "contacts",
+                        "sms_mms",
+                        "browsers",
+                        "accounts",
+                        "launchers",
+                    ],
                     "lockdown_applied": True,
                 },
             },
@@ -291,13 +324,21 @@ def test_vps_auto_cleanup_returns_slot_and_serial(tmp_path: Path):
         "status": "cleanup_completed",
         "esim_preserved": True,
         "rebooted": False,
-        "cleared": ["files", "call_log", "contacts", "sms_mms", "browsers"],
+        "cleared": [
+            "files",
+            "call_log",
+            "contacts",
+            "sms_mms",
+            "browsers",
+            "accounts",
+            "launchers",
+        ],
         "lockdown_applied": True,
         "warnings": [],
     }
     assert farm.calls[0]["task_type"] == "device_data_cleanup"
     assert farm.calls[0]["farm_slot_id"] == 21
-    assert farm.calls[0]["payload"] == {"lockdown": True}
+    assert farm.calls[0]["payload"] == {"lockdown": True, "preserve_esim": True}
     assert "serial" not in farm.calls[0]["payload"]
 
 
@@ -378,6 +419,76 @@ def test_auto_cleanup_route_parses_slot_21():
     listed = parse_route("/farm/slots")
     assert listed is not None
     assert listed.kind == "farm_slots"
+
+
+def test_parse_preserve_esim_defaults_true():
+    assert parse_preserve_esim(None) is True
+    assert parse_preserve_esim({}) is True
+    assert parse_preserve_esim({"preserve_esim": True}) is True
+    assert parse_preserve_esim({"preserve_esim": "false"}) is False
+    assert parse_preserve_esim({"preserve_esim": 0}) is False
+
+
+def test_keep_esim_cleanup_does_not_factory_reset():
+    runner = CleanupRunner()
+    result = run_device_data_cleanup(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=_request(preserve_esim=True),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    assert result.details["esim_preserved"] is True
+    assert result.details["rebooted"] is False
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "FACTORY_RESET" not in joined
+    assert "reboot recovery" not in joined
+    assert "euicc" not in joined.lower()
+
+
+def test_full_wipe_factory_resets_and_reboots_recovery():
+    runner = CleanupRunner()
+    result = run_device_data_cleanup(
+        adb_path="adb",
+        slot_map={21: S20_SERIAL},
+        request=_request(preserve_esim=False),
+        command_runner=runner,
+        sleep_fn=lambda _s: None,
+    )
+    assert result.ok is True, (result.error, result.details)
+    assert result.details["esim_preserved"] is False
+    assert result.details["rebooted"] is True
+    assert result.details["status"] == "cleanup_completed"
+    assert any(args[:2] == ["reboot", "recovery"] for _s, args in runner.calls)
+    scripts = " ".join(args[1] for _s, args in runner.calls if args and args[0] == "shell")
+    for command in FACTORY_RESET_COMMANDS:
+        assert command in scripts
+    assert "WIPE_ESIMS" in scripts
+    assert "EuiccManager" not in scripts
+    assert "pm clear com.android.euicc" not in scripts
+    assert ("RFCNB056WEV", ["wait-for-device"]) in runner.calls
+
+
+def test_admin_clean_routes_parse():
+    admin = parse_route("/admin/slots/21/clean")
+    assert admin is not None and admin.kind == "admin_slot_clean" and admin.farm_bay == 21
+    devices = parse_route("/admin/devices/21/clean")
+    assert devices is not None and devices.kind == "admin_device_clean" and devices.farm_bay == 21
+    farm = parse_route("/farm/slots/21/clean")
+    assert farm is not None and farm.kind == "farm_clean" and farm.farm_bay == 21
+
+
+def test_vps_clean_slot_wipes_esim_when_requested(tmp_path: Path):
+    svc, farm = _farm_svc(tmp_path)
+    kept = svc.run_device_data_cleanup(21, {}, require_farm=True)
+    assert kept.http_status == 200
+    assert kept.body["esim_preserved"] is True
+    assert kept.body["rebooted"] is False
+    wiped = svc.run_device_data_cleanup(21, {"preserve_esim": False}, require_farm=True)
+    assert wiped.http_status == 200, wiped.body
+    assert wiped.body["esim_preserved"] is False
+    assert wiped.body["rebooted"] is True
+    assert farm.calls[-1]["payload"]["preserve_esim"] is False
 
 
 def test_device_screen_prepare_resets_display_and_unlocks():

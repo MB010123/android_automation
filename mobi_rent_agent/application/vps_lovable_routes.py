@@ -42,7 +42,7 @@ RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
 RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$")
 RE_FARM_SLOT_OP = re.compile(
     r"^/farm/slots/(\d{1,2})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|clean)$"
 )
 RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 # Admin live view. The device reference may be a farm bay number (1–32), a
@@ -51,8 +51,9 @@ RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 _DEVICE_REF = r"[0-9a-zA-Z\-]{1,64}"
 RE_ADMIN_DEVICE_OP = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|cleanup-verified)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|cleanup-verified|clean)$"
 )
+RE_ADMIN_SLOT_CLEAN = re.compile(rf"^/admin/slots/({_DEVICE_REF})/clean$")
 RE_ADMIN_LIVE_ACCESS = re.compile(rf"^/admin/devices/({_DEVICE_REF})/live-access$")
 RE_ADMIN_LIVE_ACCESS_ACTION = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/live-access/(stream|control|close|airplane-mode)$"
@@ -96,6 +97,7 @@ _FARM_SLOT_KIND = {
     "disable-rental": "farm_disable_rental",
     "enable-rental": "farm_enable_rental",
     "force-available": "farm_force_available",
+    "clean": "farm_clean",
 }
 _ADMIN_DEVICE_KIND = {
     "reboot": "admin_device_reboot",
@@ -105,10 +107,14 @@ _ADMIN_DEVICE_KIND = {
     "enable-rental": "admin_device_enable",
     "force-available": "admin_device_force_available",
     "cleanup-verified": "admin_device_cleanup_verified",
+    "clean": "admin_device_clean",
 }
 FARM_OR_ADMIN_KINDS = frozenset(
     {
         "farm_auto_cleanup",
+        "farm_clean",
+        "admin_device_clean",
+        "admin_slot_clean",
         "farm_reboot",
         "farm_airplane_mode",
         "farm_about_phone",
@@ -158,6 +164,14 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="farm_available")
     if m := RE_FARM_AUTO_CLEANUP.match(path):
         return ParsedRoute(kind="farm_auto_cleanup", farm_bay=int(m.group(1)))
+    if m := RE_ADMIN_SLOT_CLEAN.match(path):
+        ref = m.group(1)
+        return ParsedRoute(
+            kind="admin_slot_clean",
+            farm_bay=int(ref) if ref.isdigit() else None,
+            action="clean",
+            device_ref=ref,
+        )
     if m := RE_FARM_ASSIGN.match(path):
         return ParsedRoute(kind="farm_assign", farm_bay=int(m.group(1)))
     if m := RE_FARM_CLEANUP_VERIFIED.match(path):

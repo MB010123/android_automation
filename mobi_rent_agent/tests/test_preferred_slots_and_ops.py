@@ -174,6 +174,8 @@ def test_farm_and_admin_routes_parse():
     assert admin_force is not None and admin_force.kind == "admin_device_force_available"
     admin_cleanup = parse_route("/admin/devices/2/cleanup-verified")
     assert admin_cleanup is not None and admin_cleanup.kind == "admin_device_cleanup_verified"
+    admin_clean = parse_route("/admin/slots/21/clean")
+    assert admin_clean is not None and admin_clean.kind == "admin_slot_clean" and admin_clean.farm_bay == 21
 
 
 def test_disable_rental_turns_airplane_on_enable_clears_lock(tmp_path: Path):
