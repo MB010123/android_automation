@@ -58,13 +58,17 @@ def test_customer_cancel_revokes_and_holds_cleanup(tmp_path: Path):
     assert stranger.body["error"] in {"rental_not_owned", "rental_not_found"}
 
 
-def test_verify_rejected_while_still_occupied(tmp_path: Path):
+def test_verify_cleanup_wipes_but_keeps_active_rental(tmp_path: Path):
     svc, _w, _j, _a, reservations, tenant, _e, _g = _harness(tmp_path)
     rental = _seed(tenant, bay=1, rental_id=str(uuid.uuid4()), user_id=OWNER_A)
     assert svc.reserve_slot(1, {"rental_id": rental}).http_status == 200
-    blocked = svc.verify_cleanup(1)
-    assert blocked.http_status == 409
+    cleaned = svc.verify_cleanup(1)
+    assert cleaned.http_status == 200, cleaned.body
+    assert cleaned.body["rental_preserved"] is True
+    assert cleaned.body["rental_id"] == rental
+    assert cleaned.body.get("available") is not True
     assert reservations.is_reserved(1) is True
+    assert tenant.owner_of_slot(1) == OWNER_A
 
 
 def test_slot_21_cleanup_hold_can_be_verified_without_voidfix_catalog(tmp_path: Path):

@@ -335,6 +335,7 @@ def test_vps_auto_cleanup_returns_slot_and_serial(tmp_path: Path):
         ],
         "lockdown_applied": True,
         "warnings": [],
+        "rental_preserved": False,
     }
     assert farm.calls[0]["task_type"] == "device_data_cleanup"
     assert farm.calls[0]["farm_slot_id"] == 21
@@ -476,6 +477,24 @@ def test_admin_clean_routes_parse():
     assert devices is not None and devices.kind == "admin_device_clean" and devices.farm_bay == 21
     farm = parse_route("/farm/slots/21/clean")
     assert farm is not None and farm.kind == "farm_clean" and farm.farm_bay == 21
+
+
+def test_admin_clean_runs_on_active_rental_and_keeps_assignment(tmp_path: Path):
+    svc, farm = _farm_svc(tmp_path)
+    rental = str(uuid.uuid4())
+    assert svc._reservations.claim(21, rental) is True
+    assert svc._assignments.claim(21, rental, "job-clean") is True
+    result = svc.run_device_data_cleanup(21, {"preserve_esim": True}, require_farm=True)
+    assert result.http_status == 200, result.body
+    assert result.body["status"] == "cleanup_completed"
+    assert result.body["esim_preserved"] is True
+    assert result.body["rental_preserved"] is True
+    assert result.body["rental_id"] == rental
+    assert result.body["rebooted"] is False
+    assert svc._reservations.is_reserved(21) is True
+    assert svc._assignments.is_assigned(21) is True
+    assert svc._reservations.get(21).rental_id == rental
+    assert farm.calls[0]["payload"] == {"lockdown": True, "preserve_esim": True}
 
 
 def test_vps_clean_slot_wipes_esim_when_requested(tmp_path: Path):

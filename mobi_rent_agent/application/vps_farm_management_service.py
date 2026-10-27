@@ -634,20 +634,20 @@ class VpsFarmManagementService:
         return self.end_rental(rental, explicit=True)
 
     def verify_cleanup(self, bay: int, payload: dict[str, Any] | None = None) -> ApiResult:
-        """Admin-only: ADB wipe then CLEANUP REQUIRED → AVAILABLE.
+        """Admin-only: ADB wipe, then CLEANUP REQUIRED → AVAILABLE when free.
 
-        Enable always releases the hold when the bay is free. Farm errors,
-        timeouts, and unrooted ADB denials become ``cleanup_warning``.
-        Occupied bays still 409.
+        An active rental no longer blocks this. Occupied bays still wipe
+        (``preserve_esim`` default true) but keep the reservation, assignment,
+        tenant owner, and eSIM. Farm errors become ``cleanup_warning`` when
+        the bay is free.
         """
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
-        if self._reservations.is_reserved(bay) or self._assignments.is_assigned(bay):
-            return ApiResult(409, error_body("slot_unavailable"))
-        if self._slot_has_active_job(bay):
+        if self._slot_has_active_job(bay) and not self._bay_has_active_rental(bay):
             return ApiResult(409, error_body("slot_unavailable"))
         body = payload if isinstance(payload, dict) else {}
         force = _truthy(body.get("force"))
+        occupied = self._bay_has_active_rental(bay)
         hold_required = self._cleanup.is_required(bay)
         wipe = self.run_device_data_cleanup(bay, body, require_farm=False)
         cleanup_warning = None
@@ -657,6 +657,24 @@ class VpsFarmManagementService:
                 return wipe
             cleanup_warning = error
             logger.warning("cleanup_verified_continuing bay=%s error=%s", bay, error)
+        if occupied:
+            out = dict(wipe.body) if isinstance(wipe.body, dict) else {}
+            out["ok"] = wipe.http_status < 400
+            out["status"] = "cleanup_completed" if wipe.http_status < 400 else str(
+                out.get("status") or "cleanup_failed"
+            )
+            out["available"] = False
+            out["cleanup"] = "not_required"
+            out["bay"] = bay
+            out["public_slot_id"] = public_id_for_farm_slot(bay)
+            out["forced"] = force
+            out["rental_preserved"] = True
+            rental_id = self._active_rental_id(bay)
+            if rental_id:
+                out["rental_id"] = rental_id
+            if cleanup_warning:
+                out["cleanup_warning"] = cleanup_warning
+            return ApiResult(200 if wipe.http_status < 400 else wipe.http_status, out)
         if hold_required:
             self._cleanup.clear(bay)
             self._events.append(bay, "device_cleanup_verified", "admin_verified_available")
@@ -687,7 +705,12 @@ class VpsFarmManagementService:
         *,
         require_farm: bool = True,
     ) -> ApiResult:
-        """Wipe renter data over Farm ADB. ``preserve_esim`` defaults true."""
+        """Wipe renter data over Farm ADB. ``preserve_esim`` defaults true.
+
+        Admins may run this while the bay has an active rental. It never
+        releases the VPS reservation, assignment, or tenant owner. Keep-eSIM
+        (default) also leaves the eUICC profile on the phone.
+        """
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         body = payload if isinstance(payload, dict) else {}
@@ -740,6 +763,7 @@ class VpsFarmManagementService:
             fail["status"] = "cleanup_failed"
             fail["esim_preserved"] = preserve_esim
             fail["rebooted"] = False
+            fail.update(self._rental_preserved_fields(bay))
             return ApiResult(status, fail)
         details = {}
         raw_body = getattr(response, "body", None)
@@ -781,7 +805,7 @@ class VpsFarmManagementService:
         esim_preserved: bool = True,
         rebooted: bool = False,
     ) -> dict[str, Any]:
-        return {
+        body = {
             "ok": True,
             "slot_id": int(bay),
             "serial": serial,
@@ -792,6 +816,31 @@ class VpsFarmManagementService:
             "lockdown_applied": lockdown_applied,
             "warnings": list(warnings or []),
         }
+        body.update(self._rental_preserved_fields(bay))
+        return body
+
+    def _bay_has_active_rental(self, bay: int) -> bool:
+        return self._reservations.is_reserved(int(bay)) or self._assignments.is_assigned(int(bay))
+
+    def _active_rental_id(self, bay: int) -> str | None:
+        held = self._reservations.get(int(bay))
+        if held is not None:
+            text = str(held.rental_id or "").strip()
+            if text:
+                return text
+        assigned = self._assignments.get(int(bay))
+        if assigned is not None:
+            text = str(assigned.rental_id or "").strip()
+            if text:
+                return text
+        return None
+
+    def _rental_preserved_fields(self, bay: int) -> dict[str, Any]:
+        rental_id = self._active_rental_id(bay)
+        body: dict[str, Any] = {"rental_preserved": bool(rental_id) or self._bay_has_active_rental(bay)}
+        if rental_id:
+            body["rental_id"] = rental_id
+        return body
 
     def _serial_for(self, bay: int) -> str | None:
         return serial_for_slot(self._slot_serial_map, bay)

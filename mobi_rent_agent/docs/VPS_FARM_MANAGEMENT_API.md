@@ -180,8 +180,14 @@ Exceeded limits return `429 rate_limited`. Limits are in-process (per VPS servic
 
 ## Cleanup verification vs admin live view
 
+`POST /admin/slots/{slot_id}/clean` (aliases `/admin/devices/{bay}/clean` and
+`/farm/slots/{bay}/clean`) wipes phone data immediately, including during an
+active rental. `preserve_esim` defaults true: keep the eSIM and the rental
+assignment. It does not release the reservation or make the bay available.
+
 `POST /farm/slots/{bay}/cleanup-verified` remains farm-service-only and is the
-only API that clears CLEANUP REQUIRED. Administrator live view
+only API that clears CLEANUP REQUIRED on a **free** bay. If the bay is still
+rented it wipes like `/clean` and keeps the rental. Administrator live view
 (`POST /admin/devices/{bay}/live-access`, see [ADMIN_LIVE_ACCESS.md](ADMIN_LIVE_ACCESS.md))
 can show a cleanup-pending phone but never marks cleanup complete or makes the
 bay available again.

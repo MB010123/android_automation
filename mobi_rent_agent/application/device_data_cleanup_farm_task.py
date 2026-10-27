@@ -13,6 +13,8 @@ After the device returns, re-apply lockdown. Never silent LPA/EuiccManager.
 One ``adb -s <serial> shell`` script (``cmd; true`` per step) so Windows
 does not spawn 15 ADB processes or fail on unrooted denials. Keep-eSIM
 fails only when the bay is unknown or ADB ``get-state`` is not ``device``.
+This task has no rental/reservation gate; the VPS admin clean endpoints may
+run it on an active rental.
 """
 from __future__ import annotations
 

@@ -158,7 +158,7 @@ def _schemas() -> dict[str, Any]:
         },
         "DeviceDataCleanupResponse": {
             "type": "object",
-            "required": ["ok", "slot_id", "serial", "status", "esim_preserved", "rebooted"],
+            "required": ["ok", "slot_id", "serial", "status", "esim_preserved", "rebooted", "rental_preserved"],
             "properties": {
                 "ok": {"type": "boolean"},
                 "slot_id": {"type": "integer", "minimum": 1, "maximum": 32, "example": 21},
@@ -166,6 +166,18 @@ def _schemas() -> dict[str, Any]:
                 "status": {"type": "string", "example": "cleanup_completed"},
                 "esim_preserved": {"type": "boolean"},
                 "rebooted": {"type": "boolean"},
+                "rental_preserved": {
+                    "type": "boolean",
+                    "description": (
+                        "True when the bay still has an active reservation or assignment "
+                        "after cleanup. Admin clean never releases a live rental."
+                    ),
+                },
+                "rental_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Active rental kept on the bay, when present.",
+                },
                 "cleared": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1751,7 +1763,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "Optional body `serial` is verified against that map. Optional `lockdown` "
                     "(default true) disables Play Store, Galaxy Store, browsers, and file managers. "
                     "`preserve_esim` defaults true (clean phone, keep eSIM). `preserve_esim=false` "
-                    "factory-resets the device and removes eSIM profiles. Never EuiccManager."
+                    "factory-resets the device and removes eSIM profiles. Never EuiccManager. "
+                    "Runs even while the bay has an active rental; it does not release the rental."
                 ),
                 "security": bearer,
                 "parameters": [bay_param],
@@ -1784,7 +1797,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "tags": ["Farm management"],
                 "summary": "Clean phone (keep or wipe eSIM)",
                 "description": (
-                    "Same as `/admin/slots/{slot_id}/clean`. `preserve_esim` defaults true."
+                    "Same as `/admin/slots/{slot_id}/clean`. Runs with an active rental. "
+                    "`preserve_esim` defaults true."
                 ),
                 "security": bearer,
                 "parameters": [bay_param],
@@ -1817,10 +1831,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "tags": ["Admin"],
                 "summary": "Clean Phone (Keep eSIM) or Full Wipe & Delete eSIM",
                 "description": (
-                    "Admin JWT or farm-service token. Body `preserve_esim` defaults true: "
+                    "Admin JWT or farm-service token. Runs immediately even when the slot has "
+                    "an active rental or remote session. Body `preserve_esim` defaults true: "
                     "ADB `pm clear`, cache, accounts, and launcher reset without touching the "
-                    "eUICC partition. `preserve_esim=false` factory-resets (`FACTORY_RESET` / "
-                    "`adb reboot recovery`) and removes eSIM profiles. Never EuiccManager."
+                    "eUICC partition, reservation, or assignment. `preserve_esim=false` "
+                    "factory-resets (`FACTORY_RESET` / `adb reboot recovery`) and removes eSIM "
+                    "profiles but still does not end the rental. Never EuiccManager."
                 ),
                 "security": bearer,
                 "parameters": [admin_slot_param],
