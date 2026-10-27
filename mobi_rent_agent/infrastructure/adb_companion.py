@@ -25,14 +25,20 @@ class AdbCommandRunner:
         self._adb_path = adb_path
         self._timeout = timeout_seconds
 
-    def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+    def run(
+        self,
+        serial: str,
+        arguments: list[str],
+        timeout_seconds: float | None = None,
+    ) -> AdbCommandResult:
         command = [self._adb_path, "-s", serial, *arguments]
+        timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
         try:
             completed = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
-                timeout=self._timeout,
+                timeout=timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -47,14 +53,20 @@ class AdbCommandRunner:
             raise AdbCommandError(f"ADB command failed for serial {serial}: {detail}")
         return AdbCommandResult(stdout=completed.stdout.strip(), stderr=completed.stderr.strip())
 
-    def run_bytes(self, serial: str, arguments: list[str]) -> bytes:
+    def run_bytes(
+        self,
+        serial: str,
+        arguments: list[str],
+        timeout_seconds: float | None = None,
+    ) -> bytes:
         """Binary ADB stdout (screencap). Does not decode as text."""
         command = [self._adb_path, "-s", serial, *arguments]
+        timeout = self._timeout if timeout_seconds is None else float(timeout_seconds)
         try:
             completed = subprocess.run(
                 command,
                 capture_output=True,
-                timeout=self._timeout,
+                timeout=timeout,
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:

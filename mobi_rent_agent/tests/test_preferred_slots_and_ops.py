@@ -1,6 +1,7 @@
 """Preferred next slot, rental disable, about-phone, and airplane farm tasks."""
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
@@ -479,3 +480,83 @@ def test_farm_task_client_retries_connection_then_unreachable():
     )
     assert response.error == "farm_unreachable"
     assert session.posts == 2
+
+
+SAVED_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10\x00\x00\x00\x10"
+    b"\x08\x02\x00\x00\x00\x90wS\xde" + (b"\x00" * 280) + b"IEND\xaeB`\x82"
+)
+SAVED_IMAGE = "data:image/png;base64," + base64.b64encode(SAVED_PNG).decode("ascii")
+
+
+class _ScreenshotFarm:
+    def __init__(self) -> None:
+        self.tasks: list[dict] = []
+
+    def run_task(self, **kwargs):
+        self.tasks.append(dict(kwargs))
+        slot = int(kwargs["farm_slot_id"])
+        return FarmTaskResponse(
+            ok=True,
+            http_status=200,
+            body={
+                "ok": True,
+                "details": {
+                    "ok": True,
+                    "slot_id": slot,
+                    "serial": f"SER-{slot}",
+                    "image_base64": SAVED_IMAGE,
+                    "about_page_verified": True,
+                },
+            },
+        )
+
+
+def test_about_phone_saves_first_screenshot_and_reuses_it(tmp_path: Path):
+    farm = _ScreenshotFarm()
+    svc, *_ = _farm_svc(tmp_path, farm=farm)
+    first = svc.about_phone_screenshot(4)
+    assert first.http_status == 200
+    assert first.body["cached"] is False
+    assert first.body["image_base64"] == SAVED_IMAGE
+    assert len(farm.tasks) == 1
+    second = svc.about_phone_screenshot(4)
+    assert second.http_status == 200
+    assert second.body["cached"] is True
+    assert second.body["image_base64"] == SAVED_IMAGE
+    assert second.body["slot_id"] == 4
+    assert second.body["serial"] == "SER-4"
+    assert len(farm.tasks) == 1
+
+
+def test_about_phone_captures_when_slot_has_no_saved_photo(tmp_path: Path):
+    farm = _ScreenshotFarm()
+    svc, *_ = _farm_svc(tmp_path, farm=farm)
+    missing = svc.about_phone_screenshot(21)
+    assert missing.body["cached"] is False
+    assert missing.body["image_base64"] == SAVED_IMAGE
+    assert farm.tasks[-1]["farm_slot_id"] == 21
+    reused = svc.about_phone_screenshot(4)
+    assert reused.body["cached"] is False
+    assert farm.tasks[-1]["farm_slot_id"] == 4
+    assert len(farm.tasks) == 2
+
+
+def test_about_phone_store_rejects_placeholder_png(tmp_path: Path):
+    from infrastructure.about_phone_screenshot_store import AboutPhoneScreenshotStore
+
+    store = AboutPhoneScreenshotStore(tmp_path / "about.sqlite")
+    placeholder = (
+        "data:image/png;base64,"
+        + base64.b64encode(
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
+            b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
+        ).decode("ascii")
+    )
+    assert store.put(4, placeholder, serial="SER-4") is None
+    assert store.get(4) is None
+    saved = store.put(4, SAVED_IMAGE, serial="SER-4")
+    assert saved is not None
+    assert store.get(4, serial="SER-4") is not None
+    assert store.get(4, serial="OTHER") is None

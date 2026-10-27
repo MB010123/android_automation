@@ -41,6 +41,7 @@ from infrastructure.vps_rate_limiter import VpsRateLimiter
 from application.auth_service import validate_esim_storage_key
 from application.remote_access_service import rental_end_from_row
 from infrastructure.esim_qr_security import extract_authoritative_esim_ref, validate_authoritative_esim_ref
+from infrastructure.about_phone_screenshot_store import AboutPhoneScreenshotStore
 from infrastructure.device_cleanup_store import DeviceCleanupStore
 from application.preferred_slots import (
     DEFAULT_PREFERRED_NEXT_SLOT_IDS,
@@ -114,6 +115,7 @@ class VpsFarmManagementService:
         credit_billing: Any = None,
         slot_serial_map: dict[int, str] | None = None,
         preferred_next_slot_ids: tuple[int, ...] | None = None,
+        about_phone_store: AboutPhoneScreenshotStore | None = None,
     ) -> None:
         self._jobs = job_store
         self._assignments = assignment_store
@@ -140,6 +142,11 @@ class VpsFarmManagementService:
                 Path(assignment_store.db_path).with_name("device_cleanup.sqlite")
             )
         self._cleanup = cleanup_store
+        if about_phone_store is None:
+            about_phone_store = AboutPhoneScreenshotStore(
+                Path(assignment_store.db_path).with_name("about_phone_screenshots.sqlite")
+            )
+        self._about_phone = about_phone_store
         self._farm_tasks = farm_task_client
         self._credit_billing = credit_billing
         self._slot_serial_map = {
@@ -963,11 +970,15 @@ class VpsFarmManagementService:
         warnings = details.get("warnings")
         if not isinstance(warnings, list):
             warnings = []
-        live_image = details.get("image_base64") if not fallback else None
+        cached = bool(details.get("cached"))
+        live_image = details.get("image_base64")
+        if fallback and not cached:
+            live_image = None
         if fallback:
             warnings = list(warnings)
             if reason and reason not in warnings:
                 warnings.append(reason)
+        image = live_image if isinstance(live_image, str) and live_image else None
         return {
             "ok": True,
             "slot_id": int(bay),
@@ -975,8 +986,9 @@ class VpsFarmManagementService:
             "imei1": _optional_text(details.get("imei1")) or stored.get("imei1"),
             "imei2": _optional_text(details.get("imei2")) or stored.get("imei2"),
             "eid": _optional_text(details.get("eid")) or stored.get("eid"),
-            "image_base64": live_image if isinstance(live_image, str) and live_image else None,
-            "about_page_verified": bool(details.get("about_page_verified")) and not fallback,
+            "image_base64": image,
+            "about_page_verified": bool(details.get("about_page_verified")) and not (fallback and not cached),
+            "cached": cached,
             "fallback": fallback,
             "fallback_reason": reason if fallback else None,
             "warnings": warnings,
@@ -1127,11 +1139,27 @@ class VpsFarmManagementService:
         public["state"] = "on" if public["enabled"] else "off"
         return ApiResult(200, public)
 
+    def _cached_about_phone_details(self, bay: int, stored: dict[str, str | None]) -> dict[str, Any] | None:
+        record = self._about_phone.get(int(bay), serial=stored.get("serial"))
+        if record is None:
+            return None
+        return {
+            "ok": True,
+            "slot_id": int(bay),
+            "serial": record.serial or stored.get("serial"),
+            "image_base64": record.image_base64,
+            "about_page_verified": True,
+            "cached": True,
+        }
+
     def about_phone_screenshot(self, bay: int) -> ApiResult:
         """About Phone screenshot, or stored admin IMEI/EID when Farm is slow."""
         if not self._is_configured_bay(bay, allow_cleanup_hold=True):
             return ApiResult(404, error_body("slot_not_found"))
         stored = self._stored_device_identity(bay)
+        cached = self._cached_about_phone_details(bay, stored)
+        if cached is not None:
+            return ApiResult(200, self._about_phone_body(bay, stored=stored, farm_details=cached))
         client = self._farm_tasks
         if client is None:
             return ApiResult(
@@ -1158,6 +1186,15 @@ class VpsFarmManagementService:
             inner = raw_body.get("details")
             details = dict(inner) if isinstance(inner, dict) else dict(raw_body)
         if getattr(response, "ok", False):
+            saved = self._about_phone.put(
+                int(bay),
+                str(details.get("image_base64") or ""),
+                serial=_optional_text(details.get("serial")) or stored.get("serial"),
+            )
+            if saved is not None:
+                details["image_base64"] = saved.image_base64
+                details["about_page_verified"] = True
+            details["cached"] = False
             return ApiResult(200, self._about_phone_body(bay, stored=stored, farm_details=details))
         error = str(getattr(response, "error", None) or "farm_unreachable")
         reason = "timeout" if is_timeout_error(error) else (

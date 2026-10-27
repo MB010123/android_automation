@@ -1931,8 +1931,10 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "summary": "About Phone screenshot plus IMEI/EID",
                 "description": (
                     "Farm bay maps through slot_map (Phone 4 → slot 4). "
-                    "When the UI dump or screenshot times out, returns 200 with stored "
-                    "admin IMEI/EID and fallback=true instead of 502/504."
+                    "The first verified screenshot is saved per slot; later requests "
+                    "return that photo. A missing photo captures a new screenshot. "
+                    "When the UI dump times out, returns 200 with stored admin IMEI/EID "
+                    "and fallback=true instead of 502/504."
                 ),
                 "security": bearer,
                 "parameters": [bay_param],
@@ -2081,6 +2083,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 "summary": "About Phone screenshot (IMEI / IMEI2 / EID)",
                 "description": (
                     "Same About Phone task as /farm/slots/{bay}/about-phone-screenshot. "
+                    "Serves the saved per-slot screenshot when one exists. "
                     "Returns 200 with stored admin IMEI/EID when Farm Agent times out."
                 ),
                 "security": bearer,

@@ -28,7 +28,7 @@ from application.device_screen_prepare import (
 from application.samsung_one_ui import is_samsung_device, samsung_settings_args
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from domain.farm import MAX_FARM_SLOT_ID
-from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
+from infrastructure.adb_companion import AdbCommandError, AdbCommandResult, AdbCommandRunner
 from infrastructure.adb_imei import AdbImeiReader
 
 logger = logging.getLogger("farm_agent.about_phone")
@@ -36,8 +36,20 @@ logger = logging.getLogger("farm_agent.about_phone")
 ABOUT_PHONE_TASK = "device_about_phone_screenshot"
 ABOUT_PHONE_TIMEOUT_SECONDS = 12.0
 ABOUT_PHONE_OVERALL_SECONDS = 28.0
+PIXEL_COMMAND_TIMEOUT_SECONDS = 6.0
+PIXEL_SCREENCAP_TIMEOUT_SECONDS = 8.0
+PIXEL_OVERALL_SECONDS = 16.0
 UI_DUMP_PATH = "/sdcard/mobirent_about_phone.xml"
 PIXEL_DEVICE_INFO_INTENT = "android.settings.DEVICE_INFO_SETTINGS"
+PIXEL_DEVICE_INFO_COMPONENT = "com.android.settings/.Settings$MyDeviceInfoActivity"
+_PIXEL_IMEI_PROPS = (
+    "persist.radio.imei",
+    "persist.radio.imei1",
+    "ril.IMEI",
+    "ro.ril.oem.imei",
+    "gsm.imei",
+)
+_IMEI_RE = re.compile(r"\b(\d{15})\b")
 ABOUT_LABELS = ("About phone", "About device", "My device")
 _ABOUT_DETAIL_MARKERS = (
     "model name",
@@ -62,6 +74,12 @@ _MINIMAL_PNG = (
     b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 MAX_SCROLLS = 6
+
+
+def is_pixel_device(*, manufacturer: str = "", model: str = "") -> bool:
+    brand = str(manufacturer or "").strip().lower()
+    name = str(model or "").strip().lower()
+    return brand in {"google", "pixel"} or name.startswith("pixel")
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
@@ -185,11 +203,58 @@ def _start_settings(runner: AdbCommandRunner, serial: str, samsung: bool, warnin
         warnings.append(f"open_settings: {exc.__class__.__name__}")
 
 
-def _start_pixel_device_info(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> None:
+def _run_adb(
+    runner: AdbCommandRunner,
+    serial: str,
+    arguments: list[str],
+    timeout_seconds: float | None = None,
+) -> AdbCommandResult | None:
     try:
-        runner.run(serial, ["shell", "am", "start", "-a", PIXEL_DEVICE_INFO_INTENT])
-    except AdbCommandError as exc:
-        warnings.append(f"device_info_intent: {exc.__class__.__name__}")
+        if timeout_seconds is None:
+            return runner.run(serial, arguments)
+        return runner.run(serial, arguments, timeout_seconds=timeout_seconds)
+    except TypeError:
+        return runner.run(serial, arguments)
+    except AdbCommandError:
+        return None
+
+
+def _start_pixel_device_info(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> bool:
+    """Open Pixel About phone directly. Never falls back to Settings root."""
+    started = _run_adb(
+        runner,
+        serial,
+        [
+            "shell",
+            "am",
+            "start",
+            "--activity-clear-task",
+            "--activity-clear-top",
+            "-a",
+            PIXEL_DEVICE_INFO_INTENT,
+        ],
+        PIXEL_COMMAND_TIMEOUT_SECONDS,
+    )
+    if started is not None:
+        return True
+    warnings.append("device_info_intent: AdbCommandError")
+    started = _run_adb(
+        runner,
+        serial,
+        [
+            "shell",
+            "am",
+            "start",
+            "--activity-clear-task",
+            "-n",
+            PIXEL_DEVICE_INFO_COMPONENT,
+        ],
+        PIXEL_COMMAND_TIMEOUT_SECONDS,
+    )
+    if started is not None:
+        return True
+    warnings.append("device_info_component: AdbCommandError")
+    return False
 
 
 def open_about_phone_page(
@@ -211,21 +276,19 @@ def open_about_phone_page(
     if remaining() < 2.0:
         warnings.append("about_phone_deadline")
         return False
-    if samsung:
-        logger.info("about_phone_step slot=%s serial=%s step=open_settings", slot_id, serial)
-        _start_settings(runner, serial, True, warnings)
-        sleep_fn(0.8)
-    else:
+    if not samsung:
         logger.info("about_phone_step slot=%s serial=%s step=device_info_intent", slot_id, serial)
-        _start_pixel_device_info(runner, serial, warnings)
-        sleep_fn(0.8)
-        xml = _dump_ui(runner, serial, warnings)
-        if ui_is_about_phone(xml):
-            logger.info("about_phone_verified slot=%s serial=%s via=intent", slot_id, serial)
+        launched = _start_pixel_device_info(runner, serial, warnings)
+        sleep_fn(0.35)
+        if launched:
+            logger.info("about_phone_verified slot=%s serial=%s via=pixel_intent", slot_id, serial)
             return True
-        logger.info("about_phone_step slot=%s serial=%s step=open_settings_fallback", slot_id, serial)
-        _start_settings(runner, serial, False, warnings)
-        sleep_fn(0.6)
+        warnings.append("about_phone_not_open")
+        logger.warning("about_phone_unverified slot=%s serial=%s", slot_id, serial)
+        return False
+    logger.info("about_phone_step slot=%s serial=%s step=open_settings", slot_id, serial)
+    _start_settings(runner, serial, True, warnings)
+    sleep_fn(0.8)
 
     for attempt in range(MAX_SCROLLS):
         if remaining() < 3.0:
@@ -272,15 +335,27 @@ def open_about_phone_page(
     return False
 
 
-def _read_eid(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> str | None:
+def _read_eid(
+    runner: AdbCommandRunner,
+    serial: str,
+    warnings: list[str],
+    *,
+    light: bool = False,
+) -> str | None:
     for prop in ("persist.radio.eid", "ril.eid", "ro.ril.eid"):
-        try:
-            value = runner.run(serial, ["shell", "getprop", prop]).stdout.strip()
-        except AdbCommandError:
+        result = _run_adb(
+            runner,
+            serial,
+            ["shell", "getprop", prop],
+            PIXEL_COMMAND_TIMEOUT_SECONDS if light else None,
+        )
+        if result is None:
             continue
-        match = _EID_RE.search(value)
+        match = _EID_RE.search(result.stdout.strip())
         if match:
             return match.group(1)
+    if light:
+        return None
     try:
         dump = runner.run(serial, ["shell", "dumpsys euicc"]).stdout
     except AdbCommandError as exc:
@@ -290,23 +365,60 @@ def _read_eid(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> str
     return match.group(1) if match else None
 
 
-def _screencap_png(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> bytes:
+def _imei_from_getprop(runner: AdbCommandRunner, serial: str) -> str | None:
+    for prop in _PIXEL_IMEI_PROPS:
+        result = _run_adb(
+            runner,
+            serial,
+            ["shell", "getprop", prop],
+            PIXEL_COMMAND_TIMEOUT_SECONDS,
+        )
+        if result is None:
+            continue
+        match = _IMEI_RE.search(result.stdout or "")
+        if match:
+            return match.group(1)
+    return None
+
+
+def _screencap_png(
+    runner: AdbCommandRunner,
+    serial: str,
+    warnings: list[str],
+    timeout_seconds: float | None = None,
+) -> bytes | None:
     try:
-        raw = runner.run_bytes(serial, ["exec-out", "screencap", "-p"])
+        if timeout_seconds is None:
+            raw = runner.run_bytes(serial, ["exec-out", "screencap", "-p"])
+        else:
+            try:
+                raw = runner.run_bytes(
+                    serial,
+                    ["exec-out", "screencap", "-p"],
+                    timeout_seconds=timeout_seconds,
+                )
+            except TypeError:
+                raw = runner.run_bytes(serial, ["exec-out", "screencap", "-p"])
     except (AdbCommandError, AttributeError) as exc:
         warnings.append(f"screencap: {exc.__class__.__name__}")
-        return _MINIMAL_PNG
+        return None
     if raw.startswith(b"\x89PNG"):
         return raw
     warnings.append("screencap_invalid")
-    return _MINIMAL_PNG
+    return None
 
 
 def _read_identity(
     runner: AdbCommandRunner,
     serial: str,
     warnings: list[str],
+    *,
+    light: bool = False,
 ) -> tuple[str | None, str | None, str | None]:
+    if light:
+        imei1 = _imei_from_getprop(runner, serial)
+        eid = _read_eid(runner, serial, warnings, light=True)
+        return imei1, None, eid
     imei1 = None
     imei2 = None
     try:
@@ -338,7 +450,6 @@ def run_device_about_phone_screenshot(
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
     logger.info("about_phone_start slot=%s serial=%s", slot_id, serial)
     runner = command_runner or AdbCommandRunner(adb_path, timeout_seconds=ABOUT_PHONE_TIMEOUT_SECONDS)
-    deadline = time.monotonic() + ABOUT_PHONE_OVERALL_SECONDS
     try:
         state = runner.run(serial, ["get-state"]).stdout.strip()
     except AdbCommandError:
@@ -359,9 +470,11 @@ def run_device_about_phone_screenshot(
     except AdbCommandError:
         model = ""
     samsung = is_samsung_device(slot_id=slot_id, serial=serial, manufacturer=manufacturer)
+    pixel = (not samsung) and is_pixel_device(manufacturer=manufacturer, model=model)
     samsung_s20 = is_samsung_s20(
         slot_id=slot_id, serial=serial, manufacturer=manufacturer, model=model
     )
+    deadline = time.monotonic() + (PIXEL_OVERALL_SECONDS if pixel else ABOUT_PHONE_OVERALL_SECONDS)
     run_best_effort_shell(
         runner,
         serial,
@@ -369,6 +482,9 @@ def run_device_about_phone_screenshot(
         warnings,
         "wake_unlock",
     )
+    imei1, imei2, eid = (None, None, None)
+    if pixel:
+        imei1, imei2, eid = _read_identity(runner, serial, warnings, light=True)
     opened = open_about_phone_page(
         runner,
         serial,
@@ -385,7 +501,8 @@ def run_device_about_phone_screenshot(
             serial,
             opened,
         )
-        imei1, imei2, eid = _read_identity(runner, serial, warnings)
+        if not pixel:
+            imei1, imei2, eid = _read_identity(runner, serial, warnings)
         return FarmTaskResult(
             ok=False,
             http_status=422,
@@ -403,13 +520,33 @@ def run_device_about_phone_screenshot(
             },
         )
 
-    png = _screencap_png(runner, serial, warnings)
+    remaining = deadline - time.monotonic()
+    cap_timeout = PIXEL_SCREENCAP_TIMEOUT_SECONDS if pixel else None
+    if pixel and remaining < 1.5:
+        warnings.append("screencap_skipped_deadline")
+        png = None
+    else:
+        png = _screencap_png(runner, serial, warnings, timeout_seconds=cap_timeout)
+    if not pixel:
+        imei1, imei2, eid = _read_identity(runner, serial, warnings)
+    if png is None:
+        logger.warning("about_phone_no_screencap slot=%s serial=%s pixel=%s", slot_id, serial, pixel)
+        details: dict[str, Any] = {
+            "ok": True,
+            "slot_id": slot_id,
+            "serial": serial,
+            "imei1": imei1,
+            "imei2": imei2,
+            "eid": eid,
+            "about_page_verified": True,
+            "warnings": warnings,
+        }
+        return FarmTaskResult(ok=True, http_status=200, details=details)
+
     image_b64 = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
     logger.info("about_phone_captured slot=%s serial=%s bytes=%s", slot_id, serial, len(png))
-
-    imei1, imei2, eid = _read_identity(runner, serial, warnings)
     logger.info("about_phone_ok slot=%s serial=%s imei1=%s eid=%s", slot_id, serial, bool(imei1), bool(eid))
-    details: dict[str, Any] = {
+    details = {
         "ok": True,
         "slot_id": slot_id,
         "serial": serial,

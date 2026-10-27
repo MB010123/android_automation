@@ -8,14 +8,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.device_about_phone import (
+    PIXEL_DEVICE_INFO_INTENT,
     UI_DUMP_PATH,
     find_about_phone_tap,
+    is_pixel_device,
     run_device_about_phone_screenshot,
     ui_is_about_phone,
     ui_is_settings_home,
 )
 from application.farm_task_types import FarmTaskRequest
-from infrastructure.adb_companion import AdbCommandResult, AdbCommandRunner
+from infrastructure.adb_companion import AdbCommandError, AdbCommandResult, AdbCommandRunner
 
 S20_SERIAL = "RFCNB056WEV"
 PIXEL_SERIAL = "18171FDF6005WG"
@@ -72,7 +74,7 @@ class AboutRunner(AdbCommandRunner):
         self.page = page
         self.calls: list[tuple[str, list[str]]] = []
 
-    def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+    def run(self, serial: str, arguments: list[str], **_kwargs) -> AdbCommandResult:
         self.calls.append((serial, list(arguments)))
         joined = " ".join(arguments)
         if arguments == ["get-state"]:
@@ -98,7 +100,7 @@ class AboutRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="Starting: Intent", stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
-    def run_bytes(self, serial: str, arguments: list[str]) -> bytes:
+    def run_bytes(self, serial: str, arguments: list[str], **_kwargs) -> bytes:
         self.calls.append((serial, list(arguments)))
         return PNG
 
@@ -175,6 +177,7 @@ def test_refuses_screenshot_when_settings_home_stays_on_screen():
 
 
 def test_pixel_uses_device_info_intent():
+    assert is_pixel_device(manufacturer="google", model="Pixel 6") is True
     runner = AboutRunner(manufacturer="google", page="home")
     result = run_device_about_phone_screenshot(
         adb_path="adb",
@@ -186,8 +189,40 @@ def test_pixel_uses_device_info_intent():
     assert result.ok is True
     assert result.details["serial"] == PIXEL_SERIAL
     joined = " ".join(" ".join(args) for _s, args in runner.calls)
-    assert "android.settings.DEVICE_INFO_SETTINGS" in joined
+    assert PIXEL_DEVICE_INFO_INTENT in joined
+    assert "--activity-clear-task" in joined
+    assert "android.settings.SETTINGS" not in joined
+    assert "uiautomator dump" not in joined
+    assert "input tap" not in joined
     assert {serial for serial, _ in runner.calls} == {PIXEL_SERIAL}
+    kinds = [" ".join(args) for _s, args in runner.calls]
+    first_screencap = next(i for i, item in enumerate(kinds) if item.startswith("exec-out screencap"))
+    assert any(item.startswith("shell getprop") for item in kinds[:first_screencap])
+
+
+def test_pixel_screencap_timeout_returns_identity_without_hanging():
+    class SlowCap(AboutRunner):
+        def run_bytes(self, serial: str, arguments: list[str], **_kwargs) -> bytes:
+            self.calls.append((serial, list(arguments)))
+            raise AdbCommandError("ADB command timed out")
+
+    runner = SlowCap(manufacturer="google", page="home")
+    result = run_device_about_phone_screenshot(
+        adb_path="adb",
+        slot_map={1: PIXEL_SERIAL},
+        request=_request(1),
+        command_runner=runner,
+        sleep_fn=lambda _s: None,
+    )
+    assert result.ok is True
+    assert result.http_status == 200
+    assert result.details["serial"] == PIXEL_SERIAL
+    assert result.details["about_page_verified"] is True
+    assert "image_base64" not in (result.details or {})
+    assert any(str(item).startswith("screencap:") for item in result.details["warnings"])
+    joined = " ".join(" ".join(args) for _s, args in runner.calls)
+    assert "uiautomator dump" not in joined
+    assert "dumpsys euicc" not in joined
 
 
 def test_slot_4_uses_mapped_serial_only():
