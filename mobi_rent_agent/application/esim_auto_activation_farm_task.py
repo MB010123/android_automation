@@ -4,8 +4,9 @@ Customer Hybrid Guided Flow (``mode=gated_setup`` / ``open_qr_picker``):
 
 1. Wake, dismiss keyguard, and open the OEM eSIM screen even if a profile
    is already installed.
-2. Samsung: One UI SIM Manager (``Add eSIM``). Pixel: SIMs / Add SIM via
-   ``MANAGE_EMBEDDED_SUBSCRIPTIONS`` (then network/wireless fallbacks).
+2. Samsung: One UI SIM Manager (``Add eSIM``). Pixel: main Settings, then
+   tap Network & internet → SIMs so ``Add SIM`` is visible. Never skip
+   because an eSIM profile is already installed.
 3. Stop there. Do not auto-click Gallery/Photos or confirmation dialogs.
 4. Leave the renter QR in Pictures/Download (media-scanned).
 
@@ -46,6 +47,7 @@ from application.remote_access_farm_task import (
     disable_native_cameras,
     foreground_is_launcher,
     launch_esim_setup_screen,
+    pixel_settings_is_foreground,
     read_foreground_component,
     _place_qr_config_gate,
     _tap_through_to_esim_handoff,
@@ -558,7 +560,8 @@ def run_esim_auto_activation(
                     esim_newly_added=False,
                 )
                 component = read_foreground_component(runner, serial)
-                if not component or foreground_is_launcher(component):
+                pixel_ok = oem != OEM_PIXEL or pixel_settings_is_foreground(component)
+                if not component or foreground_is_launcher(component) or not pixel_ok:
                     return _result(
                         ok=False,
                         http_status=422,
@@ -768,7 +771,7 @@ def _walk_pixel_handoff(
         except AdbCommandError:
             ui_xml = ""
         component = read_foreground_component(runner, serial)
-        if not component or foreground_is_launcher(component):
+        if not pixel_settings_is_foreground(component):
             launch_esim_setup_screen(runner, serial, OEM_PIXEL)
             continue
         if _pixel_handoff_visible(ui_xml):

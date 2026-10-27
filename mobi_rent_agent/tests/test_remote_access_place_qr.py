@@ -644,7 +644,7 @@ def test_samsung_sim_manager_falls_back_when_launcher_stays_focused():
     assert "android.settings.SETTINGS" not in joined
 
 
-def test_pixel_esim_launch_falls_back_when_launcher_stays_focused():
+def test_pixel_esim_launch_opens_settings_then_taps_sims():
     from application.esim_setup_ui_state import OEM_PIXEL
     from application.remote_access_farm_task import launch_esim_setup_screen
 
@@ -669,15 +669,11 @@ def test_pixel_esim_launch_falls_back_when_launcher_stays_focused():
         "mCurrentFocus=Window{def u0 com.android.settings/"
         ".Settings$NetworkDashboardActivity}"
     )
-    euicc_focus = (
-        "mCurrentFocus=Window{ghi u0 com.google.android.euicc/"
-        ".ui.EuiccUiDispatcherActivity}"
-    )
 
     class Runner(AdbCommandRunner):
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
-            self.opened_wireless = False
+            self.settings_starts = 0
             self.tapped = False
 
         def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
@@ -686,21 +682,20 @@ def test_pixel_esim_launch_falls_back_when_launcher_stays_focused():
                 ("shell", "dumpsys", "window"),
                 ("shell", "dumpsys", "activity"),
             }:
-                if self.tapped:
-                    return AdbCommandResult(stdout=euicc_focus, stderr="")
-                if self.opened_wireless:
+                if self.settings_starts >= 2:
                     return AdbCommandResult(stdout=settings_focus, stderr="")
                 return AdbCommandResult(stdout=launcher_focus, stderr="")
             if arguments[:4] == ["shell", "am", "start", "-a"] and any(
-                "WIRELESS_SETTINGS" in str(part) for part in arguments
+                str(part).endswith(".SETTINGS") and "WIRELESS" not in str(part)
+                for part in arguments
             ):
-                self.opened_wireless = True
+                self.settings_starts += 1
             if arguments[:3] == ["shell", "input", "tap"]:
                 self.tapped = True
             if arguments[:2] == ["shell", "cat"] and str(arguments[-1]).endswith(".xml"):
                 if self.tapped:
                     xml = sims_ui
-                elif self.opened_wireless:
+                elif self.settings_starts >= 2:
                     xml = network_ui
                 else:
                     xml = "<?xml version='1.0'?><hierarchy></hierarchy>"
@@ -710,12 +705,13 @@ def test_pixel_esim_launch_falls_back_when_launcher_stays_focused():
     runner = Runner()
     launched = launch_esim_setup_screen(runner, "18171FDF6005WG", OEM_PIXEL)
     joined = " ".join(" ".join(args) for args in runner.calls)
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
-    assert "android.settings.NETWORK_OPERATOR_SETTINGS" in joined
-    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "android.settings.SETTINGS" in joined
+    assert runner.settings_starts >= 2
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
+    assert "android.settings.NETWORK_OPERATOR_SETTINGS" not in joined
     assert "input tap" in joined
     assert runner.tapped is True
-    assert launched == "android.settings.WIRELESS_SETTINGS"
+    assert launched == "android.settings.SETTINGS"
     assert "nexuslauncher" not in launched
 
 

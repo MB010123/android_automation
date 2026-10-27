@@ -1091,8 +1091,7 @@ class _QrRunner(AdbCommandRunner):
                 )
             else:
                 focus = (
-                    "mCurrentFocus=Window{abc u0 com.google.android.euicc/"
-                    ".ui.EuiccUiDispatcherActivity}"
+                    "mCurrentFocus=Window{abc u0 com.android.settings/.Settings}"
                 )
             return AdbCommandResult(stdout=focus, stderr="")
         return AdbCommandResult(stdout="", stderr="")
@@ -1143,7 +1142,8 @@ def test_qr_task_pushes_image_to_dcim_camera_only():
         "localabstract",
     ):
         assert forbidden not in joined
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "android.settings.SETTINGS" in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in joined
     assert "/sdcard/Pictures/esim_qr.png" in joined
     assert "/sdcard/Download/esim_qr.png" in joined

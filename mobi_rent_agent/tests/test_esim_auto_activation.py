@@ -183,8 +183,7 @@ class _ActivationRunner(AdbCommandRunner):
                 )
             else:
                 focus = (
-                    "mCurrentFocus=Window{abc u0 com.google.android.euicc/"
-                    ".ui.EuiccUiDispatcherActivity}"
+                    "mCurrentFocus=Window{abc u0 com.android.settings/.Settings}"
                 )
             return AdbCommandResult(stdout=focus, stderr="")
         if arguments[:3] == ["shell", "logcat", "-d"]:
@@ -439,7 +438,7 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
         manufacturer="Google",
         ui_polls=[PIXEL_SIMS_UI, PIXEL_SIMS_UI, PIXEL_SIMS_UI],
     )
-    request = _req(mode="gated_setup")
+    request = _req(mode="gated_setup", esim_profile_present=True)
     request.farm_slot_id = 1
     result = _activate(runner, slot_map={1: "18171FDF6005WG"}, request=request)
     assert result.ok is True, (result.error, result.message)
@@ -452,7 +451,8 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
     starts = runner.commands("shell", "am", "start")
     assert starts
     joined = " ".join(" ".join(args) for args in starts)
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "android.settings.SETTINGS" in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert SIM_CARD_MGR_COMPONENT not in joined
     all_joined = " ".join(" ".join(args) for _, args in runner.calls)
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in all_joined
