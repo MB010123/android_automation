@@ -173,6 +173,8 @@ class _ActivationRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="device", stderr="")
         if arguments == ["shell", "getprop", "ro.product.manufacturer"]:
             return AdbCommandResult(stdout=self._manufacturer, stderr="")
+        if arguments == ["shell", "getprop", "ro.product.brand"]:
+            return AdbCommandResult(stdout=self._manufacturer, stderr="")
         if arguments[:3] == ["shell", "logcat", "-d"]:
             index = min(self._logcat_index, len(self._logcat_polls) - 1)
             self._logcat_index += 1
@@ -414,16 +416,59 @@ def test_deeplink_method_used_for_explicit_activation_code():
     assert LPA_CODE not in json.dumps(result.details)
 
 
-def test_pixel_bay_is_unsupported_and_untouched():
-    runner = _ActivationRunner(manufacturer="Google")
-    request = _req()
+PIXEL_SIMS_UI = _ui(
+    _node("SIMs", clickable=False),
+    _node("Add SIM", clickable=True, bounds="[72,1001][400,1069]"),
+)
+
+
+def test_pixel_bay_opens_sims_and_awaits_human_click():
+    runner = _ActivationRunner(
+        manufacturer="Google",
+        ui_polls=[PIXEL_SIMS_UI, PIXEL_SIMS_UI, PIXEL_SIMS_UI],
+    )
+    request = _req(mode="gated_setup")
     request.farm_slot_id = 1
     result = _activate(runner, slot_map={1: "18171FDF6005WG"}, request=request)
-    assert result.ok is False
-    assert result.http_status == 501
-    assert result.error == "automation_unsupported"
-    assert runner.commands("shell", "am", "start") == []
-    assert runner.commands("shell", "input") == []
+    assert result.ok is True, (result.error, result.message)
+    assert result.details["activated"] is False
+    assert result.details["opened"] is True
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    assert result.details["device_oem"] == "pixel"
+    assert "Add SIM" in str(result.details.get("setup_ui_prompt") or "")
+    assert "Use a different photo" in str(result.details.get("setup_ui_prompt") or "")
+    starts = runner.commands("shell", "am", "start")
+    assert starts
+    joined = " ".join(" ".join(args) for args in starts)
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert SIM_CARD_MGR_COMPONENT not in joined
+    assert runner.tap_points() == []
+
+
+def test_gated_setup_opens_even_when_esim_already_present():
+    runner = _ActivationRunner(ui_polls=[SIM_MANAGER_UI, SIM_MANAGER_UI, SIM_MANAGER_UI])
+    result = _activate(
+        runner, request=_req(mode="gated_setup", esim_profile_present=True)
+    )
+    assert result.ok is True, (result.error, result.message)
+    assert result.details["opened"] is True
+    assert result.details["activated"] is False
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    assert "Add eSIM" in str(result.details.get("setup_ui_prompt") or "")
+    assert SIM_CARD_MGR_COMPONENT in runner.commands("shell", "am", "start")[0]
+
+
+def test_force_open_relaunches_after_walk_completed():
+    runner = _ActivationRunner(ui_polls=[SIM_MANAGER_UI, SIM_MANAGER_UI, SIM_MANAGER_UI])
+    result = _activate(
+        runner,
+        request=_req(mode="gated_setup", qr_walk_completed=True, force_open=True),
+    )
+    assert result.ok is True, (result.error, result.message)
+    assert result.details.get("skipped") is not True
+    assert result.details["opened"] is True
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    assert runner.commands("shell", "am", "start")
 
 
 def test_invalid_or_shell_unsafe_code_is_rejected():

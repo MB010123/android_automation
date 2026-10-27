@@ -11,6 +11,8 @@ sys.path.insert(0, str(ROOT))
 from dataclasses import replace
 
 from application.esim_setup_ui_state import (
+    PIXEL_HANDOFF_PROMPT,
+    SAMSUNG_HANDOFF_PROMPT,
     SETUP_TIMEOUT_BANNER,
     SETUP_UI_AWAITING,
     SETUP_UI_COMPLETED,
@@ -19,6 +21,7 @@ from application.esim_setup_ui_state import (
     SIM_MANAGER_HANDOFF_PROMPT,
     classify_setup_ui,
     decide_setup_surface,
+    esim_profile_is_new,
 )
 from application.setup_activity_guard import should_recover_setup
 from tests.fakes_supabase import MemoryTenant
@@ -66,9 +69,37 @@ def test_classifier_sim_manager_is_handoff():
     assert before_walk.reason == "sim_manager_handoff"
 
 
-def test_classifier_installed_profile_is_completed():
+def test_classifier_preexisting_profile_stays_awaiting():
     hit = classify_setup_ui(SIM_MANAGER_UI, esim_profile_present=True)
-    assert hit.state == SETUP_UI_COMPLETED
+    assert hit.state == SETUP_UI_AWAITING
+    assert hit.prompt == SAMSUNG_HANDOFF_PROMPT
+    newly = classify_setup_ui(SIM_MANAGER_UI, esim_newly_added=True)
+    assert newly.state == SETUP_UI_COMPLETED
+
+
+def test_esim_profile_is_new_requires_baseline_change():
+    assert esim_profile_is_new(esim_profile_present=True) is False
+    assert esim_profile_is_new(
+        esim_profile_present=True, esim_baseline_present=True, esim_baseline_token="ids:a"
+    ) is False
+    assert esim_profile_is_new(
+        esim_profile_present=True, esim_baseline_present=False
+    ) is True
+    assert esim_profile_is_new(
+        esim_profile_present=True,
+        esim_baseline_present=True,
+        esim_baseline_token="ids:a",
+        esim_current_token="ids:b",
+    ) is True
+
+
+def test_classifier_pixel_sims_is_handoff():
+    xml = 'text="SIMs" text="Add SIM"'
+    hit = classify_setup_ui(xml, oem="pixel")
+    assert hit.state == SETUP_UI_AWAITING
+    assert hit.reason == "pixel_sims_handoff"
+    assert hit.prompt == PIXEL_HANDOFF_PROMPT
+    assert hit.human_click_label == "Add SIM"
 
 
 def test_guard_does_not_recover_after_walk_or_profile():
@@ -245,3 +276,53 @@ def test_device_status_unlocks_manual_fallback_after_45_seconds(tmp_path: Path):
     assert tapped.http_status == 200
     home = service.control_session(CUSTOMER_A, rental, {"action": "home"})
     assert home.http_status == 200
+
+
+def test_preexisting_esim_stays_awaiting_after_qr_upload(tmp_path: Path):
+    tenant = MemoryTenant()
+    farm = FakeFarm()
+    farm.place_qr_extra = {
+        "esim_profile_present": True,
+        "esim_baseline_present": True,
+        "esim_baseline_token": "ids:890123",
+        "esim_current_token": "ids:890123",
+        "device_oem": "samsung",
+    }
+    farm.activation_details = {
+        "verdict": "ACTIVATION_CONFIRMED",
+        "esim_profile_present": True,
+        "esim_enabled": True,
+        "network_registered": True,
+        "cellular": True,
+        "observation_complete": True,
+        "esim_current_token": "ids:890123",
+    }
+    serial = "RFCNB056WEV"
+    service, store, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=FakePlatform(registered={serial}),
+        farm=farm,
+        allowed=(21,),
+        slot_map={21: serial},
+        farm_status=_mapped(21),
+        gads_slot_ids=(21,),
+        workspace_map={21: "ws-21"},
+        prepare_slot_ids=(21,),
+        observe_slot_ids=(21,),
+    )
+    rental = _rental(tenant, bay=21, user_id=CUSTOMER_A)
+    uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
+    assert uploaded.http_status == 200
+    assert uploaded.body["setup_ui_state"] == SETUP_UI_AWAITING
+    assert "Add eSIM" in str(uploaded.body.get("setup_ui_prompt") or "")
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    status = service.activation_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["setup_ui_state"] == SETUP_UI_AWAITING
+    assert status.body.get("activation_state") != "ACTIVE"
+    session = store.get(rental)
+    assert session is not None
+    assert session.activation_observed != "confirmed"
+    assert (session.activation_evidence or {}).get("esim_baseline_present") is True

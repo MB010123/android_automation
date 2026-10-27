@@ -1,22 +1,23 @@
-"""Farm Agent task: Samsung eSIM setup.
+"""Farm Agent task: OEM eSIM setup.
 
 Customer Hybrid Guided Flow (``mode=gated_setup`` / ``open_qr_picker``):
 
-1. Wake, dismiss keyguard, and open One UI SIM Manager via the exported
-   ``SimCardMgrActivity`` (``Add eSIM`` / ``Add mobile plan`` visible).
-2. Stop there. Do not auto-click Add eSIM, Gallery, or confirmation dialogs.
-3. Leave the renter QR in Gallery (``/sdcard/Pictures/`` and
-   ``/sdcard/Download/``, media-scanned) so the customer can tap through.
+1. Wake, dismiss keyguard, and open the OEM eSIM screen even if a profile
+   is already installed.
+2. Samsung: One UI SIM Manager (``Add eSIM``). Pixel: SIMs / Add SIM via
+   ``MANAGE_EMBEDDED_SUBSCRIPTIONS`` (then network/wireless fallbacks).
+3. Stop there. Do not auto-click Gallery/Photos or confirmation dialogs.
+4. Leave the renter QR in Pictures/Download (media-scanned).
 
-Operator/smoke one-UI walk (no gated mode): SIM manager → Add eSIM →
-Gallery → Done, then monitor ``UT.EsimAddProgressState`` and auto-confirm.
+Operator/smoke one-UI walk (Samsung, no gated mode): SIM manager → Add
+eSIM → Gallery → Done, then monitor ``UT.EsimAddProgressState``.
 
-Deep-link method: explicit ``activation_code`` → ``esimmanagerfromqr://``.
+Deep-link method: explicit ``activation_code`` → ``esimmanagerfromqr://``
+(Samsung only).
 
-Scope guards: Samsung devices only (Pixel renters keep the manual GADS scan
-flow), public intents + ``input tap`` only — no EuiccManager, no
-``provision_esim`` companion, no Device Owner, no privileged APIs. Activation
-codes never appear in logs or task results (only the SM-DP+ host).
+Public intents + ``input tap`` only — no EuiccManager, no
+``provision_esim`` companion, no Device Owner. Activation codes never
+appear in logs or task results (only the SM-DP+ host).
 """
 from __future__ import annotations
 
@@ -29,25 +30,30 @@ from io import BytesIO
 from typing import Any, Callable
 
 from application.esim_setup_ui_state import (
+    OEM_PIXEL,
+    OEM_SAMSUNG,
     SETUP_UI_AWAITING,
     SETUP_UI_COMPLETED,
-    SIM_MANAGER_HANDOFF_PROMPT,
     classify_setup_ui,
+    handoff_prompt_for_oem,
     public_setup_ui_body,
 )
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.remote_access_farm_task import (
-    _is_samsung_renter_device,
-    _manufacturer_from_adb,
+    PIXEL_ESIM_INTENTS,
+    SAMSUNG_ESIM_FALLBACK_INTENT,
+    capture_esim_baseline,
+    detect_device_oem,
+    launch_esim_setup_screen,
     _place_qr_config_gate,
     delete_placed_esim_qr,
     read_qr_walk_marker,
+    wake_and_unlock_device,
     write_qr_walk_marker,
 )
 from application.samsung_one_ui import (
     SAMSUNG_SIM_MGR_COMPONENT,
     escape_samsung_game_hijack,
-    samsung_sim_manager_args,
     ui_shows_samsung_game,
 )
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -97,9 +103,12 @@ SUCCESS_TEXT_MARKERS = (
 SUCCESS_STATE_TOKENS = ("DOWNLOADED", "DOWNLOAD_COMPLETE", "INSTALLED", "COMPLETE", "DONE", "SUCCESS")
 FAILURE_STATE_TOKENS = ("NOT_FOUND", "ERROR", "FAIL", "CANCEL", "TIMEOUT", "REJECT")
 
-NOT_SAMSUNG_MESSAGE = (
-    "automated eSIM activation is only implemented for Samsung One UI bays; "
-    "Pixel renters keep the manual GADS scan flow"
+PIXEL_HANDOFF_MARKERS = (
+    "Add SIM",
+    "Set up an eSIM",
+    "Download a SIM instead",
+    "Download a SIM",
+    "Use a different photo",
 )
 
 
@@ -415,15 +424,7 @@ def run_esim_auto_activation(
     if state != "device":
         return _result(ok=False, http_status=409, job_id=request.job_id, error="device_offline")
 
-    manufacturer = _manufacturer_from_adb(runner, serial)
-    if not _is_samsung_renter_device(slot_id, serial, manufacturer):
-        return _result(
-            ok=False,
-            http_status=501,
-            job_id=request.job_id,
-            error="automation_unsupported",
-            message=NOT_SAMSUNG_MESSAGE,
-        )
+    oem = detect_device_oem(runner, serial, slot_id)
 
     # Explicit activation_code → deep-link method (smoke tests / tooling).
     code = str(request.payload.get("activation_code") or "").strip()
@@ -443,23 +444,31 @@ def run_esim_auto_activation(
     detail: str | None = None
     mode = str(request.payload.get("mode") or "").strip().lower()
     open_picker = mode in {"open_qr_picker", "open_gallery", "gated_setup"}
-    method = "deeplink" if code else (mode if open_picker else "one_ui_flow")
+    if oem != OEM_SAMSUNG:
+        open_picker = True
+        code = ""
+        smdp = None
+    if code:
+        method = "deeplink"
+    elif open_picker:
+        method = mode if mode in {"open_qr_picker", "open_gallery", "gated_setup"} else "gated_setup"
+    else:
+        method = "one_ui_flow"
     leave_on_screen = open_picker
     qr_sha256 = str(request.payload.get("qr_sha256") or "").strip().lower()
     walk_already_done = bool(request.payload.get("qr_walk_completed", False))
-    esim_present = bool(request.payload.get("esim_profile_present", False))
+    force_open = bool(request.payload.get("force_open", False))
     if not walk_already_done:
         marker = read_qr_walk_marker(runner, serial)
         if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
             walk_already_done = True
-    if walk_already_done or esim_present:
-        deleted = delete_placed_esim_qr(runner, serial) if esim_present else []
+    if walk_already_done and not force_open:
         logger.info(
-            "esim_qr_walk_skipped slot=%s job_id=%s reason=%s",
+            "esim_qr_walk_skipped slot=%s job_id=%s reason=walk_completed",
             slot_id,
             request.job_id,
-            "esim_present" if esim_present else "walk_completed",
         )
+        prompt = handoff_prompt_for_oem(oem)
         return _result(
             ok=True,
             http_status=200,
@@ -472,14 +481,15 @@ def run_esim_auto_activation(
             opened=False,
             skipped=True,
             qr_walk_completed=True,
-            qr_deleted=bool(deleted),
-            setup_ui_state=SETUP_UI_COMPLETED if esim_present else SETUP_UI_AWAITING,
-            setup_ui_prompt=None if esim_present else SIM_MANAGER_HANDOFF_PROMPT,
-            setup_human_click=None if esim_present else "Add eSIM",
+            qr_deleted=False,
+            device_oem=oem,
+            setup_ui_state=SETUP_UI_AWAITING,
+            setup_ui_prompt=prompt,
+            setup_human_click="Add SIM" if oem == OEM_PIXEL else "Add eSIM",
         )
     try:
         runner.run(serial, ["shell", "logcat", "-c"])
-        _wake_and_unlock(runner, serial)
+        wake_and_unlock_device(runner, serial)
         if code:
             # QrTransferActivity reads the query value verbatim (no URL
             # decoding); single quotes keep the device shell from expanding
@@ -501,6 +511,7 @@ def run_esim_auto_activation(
                 ui,
                 runner,
                 serial,
+                oem=oem,
                 steps_done=steps_done,
                 taps=taps,
                 sleep_fn=sleep_fn,
@@ -539,16 +550,17 @@ def run_esim_auto_activation(
                     ui_xml,
                     walk_completed=True,
                     walk_in_progress=False,
+                    oem=oem,
+                    esim_newly_added=False,
                 )
                 logger.info(
-                    "esim_gated_setup_ok slot=%s job_id=%s steps=%s state=%s",
+                    "esim_gated_setup_ok slot=%s job_id=%s steps=%s state=%s oem=%s",
                     slot_id,
                     request.job_id,
                     steps_done,
                     classification.state,
+                    oem,
                 )
-                if classification.state == SETUP_UI_COMPLETED:
-                    leave_on_screen = False
                 body = {
                     "ok": True,
                     "http_status": 200,
@@ -561,14 +573,16 @@ def run_esim_auto_activation(
                     "opened": True,
                     "qr_walk_completed": True,
                     "qr_deleted": False,
+                    "device_oem": oem,
                     **public_setup_ui_body(classification),
+                    **capture_esim_baseline(runner, serial),
                 }
-                if classification.state != SETUP_UI_COMPLETED:
-                    body["setup_ui_state"] = SETUP_UI_AWAITING
-                    body["setup_ui_prompt"] = (
-                        classification.prompt or SIM_MANAGER_HANDOFF_PROMPT
-                    )
-                    body["setup_human_click"] = classification.human_click_label or "Add eSIM"
+                body["setup_ui_state"] = SETUP_UI_AWAITING
+                body["setup_ui_prompt"] = classification.prompt or handoff_prompt_for_oem(oem)
+                body["setup_human_click"] = (
+                    classification.human_click_label
+                    or ("Add SIM" if oem == OEM_PIXEL else "Add eSIM")
+                )
                 return _result(**body)
 
         deadline = clock() + float(timeout_seconds)
@@ -695,21 +709,8 @@ def run_esim_auto_activation(
     )
 
 
-def _wake_and_unlock(runner: AdbCommandRunner, serial: str) -> None:
-    runner.run(serial, ["shell", "input", "keyevent", "224"])  # wake
-    for args in (
-        ["shell", "wm", "dismiss-keyguard"],
-        ["shell", "input", "keyevent", "82"],
-    ):
-        try:
-            runner.run(serial, args)
-        except AdbCommandError:
-            pass
-    runner.run(serial, ["shell", "input", "keyevent", "3"])  # home
-
-
 def _launch_samsung_sim_manager(runner: AdbCommandRunner, serial: str) -> None:
-    runner.run(serial, ["shell", *samsung_sim_manager_args()])
+    launch_esim_setup_screen(runner, serial, OEM_SAMSUNG)
 
 
 def _escape_game_hijack_and_relaunch(
@@ -722,11 +723,49 @@ def _escape_game_hijack_and_relaunch(
     return True
 
 
+def _pixel_handoff_visible(ui_xml: str) -> bool:
+    return ui_contains(ui_xml, *PIXEL_HANDOFF_MARKERS) or ui_contains(ui_xml, "SIMs")
+
+
+def _walk_pixel_handoff(
+    ui: _DeviceUi,
+    runner: AdbCommandRunner,
+    serial: str,
+    *,
+    steps_done: list[str],
+    sleep_fn: Callable[[float], None],
+    clock: Callable[[], float],
+    poll_interval_seconds: float,
+    step_timeout_seconds: float,
+) -> tuple[str, str] | None:
+    launch_deadline = clock() + float(step_timeout_seconds)
+    ui_xml = ""
+    intent_index = 0
+    launch_esim_setup_screen(runner, serial, OEM_PIXEL)
+    while clock() < launch_deadline:
+        sleep_fn(float(poll_interval_seconds))
+        try:
+            ui_xml = ui.dump()
+        except AdbCommandError:
+            continue
+        if _pixel_handoff_visible(ui_xml):
+            steps_done.append("open_sim_manager")
+            return None
+        if intent_index + 1 < len(PIXEL_ESIM_INTENTS):
+            intent_index += 1
+            try:
+                runner.run(serial, ["shell", "am", "start", "-a", PIXEL_ESIM_INTENTS[intent_index]])
+            except AdbCommandError:
+                pass
+    return "open_sim_manager", "Pixel SIMs screen did not show Add SIM"
+
+
 def _walk_one_ui_flow(
     ui: _DeviceUi,
     runner: AdbCommandRunner,
     serial: str,
     *,
+    oem: str = OEM_SAMSUNG,
     steps_done: list[str],
     taps: list[str],
     sleep_fn: Callable[[float], None],
@@ -736,12 +775,23 @@ def _walk_one_ui_flow(
     stop_after: str | None = None,
     on_qr_consumed: Callable[[], Any] | None = None,
 ) -> tuple[str, str] | None:
-    """Open SIM Manager, optionally walk to Gallery Done. None on success.
+    """Open the OEM eSIM screen, optionally walk Samsung Gallery Done.
 
     Hybrid gated setup passes ``stop_after='open_sim_manager'`` so the
-    customer taps Add eSIM / Gallery / confirm. On failure returns
+    customer taps Add eSIM / Add SIM. On failure returns
     ``(step_name, screen_hint)``.
     """
+    if oem == OEM_PIXEL or stop_after == "open_sim_manager" and oem != OEM_SAMSUNG:
+        return _walk_pixel_handoff(
+            ui,
+            runner,
+            serial,
+            steps_done=steps_done,
+            sleep_fn=sleep_fn,
+            clock=clock,
+            poll_interval_seconds=poll_interval_seconds,
+            step_timeout_seconds=step_timeout_seconds,
+        )
     _launch_samsung_sim_manager(runner, serial)
     launch_deadline = clock() + float(step_timeout_seconds)
     ui_xml = ""
@@ -763,6 +813,16 @@ def _walk_one_ui_flow(
             continue
         if ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
             break
+    if not ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
+        try:
+            runner.run(serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
+        except AdbCommandError:
+            pass
+        _launch_samsung_sim_manager(runner, serial)
+        try:
+            ui_xml = ui.dump()
+        except AdbCommandError:
+            ui_xml = ""
     if not ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
         return "open_sim_manager", "SIM manager screen did not show Add eSIM"
     steps_done.append("open_sim_manager")

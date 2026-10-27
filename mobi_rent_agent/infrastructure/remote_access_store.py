@@ -48,6 +48,11 @@ def _safe_evidence(raw: Any) -> dict[str, Any] | None:
         "network_registered",
         "cellular",
         "observation_complete",
+        "esim_current_token",
+        "esim_baseline_present",
+        "esim_baseline_token",
+        "device_oem",
+        "esim_newly_added",
     )
     body = {key: raw[key] for key in allowed if key in raw and raw[key] is not None}
     return body or None

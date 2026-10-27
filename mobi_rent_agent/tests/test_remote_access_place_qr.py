@@ -193,6 +193,12 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
         "/sdcard/Download/esim_qr.png",
         "/sdcard/DCIM/esim_qr.png",
     ]
+    joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "dismiss-keyguard" in joined
+    assert "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity" in joined
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
+    assert result.details["device_oem"] == "samsung"
+    assert "Add eSIM" in str(result.details.get("setup_ui_prompt") or "")
 
 
 def test_renter_cannot_override_samsung_qr_dir():

@@ -343,21 +343,28 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     again = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert again.http_status == 200
     auto_again = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
-    assert auto_again == [] or all(t["payload"].get("qr_walk_completed") for t in auto_again)
+    assert auto_again
+    assert auto_again[-1]["payload"].get("force_open") is True
+    assert auto_again[-1]["payload"].get("qr_walk_completed") is False
     assert "image_base64" in auto[-1]["payload"]
     assert "serial" not in auto[-1]["payload"]
     assert "RFCNB056WEV" not in json.dumps(result.body)
 
 
-def test_pixel_bay_upload_does_not_auto_activate(tmp_path: Path):
+def test_pixel_bay_upload_starts_gated_handoff(tmp_path: Path):
     tenant = MemoryTenant()
     farm = FakeFarm()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=FakePlatform(), farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
     result = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert result.http_status == 200
-    assert "auto_activation" not in result.body
-    assert [t for t in farm.tasks if t["type"] == "esim_auto_activation"] == []
+    assert result.body["setup_ui_state"] == "awaiting_human_click"
+    assert "Add SIM" in str(result.body.get("setup_ui_prompt") or "")
+    assert result.body["auto_activation"]["started"] is True
+    auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
+    assert auto and auto[-1]["slot"] == 1
+    assert auto[-1]["payload"]["mode"] == "gated_setup"
+    assert auto[-1]["payload"].get("force_open") is True
 
 
 def test_non_owner_slot2_qr_upload_is_forbidden(tmp_path: Path):

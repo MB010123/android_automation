@@ -1,16 +1,16 @@
 """Farm Agent task: place a validated eSIM QR image on the phone.
 
 Pixel renters get ``/sdcard/DCIM/Camera/``. Samsung S20 renters (Slot 21 /
-``RFCNB056WEV`` / manufacturer Samsung) get ``/sdcard/Pictures/``. Admin
-payloads may keep DCIM or pick an allowlisted directory. Customer
-authorization is enforced on the VPS. This task resolves ``farm_slot_id``
-through ``slot_map.json`` and ``adb push``es the picture so the customer
-can open it in the Android eSIM UI. GADS POC allowlists are not applied
-here.
+``RFCNB056WEV`` / manufacturer Samsung) get ``/sdcard/Pictures/``. Every
+renter QR is also copied to ``/sdcard/Pictures/`` and ``/sdcard/Download/``
+and media-scanned. After the push the farm wakes the phone and opens the
+OEM eSIM screen (Samsung SIM Manager or Pixel SIMs). Admin payloads may
+keep DCIM or pick an allowlisted directory.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
-owner changes. The device only receives a picture file.
+owner changes. The device only receives a picture file plus a public
+Settings/SIM-manager intent.
 """
 from __future__ import annotations
 
@@ -25,7 +25,14 @@ from typing import Any, Callable
 
 import requests
 
+from application.esim_setup_ui_state import (
+    OEM_PIXEL,
+    OEM_SAMSUNG,
+    SETUP_UI_AWAITING,
+    handoff_prompt_for_oem,
+)
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
+from application.samsung_one_ui import samsung_sim_manager_args
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
 from infrastructure.esim_qr_security import esim_fetch_url_is_public_https, esim_fetch_url_is_safe
@@ -81,6 +88,17 @@ SAMSUNG_GALLERY_QR_PATHS = (
     f"{DCIM_DIR}/esim_qr.png",
 )
 PLACED_ESIM_QR_PATHS = SAMSUNG_GALLERY_QR_PATHS
+RENTER_GALLERY_QR_PATHS = (
+    f"{PICTURES_DIR}/esim_qr.png",
+    f"{DOWNLOAD_DIR}/esim_qr.png",
+)
+PIXEL_ESIM_INTENTS = (
+    "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS",
+    "android.settings.NETWORK_OPERATOR_SETTINGS",
+    "android.settings.WIRELESS_SETTINGS",
+)
+SAMSUNG_ESIM_FALLBACK_INTENT = "android.settings.WIRELESS_SETTINGS"
+_EMBEDDED_ID_RE = re.compile(r"(?:iccId|IccId|mIccId|cardId|mCardId)=([A-Za-z0-9]+)")
 QR_PREFIX = "mobirent_esim_qr_"
 QR_WALK_MARKER_PATH = f"{PICTURES_DIR}/.mobirent_qr_walk_done"
 MAX_QR_IMAGE_BYTES = 5 * 1024 * 1024
@@ -184,12 +202,16 @@ def read_qr_walk_marker(runner: AdbCommandRunner, serial: str) -> str | None:
     return text or None
 
 
-def _copy_samsung_gallery_aliases(
-    runner: AdbCommandRunner, serial: str, source_path: str
+def copy_renter_gallery_aliases(
+    runner: AdbCommandRunner, serial: str, source_path: str, *, oem: str
 ) -> list[str]:
-    """Stable Gallery/My Files names so Recent/Pictures shows the QR first."""
+    """Stable Gallery/Photos names so the renter QR is first in the picker."""
+    destinations = SAMSUNG_GALLERY_QR_PATHS if oem == OEM_SAMSUNG else (
+        *RENTER_GALLERY_QR_PATHS,
+        f"{DCIM_DIR}/esim_qr.png",
+    )
     copied: list[str] = []
-    for dest in SAMSUNG_GALLERY_QR_PATHS:
+    for dest in destinations:
         parent = dest.rsplit("/", 1)[0]
         try:
             runner.run(serial, ["shell", "mkdir", "-p", parent])
@@ -203,10 +225,90 @@ def _copy_samsung_gallery_aliases(
 
 
 def _manufacturer_from_adb(runner: AdbCommandRunner, serial: str) -> str:
+    return _prop_from_adb(runner, serial, "ro.product.manufacturer")
+
+
+def _prop_from_adb(runner: AdbCommandRunner, serial: str, name: str) -> str:
     try:
-        return (runner.run(serial, ["shell", "getprop", "ro.product.manufacturer"]).stdout or "").strip()
+        return (runner.run(serial, ["shell", "getprop", name]).stdout or "").strip()
     except AdbCommandError:
         return ""
+
+
+def detect_device_oem(runner: AdbCommandRunner, serial: str, slot_id: int) -> str:
+    manufacturer = _prop_from_adb(runner, serial, "ro.product.manufacturer")
+    brand = _prop_from_adb(runner, serial, "ro.product.brand")
+    if _is_samsung_renter_device(int(slot_id), serial, manufacturer):
+        return OEM_SAMSUNG
+    if _is_samsung_renter_device(int(slot_id), serial, brand):
+        return OEM_SAMSUNG
+    blob = f"{manufacturer} {brand}".lower()
+    if "samsung" in blob:
+        return OEM_SAMSUNG
+    return OEM_PIXEL
+
+
+def wake_and_unlock_device(runner: AdbCommandRunner, serial: str) -> None:
+    try:
+        runner.run(serial, ["shell", "input", "keyevent", "224"])
+    except AdbCommandError:
+        pass
+    for args in (
+        ["shell", "wm", "dismiss-keyguard"],
+        ["shell", "input", "keyevent", "82"],
+        ["shell", "input", "keyevent", "3"],
+    ):
+        try:
+            runner.run(serial, args)
+        except AdbCommandError:
+            pass
+
+
+def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
+    """Open the OEM eSIM/SIM screen. Public intents/components only."""
+    if oem == OEM_SAMSUNG:
+        try:
+            runner.run(serial, ["shell", *samsung_sim_manager_args()])
+            return "sim_manager"
+        except AdbCommandError:
+            runner.run(serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
+            return SAMSUNG_ESIM_FALLBACK_INTENT
+    launched = PIXEL_ESIM_INTENTS[0]
+    for intent in PIXEL_ESIM_INTENTS:
+        try:
+            runner.run(serial, ["shell", "am", "start", "-a", intent])
+            launched = intent
+            break
+        except AdbCommandError:
+            continue
+    return launched
+
+
+def esim_subscription_token(isub: str) -> str:
+    ids = sorted(set(_EMBEDDED_ID_RE.findall(isub or "")))
+    if ids:
+        return "ids:" + ",".join(ids)
+    from infrastructure.adb_four_layer import _subscription_bits
+
+    present, default_data, empty = _subscription_bits(isub or "")
+    return f"bits:{int(bool(present))}:{default_data}:{int(bool(empty))}"
+
+
+def capture_esim_baseline(runner: AdbCommandRunner, serial: str) -> dict[str, Any]:
+    try:
+        isub = runner.run(serial, ["shell", "dumpsys", "isub"]).stdout or ""
+    except AdbCommandError:
+        isub = ""
+    from infrastructure.adb_four_layer import _subscription_bits
+
+    present, _default, _empty = _subscription_bits(isub)
+    token = esim_subscription_token(isub)
+    return {
+        "esim_profile_present": bool(present),
+        "esim_baseline_present": bool(present),
+        "esim_baseline_token": token,
+        "esim_current_token": token,
+    }
 
 
 def _default_downloader(url: str, timeout_seconds: float) -> bytes:
@@ -303,6 +405,7 @@ def _place_details(
     message: str | None = None,
     media_scanned: bool | None = None,
     gallery_aliases: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "ok": ok,
@@ -319,6 +422,8 @@ def _place_details(
         body["media_scanned"] = media_scanned
     if gallery_aliases:
         body["gallery_aliases"] = list(gallery_aliases)
+    if extra:
+        body.update(extra)
     return body
 
 
@@ -336,6 +441,7 @@ def _place_result(
     placed: bool = False,
     media_scanned: bool | None = None,
     gallery_aliases: list[str] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> FarmTaskResult:
     details = _place_details(
         ok=ok,
@@ -349,6 +455,7 @@ def _place_result(
         message=message,
         media_scanned=media_scanned,
         gallery_aliases=gallery_aliases,
+        extra=extra,
     )
     return FarmTaskResult(
         ok=ok,
@@ -568,17 +675,29 @@ def run_remote_access_place_qr(
                 pass
 
     media_scanned = _media_scan(runner, serial, remote_path)
-    gallery_aliases: list[str] = []
-    if _is_samsung_renter_device(slot_id, serial, _manufacturer_from_adb(runner, serial)):
-        gallery_aliases = _copy_samsung_gallery_aliases(runner, serial, remote_path)
+    oem = detect_device_oem(runner, serial, slot_id)
+    gallery_aliases = copy_renter_gallery_aliases(runner, serial, remote_path, oem=oem)
+    baseline = capture_esim_baseline(runner, serial)
+    wake_and_unlock_device(runner, serial)
+    launched = launch_esim_setup_screen(runner, serial, oem)
+    prompt = handoff_prompt_for_oem(oem)
+    extra = {
+        "device_oem": oem,
+        "setup_ui_state": SETUP_UI_AWAITING,
+        "setup_ui_prompt": prompt,
+        "setup_human_click": "Add SIM" if oem == OEM_PIXEL else "Add eSIM",
+        "esim_setup_launched": launched,
+        **baseline,
+    }
 
     logger.info(
-        "esim_qr_placed slot=%s job_id=%s downloaded_size=%s remote_size=%s media_scanned=%s",
+        "esim_qr_placed slot=%s job_id=%s downloaded_size=%s remote_size=%s media_scanned=%s oem=%s",
         slot_id,
         request.job_id,
         downloaded_size,
         remote_size,
         media_scanned,
+        oem,
     )
     return _place_result(
         ok=True,
@@ -592,6 +711,7 @@ def run_remote_access_place_qr(
         media_scanned=media_scanned,
         gallery_aliases=gallery_aliases,
         message=f"qr_placed:{remote_path};media_scanned={str(media_scanned).lower()}",
+        extra=extra,
     )
 
 
@@ -629,6 +749,7 @@ def run_remote_access_activation_status(
 
     snapshot = collect_four_layer_verification(runner, serial)
     verdict = evaluate_activation(snapshot)
+    baseline = capture_esim_baseline(runner, serial)
     evidence = {
         "verdict": verdict.value,
         "esim_profile_present": snapshot.subscription.subscription_present,
@@ -636,6 +757,7 @@ def run_remote_access_activation_status(
         "network_registered": snapshot.telephony.data_registered,
         "cellular": snapshot.connectivity.cellular_transport_available,
         "observation_complete": snapshot.observation_complete,
+        "esim_current_token": baseline.get("esim_current_token"),
     }
     logger.info("remote_access_activation_observed slot=%s verdict=%s", slot_id, verdict.value)
     return FarmTaskResult(ok=True, http_status=200, details=evidence)

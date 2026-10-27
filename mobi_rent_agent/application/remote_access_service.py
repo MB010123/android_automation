@@ -35,13 +35,15 @@ from application.vps_api_contract import (
 )
 from application.esim_qr_upload import public_placement_success, qr_upload_error_body
 from application.esim_setup_ui_state import (
+    OEM_PIXEL,
     SETUP_UI_AWAITING,
     SETUP_UI_COMPLETED,
     SETUP_UI_STATES,
     SETUP_UI_WORKING,
     SETUP_WORKING_FALLBACK_SECONDS,
-    SIM_MANAGER_HANDOFF_PROMPT,
     classify_setup_ui,
+    esim_profile_is_new,
+    handoff_prompt_for_oem,
     public_setup_ui_body,
 )
 from application.vps_farm_inventory import farm_agent_unavailable, mapped_farm_slots
@@ -115,8 +117,7 @@ REMOTE_ACCESS_PLACE_QR_TASK = "remote_access_place_qr"
 REMOTE_ACCESS_ACTIVATION_TASK = "remote_access_activation_status"
 ESIM_AUTO_ACTIVATION_TASK = "esim_auto_activation"
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
-    "Airplane Mode uses the Farm Agent `airplane_mode` task "
-    "(`cmd connectivity airplane-mode`), not GADS."
+    "Airplane Mode uses the Farm Agent `airplane_mode` task, not GADS."
 )
 
 _RENTAL_END_KEYS = ("ends_at", "end_at", "rental_end", "rental_ends_at", "expires_at", "end_time")
@@ -1257,36 +1258,36 @@ class RemoteAccessService:
         self._store.mark_qr_uploaded(
             auth.rental_id, uploaded_at=self._clock(), qr_sha256=qr_sha256
         )
-        samsung = self._is_samsung_renter_slot(auth.slot_id)
+        oem = str(details.get("device_oem") or "").strip().lower()
+        if not oem:
+            oem = "samsung" if self._is_samsung_renter_slot(auth.slot_id) else OEM_PIXEL
+        prompt = str(details.get("setup_ui_prompt") or "").strip() or handoff_prompt_for_oem(oem)
+        click_label = str(details.get("setup_human_click") or "").strip() or (
+            "Add SIM" if oem == OEM_PIXEL else "Add eSIM"
+        )
+        self._record_esim_baseline(auth.rental_id, details)
+        self._qr_walk_started.pop(auth.rental_id, None)
+        self._prepare_device_screen(auth.slot_id, wait_boot=False)
+        self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING, setup_complete=False)
+        self._clear_setup_working(auth.rental_id)
         body = public_placement_success(details, job_id=job_id)
-        if samsung:
-            self._prepare_device_screen(auth.slot_id, wait_boot=False)
-            self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING)
-            self._clear_setup_working(auth.rental_id)
-            body["setup_ui_state"] = SETUP_UI_AWAITING
-            body["setup_ui_prompt"] = SIM_MANAGER_HANDOFF_PROMPT
-            body["setup_human_click"] = "Add eSIM"
-        else:
-            self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_WORKING)
-            self._mark_setup_working(auth.rental_id, auth.slot_id)
-            body["setup_ui_state"] = SETUP_UI_WORKING
-            body.update(self._apply_setup_fallback(auth.rental_id, SETUP_UI_WORKING, auth.slot_id))
+        body["setup_ui_state"] = SETUP_UI_AWAITING
+        body["setup_ui_prompt"] = prompt
+        body["setup_human_click"] = click_label
         auto_job_id = str(uuid.uuid4())
-        if samsung:
-            self._maybe_start_qr_walk(
-                auth,
-                image_base64=base64.b64encode(image_bytes).decode("ascii"),
-                job_id=auto_job_id,
-                qr_sha256=qr_sha256,
-            )
+        self._maybe_start_qr_walk(
+            auth,
+            image_base64=base64.b64encode(image_bytes).decode("ascii"),
+            job_id=auto_job_id,
+            qr_sha256=qr_sha256,
+            force=True,
+        )
         body.update(self._navigate_rental_to_add_esim(auth))
         refreshed = self._store.get(auth.rental_id)
         if refreshed is not None and refreshed.setup_ui_state in SETUP_UI_STATES:
             body["setup_ui_state"] = refreshed.setup_ui_state
             if refreshed.setup_ui_state == SETUP_UI_AWAITING:
-                body["setup_ui_prompt"] = str(
-                    body.get("setup_ui_prompt") or SIM_MANAGER_HANDOFF_PROMPT
-                )
+                body["setup_ui_prompt"] = str(body.get("setup_ui_prompt") or prompt)
             else:
                 body.pop("setup_ui_prompt", None)
         if self._qr_walk_started.get(auth.rental_id) == qr_sha256:
@@ -1300,8 +1301,9 @@ class RemoteAccessService:
         job_id: str,
         *,
         mode: str = "open_qr_picker",
+        force_open: bool = False,
     ) -> None:
-        """Open Samsung SIM Manager and hand off Add eSIM / Gallery to the customer."""
+        """Open the OEM eSIM screen and hand off Add eSIM / Add SIM to the customer."""
         try:
             response = self._farm.run_task(
                 task_type=ESIM_AUTO_ACTIVATION_TASK,
@@ -1311,7 +1313,7 @@ class RemoteAccessService:
                     "rental_id": auth.rental_id,
                     "actor": "renter",
                     "mode": mode,
-                    **self._qr_walk_payload(auth.rental_id),
+                    **self._qr_walk_payload(auth.rental_id, force_open=force_open),
                 },
                 job_id=job_id,
             )
@@ -1332,9 +1334,12 @@ class RemoteAccessService:
         ):
             ui_state = str(details.get("setup_ui_state") or "").strip()
             if ui_state not in SETUP_UI_STATES:
-                ui_state = SETUP_UI_COMPLETED if details.get("activated") else SETUP_UI_AWAITING
+                ui_state = SETUP_UI_COMPLETED if details.get("activated") is True else SETUP_UI_AWAITING
+            if details.get("activated") is not True and ui_state == SETUP_UI_COMPLETED:
+                ui_state = SETUP_UI_AWAITING
+            self._record_esim_baseline(auth.rental_id, details)
             self._store.mark_qr_walk_completed(auth.rental_id, setup_ui_state=ui_state)
-            if ui_state == SETUP_UI_COMPLETED or details.get("activated") is True:
+            if details.get("activated") is True:
                 self._store.set_setup_ui_state(
                     auth.rental_id, SETUP_UI_COMPLETED, setup_complete=True
                 )
@@ -1426,10 +1431,24 @@ class RemoteAccessService:
             if reported_rental and reported_rental != auth.rental_id:
                 logger.warning("activation_observation_ignored_foreign_rental slot=%s", auth.slot_id)
                 return {}
-        evidence = _public_activation_evidence(raw_details)
+        incoming = _public_activation_evidence(raw_details)
+        previous = dict(session.activation_evidence or {})
+        evidence = self._merge_activation_evidence(previous, incoming)
+        newly = esim_profile_is_new(
+            esim_profile_present=bool(evidence.get("esim_profile_present")),
+            esim_baseline_present=evidence.get("esim_baseline_present")
+            if "esim_baseline_present" in evidence
+            else None,
+            esim_baseline_token=evidence.get("esim_baseline_token"),
+            esim_current_token=evidence.get("esim_current_token"),
+        )
+        evidence["esim_newly_added"] = newly
         verdict = str(evidence.get("verdict") or "")
         observed: str | None = None
-        if verdict == "ACTIVATION_CONFIRMED":
+        preexisting = evidence.get("esim_baseline_present") is True and not newly
+        if verdict == "ACTIVATION_CONFIRMED" and preexisting:
+            logger.info("activation_observation_ignored_preexisting_esim slot=%s", auth.slot_id)
+        elif verdict == "ACTIVATION_CONFIRMED":
             observed = "confirmed"
             logger.info("activation_observation_confirmed slot=%s", auth.slot_id)
         elif verdict == "ACTIVATION_PARTIAL":
@@ -1459,6 +1478,8 @@ class RemoteAccessService:
                     self._mark_phone_ready(confirmed)
                 if previous != "confirmed":
                     logger.info("activation_state_changed slot=%s state=ACTIVE", auth.slot_id)
+        else:
+            self._store.upsert(replace(session, activation_evidence=evidence))
         return evidence
 
     def sweep_stale_sessions(self) -> None:
@@ -1606,17 +1627,74 @@ class RemoteAccessService:
         serial = str(self._devices.get(int(slot_id)) or "")
         return _is_samsung_renter_device(int(slot_id), serial, None)
 
-    def _qr_walk_payload(self, rental_id: str) -> dict[str, Any]:
+    def _record_esim_baseline(self, rental_id: str, details: dict[str, Any]) -> None:
+        session = self._store.get(rental_id)
+        if session is None or not isinstance(details, dict):
+            return
+        incoming = {
+            key: details[key]
+            for key in (
+                "esim_profile_present",
+                "esim_baseline_present",
+                "esim_baseline_token",
+                "esim_current_token",
+                "device_oem",
+            )
+            if key in details and details[key] is not None
+        }
+        if "esim_baseline_present" not in incoming and "esim_profile_present" in incoming:
+            incoming["esim_baseline_present"] = bool(incoming["esim_profile_present"])
+        if "esim_baseline_token" not in incoming and incoming.get("esim_current_token"):
+            incoming["esim_baseline_token"] = incoming.get("esim_current_token")
+        if not incoming:
+            return
+        evidence = self._merge_activation_evidence(dict(session.activation_evidence or {}), incoming)
+        evidence["esim_newly_added"] = False
+        self._store.upsert(replace(session, activation_evidence=evidence))
+
+    def _esim_newly_added(self, session: RemoteAccessSession | None) -> bool:
+        if session is None:
+            return False
+        evidence = session.activation_evidence or {}
+        if evidence.get("esim_newly_added") is True:
+            return True
+        return esim_profile_is_new(
+            esim_profile_present=bool(evidence.get("esim_profile_present")),
+            esim_baseline_present=evidence.get("esim_baseline_present")
+            if "esim_baseline_present" in evidence
+            else None,
+            esim_baseline_token=evidence.get("esim_baseline_token"),
+            esim_current_token=evidence.get("esim_current_token"),
+        )
+
+    @staticmethod
+    def _merge_activation_evidence(
+        previous: dict[str, Any], incoming: dict[str, Any]
+    ) -> dict[str, Any]:
+        merged = dict(previous)
+        for key, value in incoming.items():
+            if value is None:
+                continue
+            if key in {"esim_baseline_present", "esim_baseline_token"} and key in merged:
+                continue
+            merged[key] = value
+        return merged
+
+    def _qr_walk_payload(self, rental_id: str, *, force_open: bool = False) -> dict[str, Any]:
         session = self._store.get(rental_id)
         body: dict[str, Any] = {}
         if session is None:
             return body
         if session.qr_sha256:
             body["qr_sha256"] = session.qr_sha256
-        body["qr_walk_completed"] = bool(session.qr_walk_completed)
+        body["qr_walk_completed"] = False if force_open else bool(session.qr_walk_completed)
+        if force_open:
+            body["force_open"] = True
         evidence = session.activation_evidence or {}
-        if evidence.get("esim_profile_present"):
-            body["esim_profile_present"] = True
+        if "esim_baseline_present" in evidence:
+            body["esim_baseline_present"] = bool(evidence.get("esim_baseline_present"))
+        if evidence.get("esim_baseline_token"):
+            body["esim_baseline_token"] = evidence.get("esim_baseline_token")
         return body
 
     def _session_for_slot(self, slot_id: int) -> RemoteAccessSession | None:
@@ -1629,8 +1707,7 @@ class RemoteAccessService:
             return True
         if str(session.activation_observed or "").strip().lower() == "confirmed":
             return True
-        evidence = session.activation_evidence or {}
-        return bool(evidence.get("esim_profile_present"))
+        return False
 
     def _qr_walk_should_skip(self, session: RemoteAccessSession | None) -> bool:
         if session is None or session.qr_uploaded_at is None:
@@ -1696,20 +1773,27 @@ class RemoteAccessService:
         image_base64: str | None = None,
         job_id: str | None = None,
         qr_sha256: str | None = None,
+        force: bool = False,
     ) -> None:
-        if self._farm is None or not self._is_samsung_renter_slot(auth.slot_id):
+        if self._farm is None:
             return
         session = self._store.get(auth.rental_id) or self._session_for_slot(auth.slot_id)
         if session is None or session.qr_uploaded_at is None:
             return
-        if self._qr_walk_should_skip(session):
-            return
         sha = str(qr_sha256 or session.qr_sha256 or "").strip()
+        if self._qr_walk_started.get(auth.rental_id) == (sha or "pending"):
+            return
+        if not force and self._qr_walk_should_skip(session):
+            return
         self._qr_walk_started[auth.rental_id] = sha or "pending"
         auto_job_id = job_id or str(uuid.uuid4())
         self._runner(
             lambda: self._run_auto_activation_flow(
-                auth, image_base64 or "", auto_job_id, mode="gated_setup"
+                auth,
+                image_base64 or "",
+                auto_job_id,
+                mode="gated_setup",
+                force_open=force,
             )
         )
 
@@ -1796,8 +1880,7 @@ class RemoteAccessService:
             payload["qr_walk_completed"] = bool(current.qr_walk_completed)
             if current.qr_sha256:
                 payload["qr_sha256"] = current.qr_sha256
-            evidence = current.activation_evidence or {}
-            if evidence.get("esim_profile_present"):
+            if self._esim_newly_added(current):
                 payload["esim_profile_present"] = True
             if str(current.activation_observed or "").strip().lower() == "confirmed":
                 payload["activation_confirmed"] = True
@@ -1817,7 +1900,6 @@ class RemoteAccessService:
             and session is not None
             and session.qr_uploaded_at is not None
             and not isinstance(launched, ApiResult)
-            and self._is_samsung_renter_slot(slot_id)
         ):
             self._start_samsung_open_qr(int(slot_id))
         return launched
@@ -1854,8 +1936,8 @@ class RemoteAccessService:
         if current is None:
             return {}
         confirmed = str(current.activation_observed or "").strip().lower() == "confirmed"
-        esim_present = bool((current.activation_evidence or {}).get("esim_profile_present"))
-        if confirmed or current.setup_complete or esim_present:
+        newly = self._esim_newly_added(current)
+        if confirmed or current.setup_complete or newly:
             self._store.set_setup_ui_state(
                 rental_id, SETUP_UI_COMPLETED, setup_complete=True
             )
@@ -1886,7 +1968,8 @@ class RemoteAccessService:
             walk_completed=bool(current.qr_walk_completed),
             walk_in_progress=walk_in_progress,
             activation_confirmed=confirmed,
-            esim_profile_present=esim_present,
+            esim_newly_added=newly,
+            oem=str((current.activation_evidence or {}).get("device_oem") or "") or None,
         )
         state = farm_state if farm_state in SETUP_UI_STATES else classification.state
         prompt = None
@@ -1904,7 +1987,8 @@ class RemoteAccessService:
                 walk_completed=bool(current.qr_walk_completed),
                 walk_in_progress=False,
                 activation_confirmed=state == SETUP_UI_COMPLETED,
-                esim_profile_present=esim_present,
+                esim_newly_added=newly,
+                oem=str((current.activation_evidence or {}).get("device_oem") or "") or None,
             )
         )
         body["setup_ui_state"] = state
@@ -2474,6 +2558,11 @@ def _public_activation_evidence(raw: Any) -> dict[str, Any]:
         "network_registered",
         "cellular",
         "observation_complete",
+        "esim_current_token",
+        "esim_baseline_present",
+        "esim_baseline_token",
+        "device_oem",
+        "esim_newly_added",
     )
     return {key: raw[key] for key in allowed if key in raw and raw[key] is not None}
 

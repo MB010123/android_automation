@@ -25,7 +25,7 @@ from application.auth_service import AuthService
 from application.farm_agent_tasks import FarmTaskRequest, execute_farm_task, parse_farm_task_body
 from application.farm_task_executor import FarmTaskExecutorDeps
 from application.remote_access_farm_task import run_remote_access_place_qr
-from application.esim_setup_ui_state import SIM_MANAGER_HANDOFF_PROMPT
+from application.esim_setup_ui_state import PIXEL_HANDOFF_PROMPT, SIM_MANAGER_HANDOFF_PROMPT
 from application.remote_access_service import (
     PREPARE_FAILED,
     PREPARE_PLACING_QR,
@@ -270,6 +270,7 @@ class FakeFarm:
         self.airplane_timeout = False
         self.reboot_timeout = False
         self.input_timeout = False
+        self.place_qr_extra: dict[str, Any] | None = None
 
     def run_task(self, *, task_type: str, farm_slot_id: int, payload: dict, job_id: str) -> FarmTaskResponse:
         self.tasks.append({"type": task_type, "slot": farm_slot_id, "payload": payload, "job_id": job_id})
@@ -313,6 +314,7 @@ class FakeFarm:
                 size = len(base64.b64decode(raw))
             dest = "/sdcard/DCIM/Camera/mobirent_esim_qr_placed.png"
             body["message"] = f"qr_placed:{dest};media_scanned=true"
+            oem = "samsung" if int(farm_slot_id) == 21 else "pixel"
             body["details"] = {
                 "ok": True,
                 "placed": True,
@@ -322,22 +324,30 @@ class FakeFarm:
                 "downloaded_size": size,
                 "remote_size": size,
                 "error_code": None,
+                "device_oem": oem,
+                "setup_ui_state": "awaiting_human_click",
+                "setup_ui_prompt": SIM_MANAGER_HANDOFF_PROMPT if oem == "samsung" else PIXEL_HANDOFF_PROMPT,
+                "setup_human_click": "Add eSIM" if oem == "samsung" else "Add SIM",
             }
+            if self.place_qr_extra:
+                body["details"].update(self.place_qr_extra)
         if task_type == "remote_access_activation_status" and self.activation_details:
             body["details"] = self.activation_details
         if task_type == "esim_auto_activation":
-            esim = bool(payload.get("esim_profile_present"))
-            skipped = bool(payload.get("qr_walk_completed") or esim)
+            skipped = bool(payload.get("qr_walk_completed")) and not payload.get("force_open")
+            oem = "samsung" if int(farm_slot_id) == 21 else "pixel"
+            prompt = SIM_MANAGER_HANDOFF_PROMPT if oem == "samsung" else PIXEL_HANDOFF_PROMPT
             body["details"] = {
                 "ok": True,
                 "opened": not skipped,
                 "activated": False,
                 "skipped": skipped,
                 "qr_walk_completed": True,
-                "qr_deleted": bool(esim),
-                "setup_ui_state": "completed" if esim else "awaiting_human_click",
-                "setup_ui_prompt": None if esim else SIM_MANAGER_HANDOFF_PROMPT,
-                "setup_human_click": None if esim else "Add eSIM",
+                "qr_deleted": False,
+                "device_oem": oem,
+                "setup_ui_state": "awaiting_human_click",
+                "setup_ui_prompt": prompt,
+                "setup_human_click": "Add SIM" if oem == "pixel" else "Add eSIM",
                 "method": payload.get("mode") or "gated_setup",
                 "steps_done": [] if skipped else ["open_sim_manager"],
             }
@@ -1069,6 +1079,10 @@ class _QrRunner(AdbCommandRunner):
         if arguments[:4] == ["shell", "stat", "-c", "%s"]:
             size = 0 if self.remote_size is None else int(self.remote_size)
             return AdbCommandResult(stdout=str(size), stderr="")
+        if arguments[:3] == ["shell", "getprop"]:
+            return AdbCommandResult(stdout="", stderr="")
+        if arguments[:3] == ["shell", "dumpsys", "isub"]:
+            return AdbCommandResult(stdout="", stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
 
@@ -1107,10 +1121,24 @@ def test_qr_task_pushes_image_to_dcim_camera_only():
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
     assert push[2] == "/sdcard/DCIM/Camera/mobirent_esim_qr_aaaaaaaabbbb_11111111.png"
     joined = " ".join(" ".join(args) for _, args in runner.calls)
-    for forbidden in ("provision", "euicc", "dpm", "pm grant", "WRITE_EMBEDDED", "forward", "localabstract"):
+    for forbidden in (
+        "provision_esim",
+        "EuiccManager",
+        "dpm",
+        "pm grant",
+        "WRITE_EMBEDDED",
+        "forward",
+        "localabstract",
+    ):
         assert forbidden not in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "/sdcard/Pictures/esim_qr.png" in joined
+    assert "/sdcard/Download/esim_qr.png" in joined
     assert "media_scanned=true" in (result.message or "")
     details = result.details or {}
+    assert details.get("setup_ui_state") == "awaiting_human_click"
+    assert details.get("device_oem") == "pixel"
+    assert "Add SIM" in str(details.get("setup_ui_prompt") or "")
     assert details["ok"] is True
     assert details["placed"] is True
     assert details["serial"] == SLOT1_SERIAL
