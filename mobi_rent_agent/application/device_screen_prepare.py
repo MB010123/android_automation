@@ -13,9 +13,9 @@ from typing import Any, Callable
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWAITING
+from application.device_hardware_lockdown import hardware_lockdown_commands
 from application.remote_access_farm_task import (
     detect_device_oem,
-    disable_native_camera_commands,
     ensure_esim_setup_screen_open,
 )
 from application.samsung_one_ui import disable_samsung_game_commands, is_samsung_device
@@ -226,9 +226,9 @@ def run_device_screen_prepare(
     run_best_effort_shell(
         runner,
         serial,
-        disable_native_camera_commands(oem),
+        hardware_lockdown_commands(),
         warnings,
-        "disable_camera",
+        "hardware_lockdown",
     )
     esim_setup_launched = ""
     if open_esim:

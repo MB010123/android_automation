@@ -21,13 +21,18 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
+from application.device_hardware_lockdown import hardware_lockdown_commands
 from application.device_screen_prepare import (
     BOOT_WAIT_TIMEOUT_SECONDS,
     WAKE_UNLOCK_COMMANDS,
     _wait_boot_completed,
     run_best_effort_shell,
 )
-from application.remote_access_farm_task import enable_native_camera_commands
+from application.remote_access_farm_task import (
+    PLACED_ESIM_QR_PATHS,
+    delete_placed_esim_qr,
+    refresh_media_store,
+)
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -41,11 +46,13 @@ CLEANUP_WIPE_TIMEOUT_SECONDS = 180.0
 FILE_DIRS = (
     "/sdcard/Download",
     "/sdcard/Pictures",
+    "/sdcard/DCIM",
     "/sdcard/DCIM/Camera",
     "/sdcard/DCIM/Screenshots",
     "/sdcard/Documents",
 )
-MEDIA_SCAN_URIS = ("file:///sdcard/Pictures", "file:///sdcard/DCIM")
+MEDIA_SCAN_URIS = ("file:///sdcard/Pictures", "file:///sdcard/DCIM", "file:///sdcard")
+MEDIA_MOUNTED_URI = "file:///sdcard"
 OPTIONAL_CLEAR_PACKAGES = (
     "com.google.android.apps.messaging",
     "com.samsung.android.messaging",
@@ -129,6 +136,8 @@ def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
 
 def cleanup_shell_commands(*, lockdown: bool) -> list[str]:
     commands = list(WAKE_UNLOCK_COMMANDS)
+    for path in PLACED_ESIM_QR_PATHS:
+        commands.append(f"rm -f {path}")
     for path in FILE_DIRS:
         commands.append(f"rm -rf {path}")
         commands.append(f"mkdir -p {path}")
@@ -137,6 +146,10 @@ def cleanup_shell_commands(*, lockdown: bool) -> list[str]:
             "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE "
             f"-d {uri}"
         )
+    commands.append(
+        "am broadcast -a android.intent.action.MEDIA_MOUNTED "
+        f"-d {MEDIA_MOUNTED_URI}"
+    )
     commands.append("content delete --uri content://call_log/calls")
     commands.append("pm clear com.android.providers.contacts")
     commands.append("content delete --uri content://sms")
@@ -159,7 +172,7 @@ def cleanup_shell_commands(*, lockdown: bool) -> list[str]:
             if package in PRESERVED_PACKAGES or package in ESIM_PROTECTED_PACKAGES:
                 continue
             commands.append(f"pm disable-user --user 0 {package}")
-    commands.extend(enable_native_camera_commands())
+        commands.extend(hardware_lockdown_commands())
     return commands
 
 
@@ -288,7 +301,9 @@ def run_device_data_cleanup(
     script_ok = run_best_effort_shell(
         runner, mapped, commands, warnings, "cleanup_script"
     )
-    cleared = ["files", "call_log", "contacts", "sms_mms", "browsers", "accounts", "launchers"]
+    delete_placed_esim_qr(runner, mapped, refresh=False)
+    refresh_media_store(runner, mapped)
+    cleared = ["files", "call_log", "contacts", "sms_mms", "browsers", "accounts", "launchers", "esim_qr"]
     logger.info(
         "device_data_cleanup_ok slot=%s lockdown=%s preserve_esim=%s script_ok=%s warnings=%s",
         slot_id,

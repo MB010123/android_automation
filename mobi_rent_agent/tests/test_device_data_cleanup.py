@@ -128,16 +128,23 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
         "browsers",
         "accounts",
         "launchers",
+        "esim_qr",
     ]
     assert details["warnings"] == []
-    assert [args[0] for _serial, args in runner.calls] == ["get-state", "shell"]
+    assert runner.calls[0][1] == ["get-state"]
+    assert runner.calls[1][1][0] == "shell"
     script = runner.calls[1][1][1]
     assert "rm -rf /sdcard/Pictures; true" in script
     assert "mkdir -p /sdcard/Pictures; true" in script
+    assert "rm -f /sdcard/Pictures/esim_qr.png; true" in script
+    assert "rm -f /sdcard/Download/esim_qr.png; true" in script
+    assert "rm -f /sdcard/DCIM/esim_qr.png; true" in script
+    assert "rm -rf /sdcard/DCIM; true" in script
     assert "*" not in script
     assert "sh -c" not in script
     assert "MEDIA_SCANNER_SCAN_FILE" in script and "file:///sdcard/Pictures" in script
     assert "file:///sdcard/DCIM" in script
+    assert "MEDIA_MOUNTED" in script and "file:///sdcard" in script
     assert "content://call_log/calls" in script
     assert "pm clear com.android.providers.contacts" in script
     assert "content://sms" in script
@@ -156,7 +163,15 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
         "com.android.camera2",
         "com.android.camera",
     ):
-        assert f"pm enable {package}" in script
+        assert f"pm disable-user --user 0 {package}" in script
+        assert f"pm enable {package}" not in script
+    assert "media volume --stream 3 --set 0" in script
+    assert "cmd sensor_privacy enable 0 1" in script
+    assert "cmd sensor_privacy enable 0 2" in script
+    assert "cmd flashlight disable" in script
+    assert "dpm set-user-restriction no_adjust_volume true" in script
+    assert "dpm set-user-restriction no_camera true" in script
+    assert "dpm set-user-restriction no_unmute_microphone true" in script
     for package in PRESERVED_PACKAGES:
         assert f"disable-user --user 0 {package}" not in script
     for package in ACCOUNT_CLEAR_PACKAGES:
@@ -551,7 +566,9 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     assert "KEYCODE_HOME" in scripts
     assert "com.samsung.android.game.gamehome" not in scripts
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in scripts
-    assert "com.sec.android.app.camera" not in scripts
+    assert "pm disable-user --user 0 com.sec.android.app.camera" in scripts
+    assert "media volume --stream 3 --set 0" in scripts
+    assert "cmd flashlight disable" in scripts
 
 
 def test_device_screen_prepare_skip_home_omits_keycode_home():
@@ -704,7 +721,8 @@ def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
     assert "pm disable-user --user 0 com.samsung.android.game.gamehome" in scripts
     assert "pm disable-user --user 0 com.samsung.android.game.gametools" in scripts
     assert "pm disable-user --user 0 com.sec.android.app.camera" in scripts
-    assert "com.google.android.GoogleCamera" not in scripts
+    assert "pm disable-user --user 0 com.google.android.GoogleCamera" in scripts
+    assert "media volume --stream 3 --set 0" in scripts
 
 
 def test_device_screen_prepare_wait_boot_then_unlock():

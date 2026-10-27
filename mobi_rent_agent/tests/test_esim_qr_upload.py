@@ -130,7 +130,7 @@ def test_public_success_omits_serial():
         {
             "placed": True,
             "serial": BAY1_SERIAL,
-            "destination": "/sdcard/DCIM/Camera/x.png",
+            "destination": "/sdcard/Pictures/x.png",
             "downloaded_size": 8,
             "remote_size": 8,
         },
@@ -140,7 +140,7 @@ def test_public_success_omits_serial():
     assert body["placed"] is True
     assert body["job_id"] == "job-1"
     assert "serial" not in body
-    assert body["destination"].startswith("/sdcard/DCIM/Camera/")
+    assert body["destination"].startswith("/sdcard/Pictures/")
     err = qr_upload_error_body("qr_not_an_image")
     assert err["ok"] is False and err["step"] == "qr_upload" and err["error_code"] == "qr_not_an_image"
 
@@ -436,7 +436,7 @@ def test_http_authenticated_upload_and_isolation(tmp_path: Path):
         status, payload, _ = _http_raw("POST", url, token=token_a, data=body, content_type=ctype)
         assert status == 200, payload
         assert payload["ok"] is True and payload["placed"] is True
-        assert payload["destination"].startswith("/sdcard/DCIM/Camera/")
+        assert payload["destination"].startswith("/sdcard/Pictures/")
         assert payload["downloaded_size"] == len(PNG_BYTES)
         assert payload["remote_size"] == len(PNG_BYTES)
         assert "serial" not in payload

@@ -1,12 +1,11 @@
 """Farm Agent task: place a validated eSIM QR image on the phone.
 
-Pixel renters get ``/sdcard/DCIM/Camera/``. Samsung S20 renters (Slot 21 /
-``RFCNB056WEV`` / manufacturer Samsung) get ``/sdcard/Pictures/``. Every
-renter QR is also copied to ``/sdcard/Pictures/`` and ``/sdcard/Download/``
-and media-scanned. After the push the farm wakes the phone and opens the OEM eSIM screen
-once (Samsung ``SimCardMgrActivity``, Pixel ``WIRELESS_SETTINGS`` /
-Network & internet), then stops. Admin payloads may keep DCIM or pick
-an allowlisted directory.
+Renters get a single file in ``/sdcard/Pictures/``. Old QR copies in
+Pictures, Download, and DCIM are deleted first so Gallery/Recents show
+one image. Admin payloads may pick an allowlisted directory. After the
+push the farm wakes the phone and opens the OEM eSIM screen once
+(Samsung ``SimCardMgrActivity``, Pixel ``WIRELESS_SETTINGS`` /
+Network & internet), then stops.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
@@ -88,16 +87,13 @@ DOWNLOAD_DIR = "/sdcard/Download"
 ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR})
 SAMSUNG_S20_SERIAL = "RFCNB056WEV"
 SAMSUNG_USER_QR_SLOT = 21
-SAMSUNG_GALLERY_QR_PATHS = (
+PLACED_ESIM_QR_PATHS = (
     f"{PICTURES_DIR}/esim_qr.png",
     f"{DOWNLOAD_DIR}/esim_qr.png",
     f"{DCIM_DIR}/esim_qr.png",
+    f"{DCIM_CAMERA_DIR}/esim_qr.png",
 )
-PLACED_ESIM_QR_PATHS = SAMSUNG_GALLERY_QR_PATHS
-RENTER_GALLERY_QR_PATHS = (
-    f"{PICTURES_DIR}/esim_qr.png",
-    f"{DOWNLOAD_DIR}/esim_qr.png",
-)
+QR_MEDIA_DIRS = (PICTURES_DIR, DOWNLOAD_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
 PIXEL_SETTINGS_INTENT = "android.settings.SETTINGS"
 PIXEL_WIRELESS_INTENT = "android.settings.WIRELESS_SETTINGS"
 PIXEL_MANAGE_EMBEDDED_INTENT = "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS"
@@ -175,21 +171,17 @@ def qr_placement_dir(
     payload: dict[str, Any] | None,
     manufacturer: str | None = None,
 ) -> str:
-    """Directory for the QR file. Renters cannot override; admins may.
+    """Directory for the QR file. Renters always use Pictures.
 
-    Admin ``actor=admin`` keeps Pixel DCIM unless ``qr_dir`` is an allowlisted
-    path. Renter Samsung devices always use Pictures.
+    Admin ``actor=admin`` may pick an allowlisted ``qr_dir``; otherwise Pictures.
     """
+    _ = (slot_id, serial, manufacturer)
     body = payload if isinstance(payload, dict) else {}
     actor = str(body.get("actor") or "renter").strip().lower()
     requested = str(body.get("qr_dir") or "").strip().rstrip("/")
-    if actor == "admin":
-        if requested in ALLOWED_QR_DIRS:
-            return requested
-        return DCIM_CAMERA_DIR
-    if _is_samsung_renter_device(int(slot_id), serial, manufacturer):
-        return PICTURES_DIR
-    return DCIM_CAMERA_DIR
+    if actor == "admin" and requested in ALLOWED_QR_DIRS:
+        return requested
+    return PICTURES_DIR
 
 
 def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool:
@@ -211,12 +203,36 @@ def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool
         return False
 
 
-def delete_placed_esim_qr(runner: AdbCommandRunner, serial: str) -> list[str]:
+def refresh_media_store(runner: AdbCommandRunner, serial: str) -> bool:
+    """Ask Gallery to drop deleted files. Best-effort; never raises."""
+    try:
+        runner.run(
+            serial,
+            [
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                "android.intent.action.MEDIA_MOUNTED",
+                "-d",
+                "file:///sdcard",
+            ],
+        )
+        return True
+    except AdbCommandError:
+        return False
+
+
+def delete_placed_esim_qr(
+    runner: AdbCommandRunner,
+    serial: str,
+    *,
+    refresh: bool = True,
+) -> list[str]:
     """Remove Gallery aliases and hashed QR files so they cannot be re-picked."""
     removed: list[str] = []
-    directories = (PICTURES_DIR, DOWNLOAD_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
     targets = list(PLACED_ESIM_QR_PATHS)
-    for directory in directories:
+    for directory in QR_MEDIA_DIRS:
         try:
             listing = runner.run(serial, ["shell", "ls", directory]).stdout or ""
         except AdbCommandError:
@@ -235,6 +251,8 @@ def delete_placed_esim_qr(runner: AdbCommandRunner, serial: str) -> list[str]:
             removed.append(path)
         except AdbCommandError:
             continue
+    if refresh:
+        refresh_media_store(runner, serial)
     return removed
 
 
@@ -252,28 +270,6 @@ def read_qr_walk_marker(runner: AdbCommandRunner, serial: str) -> str | None:
     except AdbCommandError:
         return None
     return text or None
-
-
-def copy_renter_gallery_aliases(
-    runner: AdbCommandRunner, serial: str, source_path: str, *, oem: str
-) -> list[str]:
-    """Stable Gallery/Photos names so the renter QR is first in the picker."""
-    destinations = SAMSUNG_GALLERY_QR_PATHS if oem == OEM_SAMSUNG else (
-        *RENTER_GALLERY_QR_PATHS,
-        f"{DCIM_DIR}/esim_qr.png",
-    )
-    copied: list[str] = []
-    for dest in destinations:
-        parent = dest.rsplit("/", 1)[0]
-        try:
-            runner.run(serial, ["shell", "mkdir", "-p", parent])
-            if dest != source_path:
-                runner.run(serial, ["shell", "cp", source_path, dest])
-            _media_scan(runner, serial, dest)
-            copied.append(dest)
-        except AdbCommandError:
-            continue
-    return copied
 
 
 def _manufacturer_from_adb(runner: AdbCommandRunner, serial: str) -> str:
@@ -803,6 +799,7 @@ def run_remote_access_place_qr(
                 error="qr_push_failed",
                 message="temporary QR file was empty before ADB push",
             )
+        delete_placed_esim_qr(runner, serial, refresh=False)
         runner.run(serial, ["shell", "mkdir", "-p", media_dir])
         runner.run(serial, ["push", tmp_path, remote_path])
         try:
@@ -848,7 +845,7 @@ def run_remote_access_place_qr(
 
     media_scanned = _media_scan(runner, serial, remote_path)
     oem = detect_device_oem(runner, serial, slot_id)
-    gallery_aliases = copy_renter_gallery_aliases(runner, serial, remote_path, oem=oem)
+    gallery_aliases = [remote_path]
     baseline = capture_esim_baseline(runner, serial)
     disable_native_cameras(runner, serial, oem)
     wake_and_unlock_device(runner, serial)

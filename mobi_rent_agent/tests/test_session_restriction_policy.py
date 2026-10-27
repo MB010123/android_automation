@@ -187,13 +187,13 @@ def test_classify_esim_settings_voidfix_and_apps():
             "com.google.android.GoogleCamera/.CameraActivity",
             previous_kind=KIND_ESIM_ROOT,
         ).kind
-        == KIND_ESIM_NESTED
+        == KIND_BLOCKED_APP
     )
     assert (
         classify_foreground_activity(
             "com.google.android.GoogleCamera/.QrCodeScanActivity",
         ).kind
-        == KIND_ESIM_NESTED
+        == KIND_BLOCKED_APP
     )
     assert (
         classify_foreground_activity("com.android.camera2/.CameraActivity").kind
@@ -273,7 +273,7 @@ def test_settings_and_back_decisions():
         activity="com.google.android.GoogleCamera/.CameraActivity",
         previous_kind=KIND_ESIM_ROOT,
     )
-    assert tap_esim_camera.send_home is False and tap_esim_camera.destination is None
+    assert tap_esim_camera.send_home is True and tap_esim_camera.reason == REASON_SENSITIVE_BLOCKED
     tap_esim_qr = decide_restriction(
         action="tap",
         activity="com.google.android.euicc/.ui.QrCodeScanActivity",

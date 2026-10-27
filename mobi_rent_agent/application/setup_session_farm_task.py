@@ -447,13 +447,17 @@ def run_setup_session_safe_cleanup(
     runner = command_runner
     removed = False
     try:
-        for directory in (DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR):
-            listing = _shell(runner, adb_path, serial, ["ls", directory])
-            for name in (listing or "").split():
-                if not name.startswith(QR_PREFIX):
-                    continue
-                _shell(runner, adb_path, serial, ["rm", "-f", f"{directory}/{name}"])
-                removed = True
+        if runner is not None:
+            deleted = delete_placed_esim_qr(runner, serial)
+            removed = bool(deleted)
+        else:
+            for directory in (DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR, "/sdcard/DCIM"):
+                listing = _shell(runner, adb_path, serial, ["ls", directory])
+                for name in (listing or "").split():
+                    if not name.startswith(QR_PREFIX) and name != "esim_qr.png":
+                        continue
+                    _shell(runner, adb_path, serial, ["rm", "-f", f"{directory}/{name}"])
+                    removed = True
     except (AdbCommandError, OSError, subprocess.TimeoutExpired):
         logger.warning("setup_session_safe_cleanup_failed slot=%s", request.farm_slot_id)
         return FarmTaskResult(

@@ -801,7 +801,7 @@ def test_camera_from_launcher_sent_home_like_voidfix(tmp_path: Path):
     assert getattr(stream, "device_id") == SLOT2_SERIAL
 
 
-def test_esim_invoked_camera_and_scan_from_image_remain_allowed(tmp_path: Path):
+def test_native_camera_blocked_but_gallery_and_lpa_scan_remain_allowed(tmp_path: Path):
     farm = FakeFarm()
     farm.inspect_activity = "com.android.settings/.network.telephony.MobileNetworkActivity"
     _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
@@ -812,9 +812,8 @@ def test_esim_invoked_camera_and_scan_from_image_remain_allowed(tmp_path: Path):
     platform.calls.clear()
     camera = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 13, "y": 13})
     assert camera.http_status == 200
-    assert "restricted_destination" not in camera.body
-    assert any(c[0] == "tap" for c in platform.calls)
-    assert not any(c[0] == "home" for c in platform.calls)
+    assert camera.body["restricted_destination"] == "home"
+    assert camera.body["restriction"] == "sensitive_app_blocked"
     farm.inspect_activity = "com.google.android.photospicker/.PhotoPickerActivity"
     platform.calls.clear()
     gallery = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 14, "y": 14})

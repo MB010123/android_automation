@@ -1363,12 +1363,12 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "/rentals/{rental_id}/esim/upload": {
             "post": {
                 "tags": ["Remote access (in-app setup)"],
-                "summary": "Upload eSIM QR image onto the rental Pixel Camera",
+                "summary": "Upload eSIM QR image onto the rental Pictures folder",
                 "description": (
                     "Customer JWT only. Multipart field `qr_image` (PNG/JPG/WEBP). "
                     "The VPS authenticates the rental owner and requires a Farm-mapped bay "
-                    "(not `REMOTE_ACCESS_POC_SLOT_IDS`). Farm `adb push`es "
-                    "`/sdcard/DCIM/Camera/mobirent_esim_qr_*.{png|jpg|webp}`. "
+                    "(not `REMOTE_ACCESS_POC_SLOT_IDS`). Farm `adb push`es a single "
+                    "`/sdcard/Pictures/mobirent_esim_qr_*.{png|jpg|webp}` after deleting prior QR copies. "
                     "Does not require a remote-access session or `prepare-esim`. "
                     "Does not call `assign`, GADS, EuiccManager, or silent provisioning. "
                     "When `CUSTOMER_SESSION_RESTRICTIONS` is on (production default), a successful "
