@@ -3,10 +3,10 @@
 Pixel renters get ``/sdcard/DCIM/Camera/``. Samsung S20 renters (Slot 21 /
 ``RFCNB056WEV`` / manufacturer Samsung) get ``/sdcard/Pictures/``. Every
 renter QR is also copied to ``/sdcard/Pictures/`` and ``/sdcard/Download/``
-and media-scanned. After the push the farm wakes the phone and opens the
-OEM eSIM screen (Samsung SIM Manager / Wireless Settings, Pixel
-``MANAGE_EMBEDDED_SUBSCRIPTIONS`` / Wireless Settings), then stop. Admin
-payloads may keep DCIM or pick an allowlisted directory.
+and media-scanned. After the push the farm wakes the phone and opens the OEM eSIM screen
+once (Samsung ``SimCardMgrActivity``, Pixel ``WIRELESS_SETTINGS`` /
+Network & internet), then stops. Admin payloads may keep DCIM or pick
+an allowlisted directory.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
@@ -101,11 +101,10 @@ RENTER_GALLERY_QR_PATHS = (
 PIXEL_SETTINGS_INTENT = "android.settings.SETTINGS"
 PIXEL_WIRELESS_INTENT = "android.settings.WIRELESS_SETTINGS"
 PIXEL_MANAGE_EMBEDDED_INTENT = "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS"
-PIXEL_ESIM_INTENTS = (
-    PIXEL_MANAGE_EMBEDDED_INTENT,
-    PIXEL_WIRELESS_INTENT,
-    PIXEL_SETTINGS_INTENT,
-)
+PIXEL_NETWORK_OPERATOR_INTENT = "android.settings.NETWORK_OPERATOR_SETTINGS"
+# Live Pixel 18171FDF6005WG: WIRELESS_SETTINGS opens NetworkDashboardActivity
+# (Network & internet). MANAGE_EMBEDDED opens euicc profiles; SETTINGS opens SPA.
+PIXEL_ESIM_INTENTS = (PIXEL_WIRELESS_INTENT,)
 PIXEL_SETTINGS_PACKAGE = "com.android.settings"
 SAMSUNG_ESIM_FALLBACK_INTENT = "android.settings.WIRELESS_SETTINGS"
 SAMSUNG_CAMERA_PACKAGES = (
@@ -410,41 +409,21 @@ def enable_native_cameras(runner: AdbCommandRunner, serial: str) -> None:
 
 
 def ensure_esim_setup_screen_open(runner: AdbCommandRunner, serial: str, oem: str) -> str:
-    """Always force-open OEM SIM/eSIM settings. Existing profiles do not skip."""
+    """Fire the one verified OEM SIM/eSIM intent. No dumpsys, no tap-through."""
     return launch_esim_setup_screen(runner, serial, oem)
 
 
 def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
-    """Open the OEM SIM/eSIM screen, then stop. No Gallery/Add eSIM taps.
+    """Open the OEM SIM/eSIM screen once, then stop.
 
-    Always starts the public OEM intent, even when an eSIM is already
-    installed. uiautomator dumps interrupt the GADS MediaProjection stream,
-    so this path never dumps XML or taps Add eSIM / Scan QR / Gallery.
+    Samsung: SimCardMgrActivity. Pixel: WIRELESS_SETTINGS (live-verified to
+    NetworkDashboardActivity). Never dumpsys, never taps Add eSIM / Gallery.
     """
     if oem == OEM_SAMSUNG:
         _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()])
-        if _esim_handoff_verified(runner, serial, oem):
-            return "sim_manager"
-        _try_shell(
-            runner,
-            serial,
-            ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT, "--activity-clear-task"],
-        )
-        if _esim_handoff_verified(runner, serial, oem):
-            return SAMSUNG_ESIM_FALLBACK_INTENT
-        _try_shell(runner, serial, ["shell", *samsung_network_args()])
-        if _esim_handoff_verified(runner, serial, oem):
-            return "network_dashboard"
-        return "sim_manager_unconfirmed"
-    for intent in PIXEL_ESIM_INTENTS:
-        _try_shell(
-            runner,
-            serial,
-            ["shell", "am", "start", "-a", intent, "--activity-clear-task"],
-        )
-        if _esim_handoff_verified(runner, serial, oem):
-            return intent
-    return "pixel_sims_unconfirmed"
+        return "sim_manager"
+    _try_shell(runner, serial, ["shell", "am", "start", "-a", PIXEL_WIRELESS_INTENT])
+    return PIXEL_WIRELESS_INTENT
 
 
 def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> None:
@@ -855,16 +834,13 @@ def run_remote_access_place_qr(
     disable_native_cameras(runner, serial, oem)
     wake_and_unlock_device(runner, serial)
     launched = launch_esim_setup_screen(runner, serial, oem)
-    component = read_foreground_component(runner, serial)
-    verified = oem_setup_screen_is_open(component, oem)
     prompt = handoff_prompt_for_oem(oem)
     extra = {
         "device_oem": oem,
-        "setup_ui_state": SETUP_UI_AWAITING if verified else SETUP_UI_WORKING,
-        "setup_ui_prompt": prompt if verified else "",
+        "setup_ui_state": SETUP_UI_AWAITING,
+        "setup_ui_prompt": prompt,
         "setup_human_click": "Add SIM" if oem == OEM_PIXEL else "Add eSIM",
         "esim_setup_launched": launched,
-        "foreground_activity": component,
         **baseline,
     }
 

@@ -284,12 +284,11 @@ def test_qr_walk_is_skipped_when_already_completed():
     result = _activate(runner, request=_req(mode="gated_setup", qr_walk_completed=True))
     assert result.ok is True
     assert result.details["skipped"] is True
-    assert result.details["opened"] is True
+    assert result.details["opened"] is False
     assert result.details["qr_walk_completed"] is True
     assert result.details["qr_deleted"] is False
     assert result.details["setup_ui_state"] == "awaiting_human_click"
-    starts = runner.commands("shell", "am", "start")
-    assert starts and SIM_CARD_MGR_COMPONENT in starts[0]
+    assert runner.commands("shell", "am", "start") == []
     assert runner.tap_points() == []
     rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
     assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)
@@ -357,7 +356,8 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
     starts = runner.commands("shell", "am", "start")
     assert starts
     joined = " ".join(" ".join(args) for args in starts)
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert SIM_CARD_MGR_COMPONENT not in joined
     all_joined = " ".join(" ".join(args) for _, args in runner.calls)
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in all_joined

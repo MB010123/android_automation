@@ -533,10 +533,7 @@ def test_qr_upload_navigates_assigned_phone_to_add_esim(tmp_path: Path):
     assert uploaded.body["restricted_destination"] == "add_esim"
     assert uploaded.body["restriction"] == "qr_navigated_to_add_esim"
     _assert_no_internals(uploaded.body)
-    recoveries = _recover_inspects(farm)
-    assert len(recoveries) == 1
-    assert recoveries[0]["slot"] == 2
-    assert recoveries[0]["payload"]["recover"] is True
+    assert _recover_inspects(farm) == []
     assert store.get(rental) is not None
     assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
     _ = tenant
@@ -549,16 +546,14 @@ def test_qr_upload_navigate_uses_rental_slot_not_hardcoded_bay(tmp_path: Path):
     stolen = service.upload_esim_qr(CUSTOMER_B, other, PNG_BYTES)
     assert stolen.http_status == 200
     assert stolen.body["restricted_destination"] == "add_esim"
-    assert _recover_inspects(farm)[-1]["slot"] == 7
+    assert _recover_inspects(farm) == []
     farm.tasks.clear()
     for bay in range(1, 21):
         rental = _rental(tenant, bay=bay, user_id=CUSTOMER_A)
         uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
         assert uploaded.http_status == 200, bay
         assert uploaded.body["restricted_destination"] == "add_esim"
-        recoveries = _recover_inspects(farm)
-        assert recoveries[-1]["slot"] == bay
-        assert recoveries[-1]["payload"]["recover"] is True
+        assert _recover_inspects(farm) == []
         assert slot_map[bay] not in json.dumps(uploaded.body)
     assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
 
@@ -575,7 +570,7 @@ def test_qr_upload_navigates_without_gads_session(tmp_path: Path):
     assert session is not None
     assert session.status != "active"
     assert session.platform_secret is None
-    assert _recover_inspects(farm)[-1]["slot"] == 11
+    assert _recover_inspects(farm) == []
     assert not any(c[0] in {"grant", "revoke", "release"} for c in platform.calls)
     assert "serial" not in uploaded.body
 
@@ -600,7 +595,8 @@ def test_qr_upload_still_succeeds_if_add_esim_navigate_fails(tmp_path: Path):
     uploaded = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert uploaded.http_status == 200
     assert uploaded.body["placed"] is True
-    assert "restricted_destination" not in uploaded.body
+    assert uploaded.body["restricted_destination"] == "add_esim"
+    assert _recover_inspects(farm) == []
     assert not any(c[0] in {"revoke", "release"} for c in platform.calls)
 
 

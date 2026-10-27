@@ -2,8 +2,9 @@
 
 Windows ``adb shell`` joins argv and drops quotes, so this sends one ``shell``
 argument: ``cmd; true; cmd; true``. Individual Android denials never fail the
-task. Never reboots. During eSIM handoff it re-opens SIM/eSIM settings if
-the launcher is in front, then stops — no Add eSIM taps.
+task. Never reboots. During eSIM handoff (``skip_home``) it only wakes the
+panel — it does not send HOME or re-launch settings unless
+``open_esim_settings`` is set.
 """
 from __future__ import annotations
 
@@ -227,7 +228,7 @@ def run_device_screen_prepare(
         "disable_camera",
     )
     esim_setup_launched = ""
-    if skip_home:
+    if skip_home and bool(request.payload.get("open_esim_settings", False)):
         esim_setup_launched = ensure_esim_setup_screen_open(runner, serial, oem)
     package = str(request.payload.get("voidfix_package") or "").strip()
     if package:

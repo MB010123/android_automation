@@ -330,27 +330,17 @@ def test_samsung_bay_upload_triggers_background_auto_activation(tmp_path: Path):
     assert result.body["placed"] is True
     assert result.body["setup_ui_state"] == "awaiting_human_click"
     assert "Add eSIM" in str(result.body.get("setup_ui_prompt") or "")
-    assert result.body["auto_activation"]["started"] is True
-    assert result.body["auto_activation"]["job_id"]
+    assert result.body.get("auto_activation") in (None, {})
     _assert_safe_body(result.body)
     auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
-    assert auto and auto[-1]["slot"] == 21
-    assert auto[-1]["payload"]["actor"] == "renter"
-    assert auto[-1]["payload"]["rental_id"] == rental
-    assert auto[-1]["payload"]["mode"] == "gated_setup"
-    assert auto[-1]["payload"]["qr_walk_completed"] is False
+    assert auto == []
     prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert prepares
-    assert all(t["payload"].get("skip_home") is True for t in prepares)
+    assert prepares == []
     farm.tasks.clear()
     again = service.upload_esim_qr(CUSTOMER_A, rental, PNG_BYTES)
     assert again.http_status == 200
     auto_again = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
-    assert auto_again
-    assert auto_again[-1]["payload"].get("force_open") is True
-    assert auto_again[-1]["payload"].get("qr_walk_completed") is False
-    assert "image_base64" in auto[-1]["payload"]
-    assert "serial" not in auto[-1]["payload"]
+    assert auto_again == []
     assert "RFCNB056WEV" not in json.dumps(result.body)
 
 
@@ -363,11 +353,11 @@ def test_pixel_bay_upload_starts_gated_handoff(tmp_path: Path):
     assert result.http_status == 200
     assert result.body["setup_ui_state"] == "awaiting_human_click"
     assert "Add SIM" in str(result.body.get("setup_ui_prompt") or "")
-    assert result.body["auto_activation"]["started"] is True
+    assert result.body.get("auto_activation") in (None, {})
     auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
-    assert auto and auto[-1]["slot"] == 1
-    assert auto[-1]["payload"]["mode"] == "gated_setup"
-    assert auto[-1]["payload"].get("force_open") is True
+    assert auto == []
+    prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert prepares == []
 
 
 def test_non_owner_slot2_qr_upload_is_forbidden(tmp_path: Path):

@@ -281,9 +281,8 @@ def test_farm_inspect_recover_flag_still_launches_sim_profiles():
     starts = " ".join(
         " ".join(call[1]) for call in runner.calls if call[1][:3] == ["shell", "am", "start"]
     )
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in starts
     assert "android.settings.WIRELESS_SETTINGS" in starts
-    assert "android.settings.SETTINGS" in starts
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in starts
     joined = " ".join(" ".join(call[1]) for call in runner.calls)
     assert "uiautomator" not in joined
     assert "input tap" not in joined
@@ -334,14 +333,12 @@ def test_live_stream_prepare_reopens_esim_settings_without_home(tmp_path: Path):
     assert created.http_status == 201
     create_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
     assert create_prepares
-    assert all(t["payload"].get("skip_home") is True for t in create_prepares)
     store.set_setup_ui_state(rental, "awaiting_human_click", setup_complete=False)
     farm.tasks.clear()
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
     stream_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert stream_prepares
-    assert all(t["payload"].get("skip_home") is True for t in stream_prepares)
+    assert stream_prepares == []
     _mark_ready(store, rental)
     farm.tasks.clear()
     ready_stream = service.open_stream(CUSTOMER_A, rental)

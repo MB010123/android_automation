@@ -558,7 +558,8 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            self._prepare_device_screen(auth.slot_id, wait_boot=False)
+            if not self._session_awaiting_human(existing):
+                self._prepare_device_screen(auth.slot_id, wait_boot=False)
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -622,7 +623,8 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        self._prepare_device_screen(auth.slot_id, wait_boot=False)
+        if not self._session_awaiting_human(session):
+            self._prepare_device_screen(auth.slot_id, wait_boot=False)
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -638,7 +640,11 @@ class RemoteAccessService:
                 {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "status": "none", "active": False},
             )
         evidence: dict[str, Any] = {}
-        if session.is_active(now) and session.prepare_state not in PREPARE_IN_PROGRESS:
+        if (
+            session.is_active(now)
+            and session.prepare_state not in PREPARE_IN_PROGRESS
+            and not self._session_awaiting_human(session)
+        ):
             evidence = self._observe_activation(auth, force=False)
             session = self._store.get(auth.rental_id) or session
         body = {"ok": True, **self._session_public(session)}
@@ -707,7 +713,8 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        self._prepare_device_screen(auth.slot_id, wait_boot=False)
+        if not self._session_awaiting_human(session):
+            self._prepare_device_screen(auth.slot_id, wait_boot=False)
         try:
             return opener(
                 device_id=session.device_id,
@@ -1268,8 +1275,8 @@ class RemoteAccessService:
         self._record_esim_baseline(auth.rental_id, details)
         self._qr_walk_started.pop(auth.rental_id, None)
         self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING, setup_complete=False)
+        self._store.mark_qr_walk_completed(auth.rental_id, setup_ui_state=SETUP_UI_AWAITING)
         self._clear_setup_working(auth.rental_id)
-        self._prepare_device_screen(auth.slot_id, wait_boot=False, skip_home=True)
         body = public_placement_success(details, job_id=job_id)
         body["setup_ui_state"] = SETUP_UI_AWAITING
         body["setup_ui_prompt"] = prompt
@@ -1280,7 +1287,7 @@ class RemoteAccessService:
             image_base64=base64.b64encode(image_bytes).decode("ascii"),
             job_id=auto_job_id,
             qr_sha256=qr_sha256,
-            force=True,
+            force=False,
         )
         body.update(self._navigate_rental_to_add_esim(auth))
         refreshed = self._store.get(auth.rental_id)
@@ -1619,12 +1626,12 @@ class RemoteAccessService:
 
     def _slot_awaiting_esim(self, slot_id: int) -> bool:
         session = self._store.active_for_slot(int(slot_id)) or self._store.latest_for_slot(int(slot_id))
+        return self._session_awaiting_human(session)
+
+    def _session_awaiting_human(self, session: RemoteAccessSession | None) -> bool:
         if session is None or session.setup_complete:
             return False
-        if str(session.setup_ui_state or "") == SETUP_UI_AWAITING:
-            return True
-        phase = str(session.setup_phase or PHASE_ESIM).strip().lower()
-        return phase == PHASE_ESIM
+        return str(session.setup_ui_state or "") == SETUP_UI_AWAITING
 
     def _prepare_device_screen(
         self, slot_id: int, *, wait_boot: bool, skip_home: bool | None = None
@@ -1887,6 +1894,12 @@ class RemoteAccessService:
         walk_in_progress: bool = False,
     ) -> dict[str, Any] | ApiResult:
         current = session or self._session_for_slot(int(slot_id))
+        if current is not None and self._session_awaiting_human(current):
+            return {
+                "allowed": True,
+                "setup_ui_state": SETUP_UI_AWAITING,
+                "qr_walk_completed": True,
+            }
         recover_now = bool(recover)
         if current is not None and current.rental_id in self._setup_manual_unlocked:
             recover_now = False
@@ -1909,6 +1922,8 @@ class RemoteAccessService:
     ) -> dict[str, Any] | ApiResult:
         """Open the vendor eSIM UI. Samsung uses SIM Manager, never AOSP < SIMs>."""
         session = self._session_for_slot(int(slot_id))
+        if self._session_awaiting_human(session):
+            return {}
         skip_walk = self._qr_walk_should_skip(session)
         launched = self._inspect_session(int(slot_id), recover=True, session=session)
         if (
@@ -1929,6 +1944,8 @@ class RemoteAccessService:
         if str(session.setup_phase or "").strip().lower() == PHASE_VOIDFIX:
             return False
         if str(session.activation_observed or "").strip().lower() == "confirmed":
+            return False
+        if str(session.setup_ui_state or "") == SETUP_UI_AWAITING:
             return False
         return session.qr_uploaded_at is not None
 
@@ -2095,6 +2112,18 @@ class RemoteAccessService:
                     return launched, {}
                 return True, {}
             return self._forward_control(platform, session, secret, command), {}
+        if self._session_awaiting_human(session) and command.action in {
+            "tap",
+            "swipe",
+            "back",
+            "home",
+            "recents",
+            "type",
+        }:
+            forwarded = self._forward_control(
+                platform, session, secret, command, map_touch=False
+            )
+            return forwarded, {}
         if command.action == "settings":
             return self._forward_restricted_settings(platform, session, secret)
         if command.action in SHADE_ACTIONS:
@@ -2301,6 +2330,8 @@ class RemoteAccessService:
         session: RemoteAccessSession,
         secret: str,
         command: Any,
+        *,
+        map_touch: bool = True,
     ) -> bool | ApiResult:
         kwargs = {
             "device_id": session.device_id,
@@ -2308,7 +2339,7 @@ class RemoteAccessService:
             "platform_password": secret,
         }
         if command.action == "tap":
-            mapped = self._mapped_touch_command(session.slot_id, command)
+            mapped = self._mapped_touch_command(session.slot_id, command) if map_touch else command
             tap = getattr(platform, "tap", None)
             forwarded = False
             if callable(tap):
@@ -2323,7 +2354,7 @@ class RemoteAccessService:
             type_text(**kwargs, text=str(command.text))
             return True
         if command.action == "swipe":
-            mapped = self._mapped_touch_command(session.slot_id, command)
+            mapped = self._mapped_touch_command(session.slot_id, command) if map_touch else command
             swipe = getattr(platform, "swipe", None)
             forwarded = False
             if callable(swipe):

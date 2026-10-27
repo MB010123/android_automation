@@ -584,10 +584,11 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     assert "wm size" not in scripts
     assert "wm density" not in scripts
     assert "input swipe" not in scripts
-    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
     assert "input tap" not in joined
     assert "uiautomator" not in joined
     assert result.details["skip_home"] is True
+    assert result.details["esim_setup_launched"] == ""
 
 
 def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
@@ -612,10 +613,10 @@ def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
-    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT not in joined
     assert "KEYCODE_HOME" not in joined
     assert "input tap" not in joined
-    assert result.details["esim_setup_launched"] == "sim_manager"
+    assert result.details["esim_setup_launched"] == ""
 
 
 def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
@@ -642,11 +643,34 @@ def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
     )
     assert result.ok is True
     joined = " ".join(" ".join(args) for _serial, args in runner.calls)
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
-    assert "--activity-clear-task" in joined
+    assert "android.settings.WIRELESS_SETTINGS" not in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert "KEYCODE_HOME" not in joined
     assert "input tap" not in joined
     assert "uiautomator" not in joined
+
+
+def test_device_screen_prepare_open_esim_settings_launches_once():
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    runner = CleanupRunner()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={1: PIXEL_SERIAL},
+        request=FarmTaskRequest(
+            job_id="prep-open-once",
+            task_type="device_screen_prepare",
+            farm_slot_id=1,
+            payload={"skip_home": True, "open_esim_settings": True},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "dumpsys" not in joined
+    assert "input tap" not in joined
+    assert result.details["esim_setup_launched"] == "android.settings.WIRELESS_SETTINGS"
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():

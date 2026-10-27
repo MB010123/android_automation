@@ -157,17 +157,19 @@ def test_samsung_status_and_control_expose_setup_ui_state(tmp_path: Path):
     activation = service.activation_status_for_customer(CUSTOMER_A, rental)
     assert activation.http_status == 200
     assert activation.body["setup_ui_state"] == SETUP_UI_AWAITING
+    farm.tasks.clear()
     tapped = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 10, "y": 20})
     assert tapped.http_status == 200
     assert tapped.body["setup_ui_state"] == SETUP_UI_AWAITING
+    assert not any(t["type"] == "setup_session_inspect" for t in farm.tasks)
+    assert not any(t["type"] == "device_display_size" for t in farm.tasks)
+    assert not any(t["type"] == "setup_session_input" for t in farm.tasks)
     farm.tasks.clear()
     service._launch_add_esim(21)
     auto = [t for t in farm.tasks if t["type"] == "esim_auto_activation"]
     assert auto == []
     inspects = [t for t in farm.tasks if t["type"] == "setup_session_inspect"]
-    assert inspects
-    assert inspects[-1]["payload"].get("qr_walk_completed") is True
-    assert inspects[-1]["payload"].get("recover") is True
+    assert inspects == []
 
 
 def test_working_spinner_stays_locked_before_45_seconds():

@@ -4,8 +4,8 @@ Pure Hybrid Manual Model:
 
 1. Wake the phone and open the OEM SIM/eSIM settings screen even if a
    profile is already installed.
-2. Samsung: SIM Manager or Wireless Settings. Pixel: ``MANAGE_EMBEDDED_SUBSCRIPTIONS``,
-   Wireless Settings, or main Settings.
+2. Samsung: SIM Manager. Pixel: ``android.settings.WIRELESS_SETTINGS``
+   (Network & internet / SIMs).
 3. Stop immediately. Never tap Add eSIM / Add SIM, never open Gallery,
    never deep-link an LPA code, never call EuiccManager / ``provision_esim``.
 4. Set ``setup_ui_state=awaiting_human_click``. The renter finishes setup.
@@ -36,17 +36,12 @@ from application.remote_access_farm_task import (
     detect_device_oem,
     disable_native_cameras,
     launch_esim_setup_screen,
-    oem_setup_screen_is_open,
-    read_foreground_component,
     _place_qr_config_gate,
     read_qr_walk_marker,
     wake_and_unlock_device,
     write_qr_walk_marker,
 )
-from application.samsung_one_ui import (
-    SAMSUNG_SIM_MGR_COMPONENT,
-    escape_samsung_game_hijack,
-)
+from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 from infrastructure.config import AgentConfig
 
@@ -343,35 +338,35 @@ def run_esim_auto_activation(
         marker = read_qr_walk_marker(runner, serial)
         if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
             walk_already_done = True
+    if walk_already_done and not force_open:
+        prompt = handoff_prompt_for_oem(oem)
+        return _result(
+            ok=True,
+            http_status=200,
+            job_id=request.job_id,
+            message="esim_qr_walk_skipped",
+            method=method,
+            steps_done=[],
+            taps=[],
+            activated=False,
+            opened=False,
+            skipped=True,
+            qr_walk_completed=True,
+            qr_deleted=False,
+            device_oem=oem,
+            setup_ui_state=SETUP_UI_AWAITING,
+            setup_ui_prompt=prompt,
+            setup_human_click="Add SIM" if oem == OEM_PIXEL else "Add eSIM",
+        )
     disable_native_cameras(runner, serial, oem)
     try:
         wake_and_unlock_device(runner, serial)
         launched = launch_esim_setup_screen(runner, serial, oem)
-        component = read_foreground_component(runner, serial)
-        if "game.gamehome" in (component or "").lower():
-            escape_samsung_game_hijack(runner, serial)
-            launched = launch_esim_setup_screen(runner, serial, oem)
-            component = read_foreground_component(runner, serial)
-        if not oem_setup_screen_is_open(component, oem):
-            return _result(
-                ok=False,
-                http_status=422,
-                job_id=request.job_id,
-                error="ui_flow_step_failed",
-                message="step=open_sim_manager",
-                method=method,
-                failed_step="open_sim_manager",
-                steps_done=steps_done,
-                screen_hint="foreground is launcher, not eSIM settings",
-                taps=taps,
-                activated=False,
-                opened=False,
-            )
         steps_done.append("open_sim_manager")
         write_qr_walk_marker(runner, serial, qr_sha256 or "1")
         classification = classify_setup_ui(
             None,
-            component,
+            None,
             walk_completed=True,
             walk_in_progress=False,
             oem=oem,
@@ -400,7 +395,6 @@ def run_esim_auto_activation(
             "skipped": bool(walk_already_done and not force_open),
             "device_oem": oem,
             "esim_setup_launched": launched,
-            "foreground_activity": component,
             **public_setup_ui_body(classification),
             **capture_esim_baseline(runner, serial),
         }

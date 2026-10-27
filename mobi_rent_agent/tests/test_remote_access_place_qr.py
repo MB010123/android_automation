@@ -578,86 +578,47 @@ def test_provisioning_allowed_slot_ids_unchanged(monkeypatch):
     assert qr_config.provisioning_allowed_slot_ids == (1,)
 
 
-def test_samsung_sim_manager_falls_back_when_launcher_stays_focused():
+def test_samsung_launch_is_sim_manager_only():
     from application.esim_setup_ui_state import OEM_SAMSUNG
     from application.remote_access_farm_task import launch_esim_setup_screen
-
-    launcher_focus = (
-        "mCurrentFocus=Window{abc u0 com.sec.android.app.launcher/"
-        "com.sec.android.app.launcher.Launcher}"
-    )
-    wireless_focus = (
-        "mCurrentFocus=Window{def u0 com.android.settings/"
-        ".Settings$WirelessSettingsActivity}"
-    )
+    from application.samsung_one_ui import SAMSUNG_SIM_MGR_COMPONENT
 
     class Runner(AdbCommandRunner):
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
-            self.opened_wireless = False
 
         def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
             self.calls.append(list(arguments))
-            if tuple(arguments[:3]) in {
-                ("shell", "dumpsys", "window"),
-                ("shell", "dumpsys", "activity"),
-            }:
-                if self.opened_wireless:
-                    return AdbCommandResult(stdout=wireless_focus, stderr="")
-                return AdbCommandResult(stdout=launcher_focus, stderr="")
-            if arguments[:4] == ["shell", "am", "start", "-a"] and any(
-                "WIRELESS_SETTINGS" in str(part) for part in arguments
-            ):
-                self.opened_wireless = True
             return AdbCommandResult(stdout="", stderr="")
 
     runner = Runner()
     launched = launch_esim_setup_screen(runner, "RFCNB056WEV", OEM_SAMSUNG)
     joined = " ".join(" ".join(args) for args in runner.calls)
-    assert "WIRELESS_SETTINGS" in joined
+    assert SAMSUNG_SIM_MGR_COMPONENT in joined
+    assert "dumpsys" not in joined
     assert "input tap" not in joined
-    assert launched == "android.settings.WIRELESS_SETTINGS"
+    assert launched == "sim_manager"
     assert "android.settings.SETTINGS" not in joined
 
 
-def test_pixel_esim_launch_falls_back_to_wireless_without_tapping():
+def test_pixel_launch_is_wireless_settings_only():
     from application.esim_setup_ui_state import OEM_PIXEL
     from application.remote_access_farm_task import launch_esim_setup_screen
-
-    launcher_focus = (
-        "mCurrentFocus=Window{abc u0 com.google.android.apps.nexuslauncher/"
-        ".NexusLauncherActivity}"
-    )
-    settings_focus = (
-        "mCurrentFocus=Window{def u0 com.android.settings/"
-        ".Settings$NetworkDashboardActivity}"
-    )
 
     class Runner(AdbCommandRunner):
         def __init__(self) -> None:
             self.calls: list[list[str]] = []
-            self.opened_wireless = False
 
         def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
             self.calls.append(list(arguments))
-            if tuple(arguments[:3]) in {
-                ("shell", "dumpsys", "window"),
-                ("shell", "dumpsys", "activity"),
-            }:
-                if self.opened_wireless:
-                    return AdbCommandResult(stdout=settings_focus, stderr="")
-                return AdbCommandResult(stdout=launcher_focus, stderr="")
-            if arguments[:4] == ["shell", "am", "start", "-a"] and any(
-                "WIRELESS_SETTINGS" in str(part) for part in arguments
-            ):
-                self.opened_wireless = True
             return AdbCommandResult(stdout="", stderr="")
 
     runner = Runner()
     launched = launch_esim_setup_screen(runner, "18171FDF6005WG", OEM_PIXEL)
     joined = " ".join(" ".join(args) for args in runner.calls)
-    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
     assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
+    assert "dumpsys" not in joined
     assert "input tap" not in joined
     assert launched == "android.settings.WIRELESS_SETTINGS"
     assert "nexuslauncher" not in launched
