@@ -404,7 +404,7 @@ def run_airplane_cycle_if_supported(
     runner: AdbCommandRunner,
     on_seconds: float = 5.0,
 ) -> FarmTaskResult:
-    """Airplane radio cycle via ``cmd connectivity airplane-mode`` (no root)."""
+    """Airplane radio cycle via settings put + AIRPLANE_MODE broadcast (no root)."""
     from application.device_airplane_mode import run_airplane_cycle
 
     _ = on_seconds

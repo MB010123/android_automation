@@ -27,6 +27,7 @@ class FakeRunner(AdbCommandRunner):
     def __init__(self, state: str = "device") -> None:
         super().__init__()
         self._state = state
+        self._airplane_on = False
         self.calls: list[tuple[str, list[str]]] = []
         self.dumpsys_activity = ""
 
@@ -38,12 +39,26 @@ class FakeRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="", stderr="")
         if arguments[:3] == ["shell", "dumpsys", "activity"]:
             return AdbCommandResult(stdout=self.dumpsys_activity, stderr="")
-        if arguments and arguments[0] == "shell" and "airplane-mode" in " ".join(arguments):
-            if arguments[-1].endswith("enable") or "enable" in " ".join(arguments):
+        joined = " ".join(arguments)
+        if "settings put global airplane_mode_on" in joined:
+            self._airplane_on = joined.rstrip().endswith("1")
+            return AdbCommandResult(stdout="", stderr="")
+        if "settings get global airplane_mode_on" in joined:
+            return AdbCommandResult(stdout="1" if self._airplane_on else "0", stderr="")
+        if "AIRPLANE_MODE" in joined:
+            if "true" in joined.split("state")[-1]:
+                self._airplane_on = True
+            elif "false" in joined.split("state")[-1]:
+                self._airplane_on = False
+            return AdbCommandResult(stdout="Broadcast completed: result=0", stderr="")
+        if arguments and arguments[0] == "shell" and "airplane-mode" in joined:
+            if arguments[-1].endswith("enable") or "enable" in joined:
+                self._airplane_on = True
                 return AdbCommandResult(stdout="enabled", stderr="")
-            if arguments[-1].endswith("disable") or "disable" in " ".join(arguments):
+            if arguments[-1].endswith("disable") or "disable" in joined:
+                self._airplane_on = False
                 return AdbCommandResult(stdout="disabled", stderr="")
-            return AdbCommandResult(stdout="disabled", stderr="")
+            return AdbCommandResult(stdout="enabled" if self._airplane_on else "disabled", stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
     def run_bytes(self, serial: str, arguments: list[str]) -> bytes:

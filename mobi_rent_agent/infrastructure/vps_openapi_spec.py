@@ -1303,7 +1303,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "(swipe accepts `start_x`/`start_y`/`end_x`/`end_y` or `x`/`y`/`x2`/`y2`, optional `duration_ms`). "
                     "Home, Recents, and rotate are semantic actions with no keycodes. Shade/QS and top-edge "
                     "pull-downs are blocked while `CUSTOMER_SESSION_RESTRICTIONS` is on. "
-                    "`airplane_mode` with `state=on|off` or `enabled=true|false` uses Farm `cmd connectivity airplane-mode`. "
+                    "`airplane_mode` with `state=on|off` or `enabled=true|false` uses Farm `settings put global airplane_mode_on` plus `AIRPLANE_MODE` broadcast. "
                     "The semantic `settings` action opens Add eSIM "
                     "(`android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS`), not the Settings homepage. "
                     "Assigned customers have full normal Android access from session start — before, "
@@ -1914,9 +1914,9 @@ def _paths(webhook_path: str) -> dict[str, Any]:
         "/farm/slots/{bay}/airplane-mode": {
             "post": {
                 "tags": ["Farm management"],
-                "summary": "Toggle Airplane Mode via cmd connectivity",
+                "summary": "Toggle Airplane Mode via settings + broadcast",
                 "description": (
-                    "Farm `airplane_mode` task (`cmd connectivity airplane-mode`). "
+                    "Farm `airplane_mode` task (`settings put global airplane_mode_on` + `AIRPLANE_MODE` broadcast). "
                     "Body accepts `state=on|off` or `enabled=true|false`. "
                     "Returns `{ok:true, enabled:bool}`."
                 ),
@@ -2246,7 +2246,7 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "Allowlisted actions only: tap, swipe, type, back, home, recents, "
                     "notification_shade, quick_settings, rotate, settings, airplane_mode. "
                     "`airplane_mode` (or body `{enabled:true|false}`) uses Farm "
-                    "`cmd connectivity airplane-mode` and does not require `session_id`. "
+                    "`settings put global airplane_mode_on` + `AIRPLANE_MODE` broadcast and does not require `session_id`. "
                     "Returns `{ok:true, enabled:bool}`. "
                     "Rejected: shell, ADB, package install, factory reset, reboot, "
                     "device identity fields. Session cannot control a different bay. "

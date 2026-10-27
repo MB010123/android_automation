@@ -51,7 +51,7 @@ _MAX_TTL_MINUTES = 60
 _MIN_TTL_MINUTES = 5
 AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
     "Airplane Mode uses the Farm Agent `airplane_mode` task "
-    "(`cmd connectivity airplane-mode`), not GADS."
+    "(settings put + AIRPLANE_MODE broadcast), not GADS."
 )
 
 

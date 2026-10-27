@@ -1,4 +1,4 @@
-"""Customer airplane_mode action goes through Farm cmd connectivity."""
+"""Customer airplane_mode action goes through the Farm airplane_mode task."""
 from __future__ import annotations
 
 import json

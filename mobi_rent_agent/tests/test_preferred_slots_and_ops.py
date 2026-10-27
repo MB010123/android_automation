@@ -210,7 +210,7 @@ def test_airplane_accepts_enabled_flag_and_returns_enabled(tmp_path: Path):
     assert off.body["enabled"] is False
 
 
-def test_airplane_farm_task_uses_cmd_connectivity():
+def test_airplane_farm_task_uses_settings_and_broadcast():
     runner = FakeRunner()
     result = run_airplane_mode(
         adb_path="adb",
@@ -224,8 +224,14 @@ def test_airplane_farm_task_uses_cmd_connectivity():
         command_runner=runner,
     )
     assert result.ok is True
+    assert (result.details or {}).get("enabled") is True
+    assert (result.details or {}).get("state") == "on"
     joined = " ".join(" ".join(args) for _s, args in runner.calls)
-    assert "cmd connectivity airplane-mode" in joined
+    assert "settings put global airplane_mode_on 1" in joined
+    assert "android.intent.action.AIRPLANE_MODE" in joined
+    assert "--ez state true" in joined
+    assert "settings get global airplane_mode_on" in joined
+    assert "cmd connectivity airplane-mode enable" in joined
 
 
 def test_parse_airplane_state():
@@ -234,6 +240,7 @@ def test_parse_airplane_state():
     assert parse_airplane_state("enabled") == "on"
     assert parse_airplane_state("disabled") == "off"
     assert parse_airplane_state("1") == "on"
+    assert parse_airplane_state("0") == "off"
     assert requested_airplane_state({"enabled": True}) == "on"
     assert requested_airplane_state({"enabled": False}) == "off"
     assert requested_airplane_state({"state": "on"}) == "on"

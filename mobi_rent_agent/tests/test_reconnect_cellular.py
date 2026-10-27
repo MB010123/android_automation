@@ -153,7 +153,8 @@ def test_airplane_cycle_does_not_mutate_esim_voidfix_or_wipe():
     assert result.ok is True
     assert result.http_status == 200
     joined = " ".join(" ".join(args) for _s, args in runner.calls)
-    assert "cmd connectivity airplane-mode" in joined
+    assert "settings put global airplane_mode_on" in joined
+    assert "android.intent.action.AIRPLANE_MODE" in joined
     source = (ROOT / "application" / "farm_task_executor.py").read_text(encoding="utf-8")
     assert "run_airplane_cycle_if_supported" in source
 
