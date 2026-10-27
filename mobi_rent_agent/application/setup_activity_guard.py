@@ -101,19 +101,42 @@ class GuardDecision:
     reason: str
 
 
+_FOCUS_PATTERNS = (
+    r"mResumedActivity:.*? ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
+    r"topResumedActivity=ActivityRecord\{[^}]* ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
+    r"mCurrentFocus=Window\{[^}]* ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
+    r"mFocusedApp=.*? ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
+)
+_SKIP_FOCUS_PACKAGES = frozenset(
+    {
+        "com.android.systemui",
+        "null",
+    }
+)
+
+
 def parse_foreground_activity(dumpsys_text: str) -> str | None:
-    """Best-effort parse of `dumpsys activity activities` / window focus."""
+    """Best-effort parse of `dumpsys activity activities` / window focus.
+
+    Prefers a non-launcher, non-systemui window when dumpsys lists several.
+    """
     text = dumpsys_text or ""
-    for pattern in (
-        r"mResumedActivity:.*? ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
-        r"topResumedActivity=ActivityRecord\{[^}]* ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
-        r"mCurrentFocus=Window\{[^}]* ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
-        r"mFocusedApp=.*? ([A-Za-z0-9._]+)/([A-Za-z0-9._$]+)",
-    ):
-        match = re.search(pattern, text)
-        if match:
-            return f"{match.group(1)}/{match.group(2)}"
-    return None
+    found: list[str] = []
+    for pattern in _FOCUS_PATTERNS:
+        for match in re.finditer(pattern, text):
+            component = f"{match.group(1)}/{match.group(2)}"
+            package = component.split("/", 1)[0].strip().lower()
+            if package in _SKIP_FOCUS_PACKAGES or "notificationshade" in component.lower():
+                continue
+            if component not in found:
+                found.append(component)
+    if not found:
+        return None
+    for component in reversed(found):
+        package = component.split("/", 1)[0].strip().lower()
+        if "launcher" not in package:
+            return component
+    return found[-1]
 
 
 def parse_sms_role_holders(role_dump: str) -> tuple[str, ...]:

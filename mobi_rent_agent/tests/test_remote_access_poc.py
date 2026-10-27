@@ -1083,6 +1083,18 @@ class _QrRunner(AdbCommandRunner):
             return AdbCommandResult(stdout="", stderr="")
         if arguments[:3] == ["shell", "dumpsys", "isub"]:
             return AdbCommandResult(stdout="", stderr="")
+        if arguments[:3] in (["shell", "dumpsys", "window"], ["shell", "dumpsys", "activity"]):
+            if str(serial).strip().upper() == "RFCNB056WEV":
+                focus = (
+                    "mCurrentFocus=Window{abc u0 com.samsung.android.app.telephonyui/"
+                    ".netsettings.ui.simcardmanager.SimCardMgrActivity}"
+                )
+            else:
+                focus = (
+                    "mCurrentFocus=Window{abc u0 com.google.android.euicc/"
+                    ".ui.EuiccUiDispatcherActivity}"
+                )
+            return AdbCommandResult(stdout=focus, stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
 
@@ -1132,6 +1144,7 @@ def test_qr_task_pushes_image_to_dcim_camera_only():
     ):
         assert forbidden not in joined
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "pm disable-user --user 0 com.google.android.GoogleCamera" in joined
     assert "/sdcard/Pictures/esim_qr.png" in joined
     assert "/sdcard/Download/esim_qr.png" in joined
     assert "media_scanned=true" in (result.message or "")

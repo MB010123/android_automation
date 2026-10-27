@@ -196,6 +196,7 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
     joined = " ".join(" ".join(args) for _, args in runner.calls)
     assert "dismiss-keyguard" in joined
     assert "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity" in joined
+    assert "pm disable-user --user 0 com.sec.android.app.camera" in joined
     assert result.details["setup_ui_state"] == "awaiting_human_click"
     assert result.details["device_oem"] == "samsung"
     assert "Add eSIM" in str(result.details.get("setup_ui_prompt") or "")
@@ -617,12 +618,19 @@ def test_samsung_sim_manager_falls_back_when_launcher_stays_focused():
                 if self.tapped:
                     return AdbCommandResult(stdout=telephony_focus, stderr="")
                 return AdbCommandResult(stdout=launcher_focus, stderr="")
-            if arguments[:4] == ["shell", "am", "start", "-a"] and "WIRELESS_SETTINGS" in arguments:
+            if arguments[:4] == ["shell", "am", "start", "-a"] and any(
+                "WIRELESS_SETTINGS" in str(part) for part in arguments
+            ):
                 self.opened_wireless = True
             if arguments[:3] == ["shell", "input", "tap"]:
                 self.tapped = True
             if arguments[:2] == ["shell", "cat"] and str(arguments[-1]).endswith(".xml"):
-                xml = sim_manager_ui if self.tapped else connections_ui
+                if self.tapped:
+                    xml = sim_manager_ui
+                elif self.opened_wireless:
+                    xml = connections_ui
+                else:
+                    xml = "<?xml version='1.0'?><hierarchy></hierarchy>"
                 return AdbCommandResult(stdout=xml, stderr="")
             return AdbCommandResult(stdout="", stderr="")
 
@@ -634,6 +642,81 @@ def test_samsung_sim_manager_falls_back_when_launcher_stays_focused():
     assert runner.tapped is True
     assert launched == "android.settings.WIRELESS_SETTINGS"
     assert "android.settings.SETTINGS" not in joined
+
+
+def test_pixel_esim_launch_falls_back_when_launcher_stays_focused():
+    from application.esim_setup_ui_state import OEM_PIXEL
+    from application.remote_access_farm_task import launch_esim_setup_screen
+
+    network_ui = (
+        "<?xml version='1.0'?><hierarchy>"
+        '<node text="Network &amp; internet" bounds="[0,200][400,280]"/>'
+        '<node text="SIMs" bounds="[72,1001][400,1069]"/>'
+        "</hierarchy>"
+    )
+    sims_ui = (
+        "<?xml version='1.0'?><hierarchy>"
+        '<node text="SIMs" bounds="[0,80][400,140]"/>'
+        '<node text="Add SIM" bounds="[72,1001][400,1069]"/>'
+        '<node text="Set up an eSIM" bounds="[72,1169][400,1237]"/>'
+        "</hierarchy>"
+    )
+    launcher_focus = (
+        "mCurrentFocus=Window{abc u0 com.google.android.apps.nexuslauncher/"
+        ".NexusLauncherActivity}"
+    )
+    settings_focus = (
+        "mCurrentFocus=Window{def u0 com.android.settings/"
+        ".Settings$NetworkDashboardActivity}"
+    )
+    euicc_focus = (
+        "mCurrentFocus=Window{ghi u0 com.google.android.euicc/"
+        ".ui.EuiccUiDispatcherActivity}"
+    )
+
+    class Runner(AdbCommandRunner):
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+            self.opened_wireless = False
+            self.tapped = False
+
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+            self.calls.append(list(arguments))
+            if tuple(arguments[:3]) in {
+                ("shell", "dumpsys", "window"),
+                ("shell", "dumpsys", "activity"),
+            }:
+                if self.tapped:
+                    return AdbCommandResult(stdout=euicc_focus, stderr="")
+                if self.opened_wireless:
+                    return AdbCommandResult(stdout=settings_focus, stderr="")
+                return AdbCommandResult(stdout=launcher_focus, stderr="")
+            if arguments[:4] == ["shell", "am", "start", "-a"] and any(
+                "WIRELESS_SETTINGS" in str(part) for part in arguments
+            ):
+                self.opened_wireless = True
+            if arguments[:3] == ["shell", "input", "tap"]:
+                self.tapped = True
+            if arguments[:2] == ["shell", "cat"] and str(arguments[-1]).endswith(".xml"):
+                if self.tapped:
+                    xml = sims_ui
+                elif self.opened_wireless:
+                    xml = network_ui
+                else:
+                    xml = "<?xml version='1.0'?><hierarchy></hierarchy>"
+                return AdbCommandResult(stdout=xml, stderr="")
+            return AdbCommandResult(stdout="", stderr="")
+
+    runner = Runner()
+    launched = launch_esim_setup_screen(runner, "18171FDF6005WG", OEM_PIXEL)
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
+    assert "android.settings.NETWORK_OPERATOR_SETTINGS" in joined
+    assert "android.settings.WIRELESS_SETTINGS" in joined
+    assert "input tap" in joined
+    assert runner.tapped is True
+    assert launched == "android.settings.WIRELESS_SETTINGS"
+    assert "nexuslauncher" not in launched
 
 
 def test_place_qr_does_not_send_home_key():

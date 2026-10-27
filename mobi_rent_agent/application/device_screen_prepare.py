@@ -11,6 +11,8 @@ import uuid
 from typing import Any, Callable
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
+from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG
+from application.remote_access_farm_task import disable_native_camera_commands
 from application.samsung_one_ui import disable_samsung_game_commands, is_samsung_device
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -198,6 +200,7 @@ def run_device_screen_prepare(
     samsung = is_samsung_device(
         slot_id=slot_id, serial=serial, manufacturer=manufacturer
     ) or samsung_s20
+    oem = OEM_SAMSUNG if samsung else OEM_PIXEL
     if samsung:
         run_best_effort_shell(
             runner,
@@ -206,6 +209,13 @@ def run_device_screen_prepare(
             warnings,
             "disable_game_bloat",
         )
+    run_best_effort_shell(
+        runner,
+        serial,
+        disable_native_camera_commands(oem),
+        warnings,
+        "disable_camera",
+    )
     package = str(request.payload.get("voidfix_package") or "").strip()
     if package:
         from application.device_voidfix_keepalive import apply_voidfix_keepalive, normalize_voidfix_package

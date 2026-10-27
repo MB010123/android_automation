@@ -175,6 +175,18 @@ class _ActivationRunner(AdbCommandRunner):
             return AdbCommandResult(stdout=self._manufacturer, stderr="")
         if arguments == ["shell", "getprop", "ro.product.brand"]:
             return AdbCommandResult(stdout=self._manufacturer, stderr="")
+        if arguments[:3] in (["shell", "dumpsys", "window"], ["shell", "dumpsys", "activity"]):
+            if "samsung" in (self._manufacturer or "").lower():
+                focus = (
+                    "mCurrentFocus=Window{abc u0 com.samsung.android.app.telephonyui/"
+                    ".netsettings.ui.simcardmanager.SimCardMgrActivity}"
+                )
+            else:
+                focus = (
+                    "mCurrentFocus=Window{abc u0 com.google.android.euicc/"
+                    ".ui.EuiccUiDispatcherActivity}"
+                )
+            return AdbCommandResult(stdout=focus, stderr="")
         if arguments[:3] == ["shell", "logcat", "-d"]:
             index = min(self._logcat_index, len(self._logcat_polls) - 1)
             self._logcat_index += 1
@@ -250,6 +262,7 @@ def test_open_qr_picker_stops_at_sim_manager_and_keeps_qr():
     assert homes == []
     assert SIM_CARD_MGR_COMPONENT in runner.commands("shell", "am", "start")[0]
     aosp = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "pm disable-user --user 0 com.sec.android.app.camera" in aosp
     assert "SIM_CARD_SETTINGS" not in aosp
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in aosp
     assert runner.tap_points() == []
@@ -441,6 +454,8 @@ def test_pixel_bay_opens_sims_and_awaits_human_click():
     joined = " ".join(" ".join(args) for args in starts)
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" in joined
     assert SIM_CARD_MGR_COMPONENT not in joined
+    all_joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "pm disable-user --user 0 com.google.android.GoogleCamera" in all_joined
     assert runner.tap_points() == []
 
 

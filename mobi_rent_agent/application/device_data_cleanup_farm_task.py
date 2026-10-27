@@ -27,6 +27,7 @@ from application.device_screen_prepare import (
     _wait_boot_completed,
     run_best_effort_shell,
 )
+from application.remote_access_farm_task import enable_native_camera_commands
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from domain.farm import MAX_FARM_SLOT_ID
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
@@ -158,6 +159,7 @@ def cleanup_shell_commands(*, lockdown: bool) -> list[str]:
             if package in PRESERVED_PACKAGES or package in ESIM_PROTECTED_PACKAGES:
                 continue
             commands.append(f"pm disable-user --user 0 {package}")
+    commands.extend(enable_native_camera_commands())
     return commands
 
 

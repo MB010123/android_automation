@@ -29,6 +29,7 @@ from application.esim_setup_ui_state import (
     OEM_PIXEL,
     OEM_SAMSUNG,
     SETUP_UI_AWAITING,
+    SETUP_UI_WORKING,
     handoff_prompt_for_oem,
 )
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
@@ -101,7 +102,23 @@ PIXEL_ESIM_INTENTS = (
     "android.settings.NETWORK_OPERATOR_SETTINGS",
     "android.settings.WIRELESS_SETTINGS",
 )
+PIXEL_ESIM_COMPONENTS = (
+    "com.android.settings/.Settings$NetworkDashboardActivity",
+    "com.android.settings/.network.telephony.MobileNetworkActivity",
+    "com.android.settings/.Settings",
+)
 SAMSUNG_ESIM_FALLBACK_INTENT = "android.settings.WIRELESS_SETTINGS"
+SAMSUNG_CAMERA_PACKAGES = (
+    "com.sec.android.app.camera",
+    "com.samsung.android.app.camera",
+    "com.sec.android.camera",
+)
+PIXEL_CAMERA_PACKAGES = (
+    "com.google.android.GoogleCamera",
+    "com.android.camera2",
+    "com.android.camera",
+)
+ALL_CAMERA_PACKAGES = SAMSUNG_CAMERA_PACKAGES + PIXEL_CAMERA_PACKAGES
 HANDOFF_UI_DUMP_PATH = "/sdcard/mobirent_esim_handoff.xml"
 LAUNCHER_PACKAGES = frozenset(
     {
@@ -126,6 +143,13 @@ PIXEL_HANDOFF_PACKAGES = frozenset(
 )
 SAMSUNG_SIM_ROW_LABELS = ("SIM manager", "SIM card manager")
 PIXEL_SIM_ROW_LABELS = ("SIMs",)
+PIXEL_NETWORK_ROW_LABELS = ("Network & internet", "Internet")
+PIXEL_HANDOFF_TEXT = (
+    "add sim",
+    "set up an esim",
+    "add esim",
+    "download a sim",
+)
 _BOUNDS_RE = re.compile(r"-?\d+")
 _EMBEDDED_ID_RE = re.compile(r"(?:iccId|IccId|mIccId|cardId|mCardId)=([A-Za-z0-9]+)")
 QR_PREFIX = "mobirent_esim_qr_"
@@ -330,7 +354,35 @@ def esim_handoff_is_open(component: str, oem: str, ui_xml: str = "") -> bool:
         return "add esim" in blob or "add mobile plan" in blob
     if any(package in blob for package in PIXEL_HANDOFF_PACKAGES):
         return True
-    return "add sim" in blob or "set up an esim" in blob or "download a sim" in blob
+    return any(marker in blob for marker in PIXEL_HANDOFF_TEXT)
+
+
+def camera_packages_for_oem(oem: str) -> tuple[str, ...]:
+    if oem == OEM_SAMSUNG:
+        return SAMSUNG_CAMERA_PACKAGES
+    return PIXEL_CAMERA_PACKAGES
+
+
+def disable_native_camera_commands(oem: str) -> tuple[str, ...]:
+    commands: list[str] = []
+    for package in camera_packages_for_oem(oem):
+        commands.append(f"pm disable-user --user 0 {package}")
+        commands.append(f"am force-stop {package}")
+    return tuple(commands)
+
+
+def enable_native_camera_commands() -> tuple[str, ...]:
+    return tuple(f"pm enable {package}" for package in ALL_CAMERA_PACKAGES)
+
+
+def disable_native_cameras(runner: AdbCommandRunner, serial: str, oem: str) -> None:
+    for command in disable_native_camera_commands(oem):
+        _try_shell(runner, serial, ["shell", *command.split()])
+
+
+def enable_native_cameras(runner: AdbCommandRunner, serial: str) -> None:
+    for command in enable_native_camera_commands():
+        _try_shell(runner, serial, ["shell", *command.split()])
 
 
 def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) -> str:
@@ -338,7 +390,9 @@ def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) ->
 
     SimCardMgrActivity is often not exported. If the foreground window is
     still a home launcher, fall back to Wireless/Settings and tap
-    SIM manager (Samsung) or SIMs (Pixel).
+    SIM manager (Samsung) or SIMs (Pixel). Pixel Settings screens are
+    tapped immediately instead of firing more intents that can bounce
+    back to the launcher.
     """
     if oem == OEM_SAMSUNG:
         _try_shell(runner, serial, ["shell", *samsung_sim_manager_args()])
@@ -351,16 +405,15 @@ def launch_esim_setup_screen(runner: AdbCommandRunner, serial: str, oem: str) ->
         if _tap_through_to_esim_handoff(runner, serial, oem):
             return "network_dashboard"
         return "sim_manager_unconfirmed"
-    launched = PIXEL_ESIM_INTENTS[0]
     for intent in PIXEL_ESIM_INTENTS:
         _try_shell(runner, serial, ["shell", "am", "start", "-a", intent])
-        launched = intent
-        if _esim_handoff_verified(runner, serial, oem):
+        if _pixel_screen_ready(runner, serial):
             return intent
-    _try_shell(runner, serial, ["shell", "am", "start", "-a", SAMSUNG_ESIM_FALLBACK_INTENT])
-    if _tap_through_to_esim_handoff(runner, serial, oem):
-        return SAMSUNG_ESIM_FALLBACK_INTENT
-    return launched
+    for component in PIXEL_ESIM_COMPONENTS:
+        _try_shell(runner, serial, ["shell", "am", "start", "-n", component])
+        if _pixel_screen_ready(runner, serial):
+            return component
+    return "pixel_sims_unconfirmed"
 
 
 def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> None:
@@ -372,9 +425,18 @@ def _try_shell(runner: AdbCommandRunner, serial: str, arguments: list[str]) -> N
 
 def _esim_handoff_verified(runner: AdbCommandRunner, serial: str, oem: str) -> bool:
     component = read_foreground_component(runner, serial)
-    if not component:
+    if not component or foreground_is_launcher(component):
+        return False
+    if esim_handoff_is_open(component, oem, ""):
         return True
-    return esim_handoff_is_open(component, oem)
+    ui_xml = _dump_handoff_ui(runner, serial)
+    return esim_handoff_is_open(component, oem, ui_xml)
+
+
+def _pixel_screen_ready(runner: AdbCommandRunner, serial: str) -> bool:
+    if _esim_handoff_verified(runner, serial, OEM_PIXEL):
+        return True
+    return _tap_through_to_esim_handoff(runner, serial, OEM_PIXEL)
 
 
 def _dump_handoff_ui(runner: AdbCommandRunner, serial: str) -> str:
@@ -386,24 +448,30 @@ def _dump_handoff_ui(runner: AdbCommandRunner, serial: str) -> str:
 
 
 def _tap_through_to_esim_handoff(runner: AdbCommandRunner, serial: str, oem: str) -> bool:
-    labels = SAMSUNG_SIM_ROW_LABELS if oem == OEM_SAMSUNG else PIXEL_SIM_ROW_LABELS
-    ui_xml = _dump_handoff_ui(runner, serial)
-    component = read_foreground_component(runner, serial)
-    if esim_handoff_is_open(component, oem, ui_xml):
-        return True
-    if oem == OEM_SAMSUNG:
-        connections = _find_ui_label_center(ui_xml, ("Connections",))
-        if connections is not None:
+    for _attempt in range(4):
+        ui_xml = _dump_handoff_ui(runner, serial)
+        component = read_foreground_component(runner, serial)
+        if esim_handoff_is_open(component, oem, ui_xml):
+            return True
+        target = None
+        if oem == OEM_SAMSUNG:
+            target = _find_ui_label_center(ui_xml, SAMSUNG_SIM_ROW_LABELS)
+            if target is None:
+                target = _find_ui_label_center(ui_xml, ("Connections",))
+        else:
+            target = _find_ui_label_center(ui_xml, PIXEL_SIM_ROW_LABELS)
+            if target is None:
+                target = _find_ui_label_center(ui_xml, PIXEL_NETWORK_ROW_LABELS)
+        if target is None:
+            if foreground_is_launcher(component):
+                return False
             _try_shell(
                 runner,
                 serial,
-                ["shell", "input", "tap", str(connections[0]), str(connections[1])],
+                ["shell", "input", "swipe", "540", "1600", "540", "600", "300"],
             )
-            ui_xml = _dump_handoff_ui(runner, serial)
-    target = _find_ui_label_center(ui_xml, labels)
-    if target is None:
-        return False
-    _try_shell(runner, serial, ["shell", "input", "tap", str(target[0]), str(target[1])])
+            continue
+        _try_shell(runner, serial, ["shell", "input", "tap", str(target[0]), str(target[1])])
     ui_xml = _dump_handoff_ui(runner, serial)
     component = read_foreground_component(runner, serial)
     return esim_handoff_is_open(component, oem, ui_xml)
@@ -820,15 +888,19 @@ def run_remote_access_place_qr(
     oem = detect_device_oem(runner, serial, slot_id)
     gallery_aliases = copy_renter_gallery_aliases(runner, serial, remote_path, oem=oem)
     baseline = capture_esim_baseline(runner, serial)
+    disable_native_cameras(runner, serial, oem)
     wake_and_unlock_device(runner, serial)
     launched = launch_esim_setup_screen(runner, serial, oem)
+    component = read_foreground_component(runner, serial)
+    verified = bool(component) and not foreground_is_launcher(component)
     prompt = handoff_prompt_for_oem(oem)
     extra = {
         "device_oem": oem,
-        "setup_ui_state": SETUP_UI_AWAITING,
-        "setup_ui_prompt": prompt,
+        "setup_ui_state": SETUP_UI_AWAITING if verified else SETUP_UI_WORKING,
+        "setup_ui_prompt": prompt if verified else "",
         "setup_human_click": "Add SIM" if oem == OEM_PIXEL else "Add eSIM",
         "esim_setup_launched": launched,
+        "foreground_activity": component,
         **baseline,
     }
 

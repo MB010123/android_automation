@@ -40,12 +40,15 @@ from application.esim_setup_ui_state import (
 )
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.remote_access_farm_task import (
-    PIXEL_ESIM_INTENTS,
     SAMSUNG_ESIM_FALLBACK_INTENT,
     capture_esim_baseline,
     detect_device_oem,
+    disable_native_cameras,
+    foreground_is_launcher,
     launch_esim_setup_screen,
+    read_foreground_component,
     _place_qr_config_gate,
+    _tap_through_to_esim_handoff,
     delete_placed_esim_qr,
     read_qr_walk_marker,
     wake_and_unlock_device,
@@ -462,6 +465,7 @@ def run_esim_auto_activation(
         marker = read_qr_walk_marker(runner, serial)
         if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
             walk_already_done = True
+    disable_native_cameras(runner, serial, oem)
     if walk_already_done and not force_open:
         logger.info(
             "esim_qr_walk_skipped slot=%s job_id=%s reason=walk_completed",
@@ -553,6 +557,22 @@ def run_esim_auto_activation(
                     oem=oem,
                     esim_newly_added=False,
                 )
+                component = read_foreground_component(runner, serial)
+                if not component or foreground_is_launcher(component):
+                    return _result(
+                        ok=False,
+                        http_status=422,
+                        job_id=request.job_id,
+                        error="ui_flow_step_failed",
+                        message="step=open_sim_manager",
+                        method=method,
+                        failed_step="open_sim_manager",
+                        steps_done=steps_done,
+                        screen_hint="foreground is launcher, not eSIM settings",
+                        taps=taps,
+                        activated=False,
+                        opened=False,
+                    )
                 logger.info(
                     "esim_gated_setup_ok slot=%s job_id=%s steps=%s state=%s oem=%s",
                     slot_id,
@@ -724,7 +744,7 @@ def _escape_game_hijack_and_relaunch(
 
 
 def _pixel_handoff_visible(ui_xml: str) -> bool:
-    return ui_contains(ui_xml, *PIXEL_HANDOFF_MARKERS) or ui_contains(ui_xml, "SIMs")
+    return ui_contains(ui_xml, *PIXEL_HANDOFF_MARKERS)
 
 
 def _walk_pixel_handoff(
@@ -740,23 +760,21 @@ def _walk_pixel_handoff(
 ) -> tuple[str, str] | None:
     launch_deadline = clock() + float(step_timeout_seconds)
     ui_xml = ""
-    intent_index = 0
     launch_esim_setup_screen(runner, serial, OEM_PIXEL)
     while clock() < launch_deadline:
         sleep_fn(float(poll_interval_seconds))
         try:
             ui_xml = ui.dump()
         except AdbCommandError:
+            ui_xml = ""
+        component = read_foreground_component(runner, serial)
+        if not component or foreground_is_launcher(component):
+            launch_esim_setup_screen(runner, serial, OEM_PIXEL)
             continue
         if _pixel_handoff_visible(ui_xml):
             steps_done.append("open_sim_manager")
             return None
-        if intent_index + 1 < len(PIXEL_ESIM_INTENTS):
-            intent_index += 1
-            try:
-                runner.run(serial, ["shell", "am", "start", "-a", PIXEL_ESIM_INTENTS[intent_index]])
-            except AdbCommandError:
-                pass
+        _tap_through_to_esim_handoff(runner, serial, OEM_PIXEL)
     return "open_sim_manager", "Pixel SIMs screen did not show Add SIM"
 
 
@@ -825,6 +843,9 @@ def _walk_one_ui_flow(
             ui_xml = ""
     if not ui_contains(ui_xml, "Add eSIM", "Add mobile plan"):
         return "open_sim_manager", "SIM manager screen did not show Add eSIM"
+    component = read_foreground_component(runner, serial)
+    if not component or foreground_is_launcher(component):
+        return "open_sim_manager", "foreground is launcher, not SIM manager"
     steps_done.append("open_sim_manager")
     if stop_after == "open_sim_manager":
         return None

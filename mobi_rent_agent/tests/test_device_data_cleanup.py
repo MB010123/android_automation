@@ -144,6 +144,13 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     assert "lpa" not in script.lower()
     for package in LOCKDOWN_PACKAGES:
         assert f"pm disable-user --user 0 {package}" in script
+    for package in (
+        "com.sec.android.app.camera",
+        "com.google.android.GoogleCamera",
+        "com.android.camera2",
+        "com.android.camera",
+    ):
+        assert f"pm enable {package}" in script
     for package in PRESERVED_PACKAGES:
         assert f"disable-user --user 0 {package}" not in script
     for package in ACCOUNT_CLEAR_PACKAGES:
@@ -527,16 +534,18 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     )
     assert result.ok is True
     assert result.details["status"] == "screen_prepared"
-    script = runner.calls[-1][1][1]
-    assert "wm size reset; true" in script
-    assert "wm density reset; true" in script
-    assert "stay_on_while_plugged_in 7; true" in script
-    assert "locksettings set-disabled true; true" in script
-    assert "KEYCODE_WAKEUP" in script
-    assert "dismiss-keyguard" in script
-    assert "input swipe 540 1800 540 400 300" in script
-    assert "KEYCODE_HOME" in script
-    assert "com.samsung.android.game.gamehome" not in script
+    scripts = " ".join(args[1] for _serial, args in runner.calls if args and args[0] == "shell")
+    assert "wm size reset; true" in scripts
+    assert "wm density reset; true" in scripts
+    assert "stay_on_while_plugged_in 7; true" in scripts
+    assert "locksettings set-disabled true; true" in scripts
+    assert "KEYCODE_WAKEUP" in scripts
+    assert "dismiss-keyguard" in scripts
+    assert "input swipe 540 1800 540 400 300" in scripts
+    assert "KEYCODE_HOME" in scripts
+    assert "com.samsung.android.game.gamehome" not in scripts
+    assert "pm disable-user --user 0 com.google.android.GoogleCamera" in scripts
+    assert "com.sec.android.app.camera" not in scripts
 
 
 def test_device_screen_prepare_skip_home_omits_keycode_home():
@@ -585,6 +594,8 @@ def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
     assert "wm density reset; true" not in scripts
     assert "pm disable-user --user 0 com.samsung.android.game.gamehome" in scripts
     assert "pm disable-user --user 0 com.samsung.android.game.gametools" in scripts
+    assert "pm disable-user --user 0 com.sec.android.app.camera" in scripts
+    assert "com.google.android.GoogleCamera" not in scripts
 
 
 def test_device_screen_prepare_wait_boot_then_unlock():

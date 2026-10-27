@@ -31,6 +31,17 @@ def test_parse_resumed_activity():
     assert parse_foreground_activity("") is None
 
 
+def test_parse_foreground_prefers_settings_over_pixel_launcher():
+    dump = """
+  mCurrentFocus=Window{abc u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity}
+  mFocusedApp=ActivityRecord{def u0 com.android.settings/.Settings$NetworkDashboardActivity t2}
+"""
+    assert (
+        parse_foreground_activity(dump)
+        == "com.android.settings/.Settings$NetworkDashboardActivity"
+    )
+
+
 def test_esim_allows_mobile_network_not_generic_settings_or_launcher():
     ok = decide_setup_guard(
         phase=PHASE_ESIM,
