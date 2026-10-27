@@ -558,7 +558,6 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            self._prepare_device_screen(auth.slot_id, wait_boot=False)
             body = {"ok": True, **self._session_public(existing, now)}
             return ApiResult(200, body)
 
@@ -622,7 +621,6 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
@@ -641,7 +639,6 @@ class RemoteAccessService:
         if (
             session.is_active(now)
             and session.prepare_state not in PREPARE_IN_PROGRESS
-            and not self._session_awaiting_human(session)
         ):
             evidence = self._observe_activation(auth, force=False)
             session = self._store.get(auth.rental_id) or session
@@ -711,7 +708,6 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        self._prepare_device_screen(auth.slot_id, wait_boot=False)
         try:
             return opener(
                 device_id=session.device_id,
@@ -1142,10 +1138,11 @@ class RemoteAccessService:
         return ApiResult(202, {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "prepare_state": PREPARE_REBOOTING})
 
     def prepare_esim(self, customer_id: str, rental_id: str) -> ApiResult:
-        """Place the rental's validated QR image in DCIM, reboot, wait for remote control.
+        """Ensure the QR is in Gallery and bring OEM SIM/eSIM settings to the front.
 
-        The customer then installs the eSIM through the normal Android UI over
-        the remote screen. No provision_esim, no EuiccManager, no policy change.
+        Called every time the customer opens the live screen. Never skipped
+        because setup is awaiting, complete, or a leftover eSIM is present.
+        Silent MJPEG reconnects do not use this path. No provision_esim.
         """
         auth = self._authorize(customer_id, rental_id, feature_slots=self._prepare_slots)
         if isinstance(auth, ApiResult):
@@ -1181,26 +1178,32 @@ class RemoteAccessService:
                         **self._session_public(current),
                     },
                 )
-            if current is not None and current.prepare_state == PREPARE_READY:
-                return ApiResult(
-                    202,
-                    {
-                        "ok": True,
-                        "rental_id": auth.rental_id,
-                        "slot_id": auth.slot_id,
-                        "job_id": current.prepare_job_id,
-                        "prepare_state": PREPARE_READY,
-                        **self._session_public(current),
-                    },
-                )
-            job_id = str(uuid.uuid4())
-            self._store.set_prepare_state(auth.rental_id, PREPARE_PLACING_QR, detail=None, job_id=job_id)
-        logger.info("esim_prepare_started slot=%s", auth.slot_id)
-        self._runner(lambda: self._run_prepare_flow(auth, qr_url, job_id))
-        return ApiResult(
-            202,
-            {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "job_id": job_id, "prepare_state": PREPARE_PLACING_QR},
+            already_ready = current is not None and current.prepare_state == PREPARE_READY
+            already_uploaded = current is not None and current.qr_uploaded_at is not None
+            if already_ready or already_uploaded:
+                job_id = current.prepare_job_id if current is not None else None
+            else:
+                job_id = str(uuid.uuid4())
+                self._store.set_prepare_state(auth.rental_id, PREPARE_PLACING_QR, detail=None, job_id=job_id)
+                logger.info("esim_prepare_started slot=%s", auth.slot_id)
+                self._runner(lambda: self._run_prepare_flow(auth, qr_url, job_id))
+        self._handoff_esim_screen(auth)
+        refreshed = self._store.get(auth.rental_id)
+        prepare_state = (
+            refreshed.prepare_state if refreshed is not None else PREPARE_PLACING_QR
         )
+        body = {
+            "ok": True,
+            "rental_id": auth.rental_id,
+            "slot_id": auth.slot_id,
+            "job_id": job_id,
+            "prepare_state": prepare_state,
+        }
+        if refreshed is not None:
+            body.update(self._session_public(refreshed))
+        body["setup_ui_state"] = SETUP_UI_AWAITING
+        body["setup_complete"] = False
+        return ApiResult(202, body)
 
     def upload_esim_qr(self, customer_id: str, rental_id: str, image_bytes: bytes) -> ApiResult:
         """Place a customer-uploaded QR image on the rental's Pixel Camera.
@@ -1630,13 +1633,18 @@ class RemoteAccessService:
             return False
         return str(session.setup_ui_state or "") == SETUP_UI_AWAITING
 
+    def _handoff_esim_screen(self, auth: AuthorizedRental) -> None:
+        """Wake, disable camera, open OEM SIM settings, stay on awaiting_human_click."""
+        self._prepare_device_screen(auth.slot_id, wait_boot=False, skip_home=True)
+        self._store.set_setup_ui_state(auth.rental_id, SETUP_UI_AWAITING, setup_complete=False)
+        self._clear_setup_working(auth.rental_id)
+
     def _prepare_device_screen(
         self, slot_id: int, *, wait_boot: bool, skip_home: bool | None = None
     ) -> None:
         session = self._store.active_for_slot(int(slot_id)) or self._store.latest_for_slot(int(slot_id))
-        setup_in_progress = session is not None and not session.setup_complete
         if skip_home is None:
-            skip_home = setup_in_progress
+            skip_home = session is not None and not session.setup_complete
         request_device_screen_prepare(
             self._farm,
             int(slot_id),
@@ -1970,8 +1978,10 @@ class RemoteAccessService:
         if current is None:
             return {}
         confirmed = str(current.activation_observed or "").strip().lower() == "confirmed"
-        newly = self._esim_newly_added(current)
-        if confirmed or current.setup_complete or newly:
+        newly = False
+        if str(current.setup_ui_state or "") == SETUP_UI_AWAITING and not current.setup_complete:
+            return self._stored_setup_ui_fields(current)
+        if confirmed:
             self._store.set_setup_ui_state(
                 rental_id, SETUP_UI_COMPLETED, setup_complete=True
             )

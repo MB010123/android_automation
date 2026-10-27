@@ -331,24 +331,35 @@ def test_live_stream_prepare_reopens_esim_settings_without_home(tmp_path: Path):
     _tenant, platform, farm, service, store, rental = _slot2_service(tmp_path, farm=farm)
     created = service.create_remote_access(CUSTOMER_A, None, rental)
     assert created.http_status == 201
-    create_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert create_prepares
-    store.set_setup_ui_state(rental, "awaiting_human_click", setup_complete=False)
     farm.tasks.clear()
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
-    stream_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert stream_prepares
-    assert all(t["payload"].get("skip_home") is True for t in stream_prepares)
-    assert all(t["payload"].get("open_esim_settings") is True for t in stream_prepares)
+    assert [t for t in farm.tasks if t["type"] == "device_screen_prepare"] == []
+    prepared = service.prepare_esim(CUSTOMER_A, rental)
+    assert prepared.http_status == 202, prepared.body
+    assert prepared.body["setup_ui_state"] == "awaiting_human_click"
+    assert prepared.body.get("setup_complete") is not True
+    explicit = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert explicit
+    assert any(t["payload"].get("skip_home") is True for t in explicit)
+    assert any(t["payload"].get("open_esim_settings") is True for t in explicit)
+    farm.tasks.clear()
+    stream_again = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream_again, "device_id") == SLOT2_SERIAL
+    assert [t for t in farm.tasks if t["type"] == "device_screen_prepare"] == []
     _mark_ready(store, rental)
     farm.tasks.clear()
     ready_stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(ready_stream, "device_id") == SLOT2_SERIAL
-    ready_prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert ready_prepares
-    assert all(t["payload"].get("skip_home") is not True for t in ready_prepares)
-    assert all(t["payload"].get("open_esim_settings") is not True for t in ready_prepares)
+    assert [t for t in farm.tasks if t["type"] == "device_screen_prepare"] == []
+    again = service.prepare_esim(CUSTOMER_A, rental)
+    assert again.http_status == 202, again.body
+    assert again.body["setup_ui_state"] == "awaiting_human_click"
+    assert again.body.get("setup_complete") is not True
+    reopen = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert reopen
+    assert all(t["payload"].get("skip_home") is True for t in reopen)
+    assert all(t["payload"].get("open_esim_settings") is True for t in reopen)
 
 
 def test_stream_independent_of_setup_guard_and_native_resolution_unchanged(tmp_path: Path):

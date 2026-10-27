@@ -281,16 +281,16 @@ def test_qr_walk_escapes_game_launcher_and_opens_sim_manager():
     assert "MANAGE_ALL_SIM_PROFILES_SETTINGS" not in joined
 
 
-def test_qr_walk_is_skipped_when_already_completed():
+def test_qr_walk_completed_still_opens_sim_settings():
     runner = _ActivationRunner(ui_polls=WALK_UI_POLLS)
     result = _activate(runner, request=_req(mode="gated_setup", qr_walk_completed=True))
     assert result.ok is True
-    assert result.details["skipped"] is True
-    assert result.details["opened"] is False
+    assert result.details["skipped"] is not True
+    assert result.details["opened"] is True
     assert result.details["qr_walk_completed"] is True
     assert result.details["qr_deleted"] is False
     assert result.details["setup_ui_state"] == "awaiting_human_click"
-    assert runner.commands("shell", "am", "start") == []
+    assert runner.commands("shell", "am", "start")
     assert runner.tap_points() == []
     rms = [args for _, args in runner.calls if args[:3] == ["shell", "rm", "-f"]]
     assert not any(str(args[-1]).endswith("esim_qr.png") for args in rms)

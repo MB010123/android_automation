@@ -168,8 +168,10 @@ def run_device_screen_prepare(
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
     wait_boot = bool(request.payload.get("wait_boot", False))
     skip_home = bool(request.payload.get("skip_home", False))
-    if str(request.payload.get("setup_ui_state") or "").strip() == SETUP_UI_AWAITING:
+    open_esim = skip_home or bool(request.payload.get("open_esim_settings", False))
+    if open_esim or str(request.payload.get("setup_ui_state") or "").strip() == SETUP_UI_AWAITING:
         skip_home = True
+        open_esim = True
     runner = command_runner or AdbCommandRunner(
         adb_path, timeout_seconds=SCREEN_PREPARE_TIMEOUT_SECONDS
     )
@@ -229,7 +231,6 @@ def run_device_screen_prepare(
         "disable_camera",
     )
     esim_setup_launched = ""
-    open_esim = skip_home or bool(request.payload.get("open_esim_settings", False))
     if open_esim:
         esim_setup_launched = ensure_esim_setup_screen_open(runner, serial, oem)
     package = str(request.payload.get("voidfix_package") or "").strip()
@@ -256,6 +257,7 @@ def run_device_screen_prepare(
             "wait_boot": wait_boot,
             "skip_home": skip_home,
             "esim_setup_launched": esim_setup_launched,
+            "setup_ui_state": SETUP_UI_AWAITING if open_esim else None,
             "warnings": warnings,
         },
     )

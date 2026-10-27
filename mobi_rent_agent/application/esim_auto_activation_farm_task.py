@@ -338,26 +338,6 @@ def run_esim_auto_activation(
         marker = read_qr_walk_marker(runner, serial)
         if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
             walk_already_done = True
-    if walk_already_done and not force_open:
-        prompt = handoff_prompt_for_oem(oem)
-        return _result(
-            ok=True,
-            http_status=200,
-            job_id=request.job_id,
-            message="esim_qr_walk_skipped",
-            method=method,
-            steps_done=[],
-            taps=[],
-            activated=False,
-            opened=False,
-            skipped=True,
-            qr_walk_completed=True,
-            qr_deleted=False,
-            device_oem=oem,
-            setup_ui_state=SETUP_UI_AWAITING,
-            setup_ui_prompt=prompt,
-            setup_human_click="Add SIM" if oem == OEM_PIXEL else "Add eSIM",
-        )
     disable_native_cameras(runner, serial, oem)
     try:
         wake_and_unlock_device(runner, serial)
@@ -392,7 +372,7 @@ def run_esim_auto_activation(
             "opened": True,
             "qr_walk_completed": True,
             "qr_deleted": False,
-            "skipped": bool(walk_already_done and not force_open),
+            "skipped": False,
             "device_oem": oem,
             "esim_setup_launched": launched,
             **public_setup_ui_body(classification),

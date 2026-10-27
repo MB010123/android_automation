@@ -590,6 +590,7 @@ def test_device_screen_prepare_skip_home_omits_keycode_home():
     assert "uiautomator" not in joined
     assert result.details["skip_home"] is True
     assert result.details["esim_setup_launched"] == "sim_manager"
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
 
 
 def test_device_screen_prepare_skip_home_always_reopens_sim_manager():
@@ -651,6 +652,7 @@ def test_device_screen_prepare_skip_home_reopens_pixel_sims_from_launcher():
     assert "input tap" not in joined
     assert "uiautomator" not in joined
     assert result.details["esim_setup_launched"] == "android.settings.WIRELESS_SETTINGS"
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
 
 
 def test_device_screen_prepare_open_esim_settings_launches_once():
@@ -675,6 +677,7 @@ def test_device_screen_prepare_open_esim_settings_launches_once():
     assert "dumpsys" not in joined
     assert "input tap" not in joined
     assert result.details["esim_setup_launched"] == "android.settings.WIRELESS_SETTINGS"
+    assert result.details["setup_ui_state"] == "awaiting_human_click"
 
 
 def test_device_screen_prepare_s20_uses_fhd_not_physical_wqhd():
