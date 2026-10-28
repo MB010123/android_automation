@@ -48,7 +48,7 @@ def test_setup_mode_allows_home_recents_shade_and_unrelated_apps(tmp_path: Path)
     tenant = MemoryTenant()
     farm = FakeFarm()
     farm.inspect_allowed = False
-    farm.inspect_activity = "com.android.chrome/.MainActivity"
+    farm.inspect_activity = "com.google.android.dialer/.GoogleDialtactsActivity"
     platform = FakePlatform()
     service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
     rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)

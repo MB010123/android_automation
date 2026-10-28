@@ -206,7 +206,7 @@ def test_shade_and_quick_settings_blocked_without_breaking_gads(tmp_path: Path):
 def test_normal_apps_and_esim_screens_unchanged_with_operator_ui_blocks(tmp_path: Path):
     farm = FakeFarm()
     _tenant, platform, farm, service, _store, rental = _created(tmp_path, farm=farm)
-    farm.inspect_activity = "com.android.chrome/.MainActivity"
+    farm.inspect_activity = "com.google.android.dialer/.GoogleDialtactsActivity"
     chrome = service.control_session(CUSTOMER_A, rental, {"action": "tap", "x": 15, "y": 15})
     assert chrome.http_status == 200
     assert "restricted_destination" not in chrome.body

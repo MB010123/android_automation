@@ -1,16 +1,11 @@
 """Targeted customer-rental restrictions. Not the old setup-mode kiosk.
 
-Home, Recents, rotate, and normal apps stay allowed. Notification shade and
-Quick Settings are blocked (semantic actions and top-edge pull-downs). If
-shade/QS is already visible, send Home. Settings opens the allowlisted Add
-eSIM entry point. Back from the eSIM root goes Home. VoidFix, GADS Settings,
-Companion UI, Camera, and other admin surfaces
-are sent Home. Native camera apps stay blocked even during eSIM setup;
-Gallery/Photos picker remains allowed for Scan from image. GADS streaming / MediaProjection / IME
-components stay allowed. Enforcement is session-layer only: GADS home or
-Farm ``am start`` of ``android.settings.MANAGE_ALL_SIM_PROFILES_SETTINGS``.
-Never restart GADS, never lock-task, never recover-loop when the customer
-is on Home.
+Renters may use Phone, SMS, the Home launcher, and eSIM/QR picker screens.
+Chrome, Camera, Play Store, and other apps are kicked Home. Notification
+shade and Quick Settings are blocked. Settings allows Network / SIMs /
+Wi-Fi / About phone; Sound, Security, Accounts, and Reset are kicked.
+GADS streaming / MediaProjection / IME stay allowed. Never restart GADS,
+never lock-task, never recover-loop when the customer is on Home.
 """
 from __future__ import annotations
 
@@ -195,6 +190,216 @@ _SOUND_DUMP_ALWAYS_MARKERS = (
     "vibrationpattern",
     "zenmodesettings",
 )
+
+# On-device 1s guard allowlist. GADS stream package is infrastructure, not a renter app.
+RENTER_LAUNCHER_PACKAGES = frozenset(
+    {
+        "com.google.android.apps.nexuslauncher",
+        "com.sec.android.app.launcher",
+        "com.android.launcher3",
+        "com.samsung.android.launcher",
+    }
+)
+RENTER_PHONE_PACKAGES = frozenset(
+    {
+        "com.google.android.dialer",
+        "com.samsung.android.dialer",
+        "com.samsung.android.incallui",
+        "com.android.incallui",
+        "com.android.server.telecom",
+        "com.android.phone",
+    }
+)
+RENTER_SMS_PACKAGES = frozenset(
+    {
+        "com.google.android.apps.messaging",
+        "com.samsung.android.messaging",
+        "com.android.mms",
+    }
+)
+RENTER_ESIM_PACKAGES = frozenset(
+    {
+        "com.google.android.euicc",
+        "com.android.euicc",
+        "com.samsung.android.euicc",
+        "com.samsung.android.app.telephonyui",
+        "com.google.android.carriersetup",
+        "com.google.android.providers.media.module",
+        "com.android.providers.media.module",
+        "com.android.documentsui",
+        "com.google.android.documentsui",
+        "com.google.android.photospicker",
+    }
+)
+RENTER_IME_PACKAGES = frozenset(
+    {
+        "com.google.android.inputmethod.latin",
+        "com.samsung.android.honeyboard",
+        "com.sec.android.inputmethod",
+        "com.google.android.tts",
+    }
+)
+RENTER_SYSTEM_PACKAGES = frozenset(
+    {
+        "android",
+        "com.android.systemui",
+        "com.google.android.permissioncontroller",
+        "com.android.permissioncontroller",
+        "com.android.intentresolver",
+        "com.android.bluetooth",
+        "com.google.android.gms",
+        GADS_SETTINGS_PACKAGE,
+    }
+)
+RENTER_SETTINGS_PACKAGE = "com.android.settings"
+PICKER_ONLY_PACKAGES = frozenset(
+    {
+        "com.samsung.android.scloud",
+        "com.sec.android.app.myfiles",
+        "com.sec.android.gallery3d",
+        "com.samsung.android.gallery3d",
+        "com.google.android.apps.photos",
+    }
+)
+PICKER_OR_ESIM_MARKERS = (
+    "photopicker",
+    "picker",
+    "documentsui",
+    "captureactivity",
+    "mediapicker",
+    "getcontent",
+    "euicc",
+    "esim",
+    "simcardmgr",
+    "simcardmanager",
+    "telephonyui",
+    "managesim",
+)
+NEVER_FORCE_STOP_PACKAGES = frozenset(
+    {
+        "",
+        "android",
+        "com.android.systemui",
+        GADS_SETTINGS_PACKAGE,
+    }
+)
+RENTER_ALLOWED_PACKAGES = (
+    RENTER_LAUNCHER_PACKAGES
+    | RENTER_PHONE_PACKAGES
+    | RENTER_SMS_PACKAGES
+    | RENTER_ESIM_PACKAGES
+    | RENTER_IME_PACKAGES
+    | RENTER_SYSTEM_PACKAGES
+    | {RENTER_SETTINGS_PACKAGE}
+)
+# Consumer apps to hide from the launcher. Never gallery/photos/documentsui (QR picker).
+HIDDEN_USER_PACKAGES = (
+    "com.android.chrome",
+    "com.android.vending",
+    "com.sec.android.app.samsungapps",
+    "com.sec.android.app.sbrowser",
+    "com.samsung.android.app.sbrowser",
+    "com.google.android.youtube",
+    "com.google.android.apps.youtube.music",
+    "com.google.android.gm",
+    "com.google.android.apps.maps",
+    "com.google.android.calculator",
+    "com.sec.android.app.popupcalculator",
+    "com.google.android.calendar",
+    "com.samsung.android.calendar",
+    "com.google.android.deskclock",
+    "com.sec.android.app.clockpackage",
+    "com.google.android.apps.docs",
+    "com.google.android.apps.wellbeing",
+    "com.samsung.android.forest",
+    "com.netflix.mediaclient",
+    "com.netflix.partner.activation",
+    "com.samsung.android.app.spage",
+    "com.sec.android.app.kidshome",
+)
+# Class / fragment / title tokens. Avoid generic words like "application".
+SENSITIVE_SETTINGS_DUMP_MARKERS = (
+    "secsoundsettings",
+    "soundsettings",
+    "soundsandvibration",
+    "volumesettings",
+    "secvolume",
+    "vibrationintensity",
+    "vibrationpattern",
+    "zenmode",
+    "soundmode",
+    "notificationsettings",
+    "configurenotification",
+    "appnotificationsettings",
+    "notificationaccess",
+    "statusbarsettings",
+    "lockscreennotification",
+    "securitysettings",
+    "securityadvancedsettings",
+    "biometricsandsecurity",
+    "lockscreenmenu",
+    "chooselockgeneric",
+    "chooselockpassword",
+    "chooselockpattern",
+    "screenlock",
+    "fingerprintsettings",
+    "facesettings",
+    "smartlock",
+    "encryptionandcredential",
+    "othersecuritysettings",
+    "deviceadminsettings",
+    "privacysettings",
+    "privacydashboard",
+    "resetdashboardfragment",
+    "resetsettings",
+    "secresetsettings",
+    "generalmanagement",
+    "masterclear",
+    "factoryreset",
+    "resetnetwork",
+    "eraseesim",
+    "backupsettings",
+    "backupandrestore",
+    "googlebackup",
+    "systemdashboardfragment",
+    "accountdashboardfragment",
+    "accountssettings",
+    "addaccountsettings",
+    "manageaccounts",
+    "usersettings",
+    "multipleusers",
+    "samsungaccount",
+    "cloudaccountsettings",
+    "googlesettings",
+    "developmentsettings",
+    "developeroptions",
+    "usbsettings",
+    "wirelessdebugging",
+    "manageapplications",
+    "appinfodashboard",
+    "applicationsettings",
+    "installedappdetails",
+    "displaysettings",
+    "secdisplaysettings",
+    "batterysettings",
+    "devicecare",
+    "storagesettings",
+    "accessibilitysettings",
+    "wellbeing",
+    "safetycenter",
+    "safetycenteractivity",
+)
+SENSITIVE_SETTINGS_TITLE_MARKERS = (
+    'text="soundsandvibration"',
+    'text="security"',
+    'text="notifications"',
+    'text="accounts"',
+    'text="backup"',
+    'text="reset"',
+    'text="generalmanagement"',
+    'text="developeroptions"',
+    'text="biometrics"',
+)
 _BLOCKED_APP_PACKAGES = frozenset(
     {
         "com.android.packageinstaller",
@@ -206,6 +411,13 @@ _BLOCKED_APP_PACKAGES = frozenset(
         "com.samsung.android.game.gametools",
         "com.samsung.android.game.gos",
         "com.enhance.gameservice",
+        "com.android.chrome",
+        "com.android.vending",
+        "com.google.android.youtube",
+        "com.google.android.gm",
+        "com.google.android.apps.maps",
+        "com.google.android.GoogleCamera",
+        "com.sec.android.app.camera",
     }
 )
 _BLOCKED_APP_MARKERS = (
@@ -300,6 +512,103 @@ def sound_settings_dump_matches(dump: str | None) -> bool:
     if settings_top and ("soundmode" in collapsed or "soundsandvibration" in collapsed):
         return True
     return False
+
+
+def foreground_package_from_dump(dump: str | None) -> str:
+    """Package from mCurrentFocus / mFocusedApp / mResumedActivity lines."""
+    for line in str(dump or "").splitlines():
+        low = line.lower()
+        if "mcurrentfocus" in low or "mfocusedapp" in low or "mresumedactivity" in low:
+            pkg = package_from_focus_line(line)
+            if pkg:
+                return pkg
+    return ""
+
+
+def package_from_focus_line(line: str) -> str:
+    lowered = str(line or "").lower()
+    token = " u0 "
+    idx = lowered.find(token)
+    if idx < 0:
+        token = " u10 "
+        idx = lowered.find(token)
+    if idx < 0:
+        return ""
+    rest = str(line)[idx + len(token) :]
+    rest = rest.replace("}", " ").replace("{", " ")
+    first = rest.split("/", 1)[0].strip().split()
+    if not first:
+        return ""
+    pkg = first[0].strip()
+    if pkg.lower() in {"null", "none"}:
+        return ""
+    return pkg
+
+
+def package_from_activity(activity: str | None) -> str:
+    text = str(activity or "").strip()
+    if not text:
+        return ""
+    if "/" in text:
+        return text.split("/", 1)[0].strip()
+    return package_from_focus_line(text)
+
+
+def is_picker_or_esim_context(dump: str | None) -> bool:
+    collapsed = _collapsed_sound_blob(dump)
+    if not collapsed:
+        return False
+    return any(marker in collapsed for marker in PICKER_OR_ESIM_MARKERS)
+
+
+def permission_controller_is_security(dump: str | None) -> bool:
+    collapsed = _collapsed_sound_blob(dump)
+    return any(
+        marker in collapsed
+        for marker in (
+            "securitysettings",
+            "biometrics",
+            "chooselock",
+            "fingerprint",
+            "facesettings",
+            "privacysettings",
+            "safetycenter",
+        )
+    )
+
+
+def sensitive_settings_dump_matches(dump: str | None) -> bool:
+    """True for Sound, Security, Accounts, Reset, and other blocked Settings pages."""
+    if sound_settings_dump_matches(dump):
+        return True
+    collapsed = _collapsed_sound_blob(dump)
+    if not collapsed:
+        return False
+    if any(marker in collapsed for marker in SENSITIVE_SETTINGS_DUMP_MARKERS):
+        return True
+    return any(marker in collapsed for marker in SENSITIVE_SETTINGS_TITLE_MARKERS)
+
+
+def renter_should_kick_foreground(
+    package: str | None,
+    *,
+    dump: str | None = None,
+    activity: str | None = None,
+) -> bool:
+    """True when the on-device guard must send Home and stop this package."""
+    pkg = str(package or package_from_activity(activity) or "").strip()
+    if not pkg or pkg in NEVER_FORCE_STOP_PACKAGES or pkg in RENTER_IME_PACKAGES:
+        return False
+    blob = dump if dump else activity
+    if pkg in PICKER_ONLY_PACKAGES:
+        return not is_picker_or_esim_context(blob)
+    if pkg == RENTER_SETTINGS_PACKAGE:
+        return sensitive_settings_dump_matches(blob) or is_sound_settings_activity(activity)
+    if pkg in {"com.google.android.permissioncontroller", "com.android.permissioncontroller"}:
+        return permission_controller_is_security(blob)
+    if pkg in RENTER_ALLOWED_PACKAGES:
+        return False
+    return True
 
 
 def is_shade_pull_swipe(

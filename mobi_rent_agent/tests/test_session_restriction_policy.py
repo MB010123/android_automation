@@ -27,6 +27,8 @@ from application.session_restriction_policy import (
     REASON_SHADE_BLOCKED,
     is_shade_pull_swipe,
     is_sound_settings_activity,
+    renter_should_kick_foreground,
+    sensitive_settings_dump_matches,
     sound_settings_dump_matches,
     add_esim_public_body,
     classify_foreground_activity,
@@ -172,7 +174,7 @@ def test_classify_esim_settings_voidfix_and_apps():
         ).kind
         == KIND_OTHER
     )
-    assert classify_foreground_activity("com.android.chrome/.MainActivity").kind == KIND_OTHER
+    assert classify_foreground_activity("com.android.chrome/.MainActivity").kind == KIND_BLOCKED_APP
     assert (
         classify_foreground_activity("com.google.android.GoogleCamera/.CameraActivity").kind
         == KIND_BLOCKED_APP
@@ -243,6 +245,42 @@ def test_classify_esim_settings_voidfix_and_apps():
     )
     assert not sound_settings_dump_matches(
         "mCurrentFocus=Window{abc u0 com.sec.android.app.launcher/.Launcher}"
+    )
+    assert renter_should_kick_foreground("com.android.chrome") is True
+    assert renter_should_kick_foreground("com.google.android.dialer") is False
+    assert renter_should_kick_foreground("com.google.android.apps.messaging") is False
+    assert renter_should_kick_foreground("com.sec.android.app.launcher") is False
+    assert renter_should_kick_foreground("com.google.android.euicc") is False
+    assert renter_should_kick_foreground("com.gads.settings") is False
+    assert renter_should_kick_foreground(
+        "com.sec.android.gallery3d",
+        dump="ACTIVITY com.sec.android.gallery3d/.app.GalleryActivity",
+    ) is True
+    assert renter_should_kick_foreground(
+        "com.sec.android.gallery3d",
+        dump="ACTIVITY com.sec.android.gallery3d/.app.GalleryPicker",
+    ) is False
+    assert renter_should_kick_foreground(
+        "com.android.settings",
+        dump="ACTIVITY com.android.settings/.network.telephony.MobileNetworkActivity",
+    ) is False
+    assert renter_should_kick_foreground(
+        "com.android.settings",
+        dump="ACTIVITY com.android.settings/.security.SecuritySettings",
+    ) is True
+    assert renter_should_kick_foreground(
+        "com.google.android.permissioncontroller",
+        dump="SafetyCenterActivity",
+    ) is True
+    assert renter_should_kick_foreground(
+        "com.google.android.permissioncontroller",
+        dump="GrantPermissionsActivity",
+    ) is False
+    assert sensitive_settings_dump_matches(
+        "ACTIVITY com.android.settings/.SubSettings\nResetDashboardFragment"
+    )
+    assert sensitive_settings_dump_matches(
+        "ACTIVITY com.android.settings/.biometrics.BiometricsAndSecurity"
     )
     sound = decide_restriction(
         action="tap",
@@ -340,7 +378,7 @@ def test_settings_and_back_decisions():
     assert top_swipe.send_home is False
     bottom = decide_restriction(
         action="swipe",
-        activity="com.android.chrome/.MainActivity",
+        activity="com.google.android.dialer/.GoogleDialtactsActivity",
         x=720,
         y=2900,
         x2=720,

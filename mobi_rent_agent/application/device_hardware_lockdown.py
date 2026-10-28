@@ -1,11 +1,9 @@
 """Persistent hardware lockdowns for farm phones (no Device Owner required).
 
 Volume, vibrate, camera, microphone, and flashlight stay off across boot,
-clean/reset, and session start. An on-device shell daemon reasserts mute
-every 1s (independent of GADS WebRTC / Farm HTTP) and Homes out of Samsung
-``SecSoundSettings`` / ``Sounds and vibration``. Farm Agent only deploys
-and respawns that daemon. ``dpm set-user-restriction`` is best-effort and
-fails closed on unrooted shells. Never touches eUICC/LPA packages.
+clean/reset, and session start. An on-device 1s daemon keeps the renter on
+Phone/SMS/eSIM, Homes blocked apps, and kicks sensitive Settings pages.
+Farm Agent only deploys and respawns that daemon. Never touches eUICC/LPA.
 """
 from __future__ import annotations
 
@@ -17,6 +15,15 @@ import time
 from typing import Any, Callable
 
 from application.remote_access_farm_task import ALL_CAMERA_PACKAGES
+from application.session_restriction_policy import (
+    HIDDEN_USER_PACKAGES,
+    NEVER_FORCE_STOP_PACKAGES,
+    PICKER_ONLY_PACKAGES,
+    PICKER_OR_ESIM_MARKERS,
+    RENTER_ALLOWED_PACKAGES,
+    RENTER_SETTINGS_PACKAGE,
+    SENSITIVE_SETTINGS_DUMP_MARKERS,
+)
 from infrastructure.adb_companion import AdbCommandError, AdbCommandRunner
 
 logger = logging.getLogger("farm_agent.hardware_lockdown")
@@ -30,8 +37,42 @@ AUDIO_ENFORCE_INTERVAL_SECONDS = 4.0
 GUARD_CHECK_INTERVAL_SECONDS = 5.0
 LOCKDOWN_GUARD_REMOTE = "/data/local/tmp/mobirent_lockdown_guard.sh"
 LOCKDOWN_GUARD_PGREP = "mobirent_lockdown_guard.sh"
-LOCKDOWN_GUARD_SCRIPT = """#!/system/bin/sh
-# On-device mute + Sound settings guard. Independent of GADS/HTTP.
+
+
+def _shell_or_pattern(values: frozenset[str] | tuple[str, ...] | set[str]) -> str:
+    items = [str(item).strip() for item in values if str(item).strip()]
+    return "|".join(sorted(set(items)))
+
+
+def _shell_case_globs(values: tuple[str, ...] | frozenset[str]) -> str:
+    items = [str(item).strip().lower().replace(" ", "") for item in values if str(item).strip()]
+    return "|".join(f"*{item}*" for item in sorted(set(items)))
+
+
+def build_lockdown_guard_script() -> str:
+    """Unix-newline shell for the on-device 1s Phone/SMS/eSIM allowlist guard."""
+    permission = _shell_or_pattern(
+        {
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller",
+        }
+    )
+    allowed = _shell_or_pattern(
+        RENTER_ALLOWED_PACKAGES
+        - {RENTER_SETTINGS_PACKAGE}
+        - PICKER_ONLY_PACKAGES
+        - {
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller",
+        }
+    )
+    never = _shell_or_pattern(NEVER_FORCE_STOP_PACKAGES - {""})
+    picker = _shell_or_pattern(PICKER_ONLY_PACKAGES)
+    picker_blob = _shell_case_globs(PICKER_OR_ESIM_MARKERS)
+    sensitive = _shell_case_globs(SENSITIVE_SETTINGS_DUMP_MARKERS)
+    settings_pkg = RENTER_SETTINGS_PACKAGE
+    template = r"""#!/system/bin/sh
+# On-device Phone/SMS/eSIM allowlist + mute. Independent of GADS/HTTP.
 PIDFILE=/data/local/tmp/mobirent_lockdown_guard.pid
 if [ -f "$PIDFILE" ]; then
   old=$(cat "$PIDFILE" 2>/dev/null)
@@ -62,39 +103,93 @@ enforce_audio() {
   cmd media_session volume --stream 5 --set 0 >/dev/null 2>&1
 }
 
-kick_sound_settings() {
-  input keyevent 3 >/dev/null 2>&1
-  am force-stop com.android.settings >/dev/null 2>&1
+extract_pkg() {
+  line=$(echo "$1" | tr 'A-Z' 'a-z')
+  rest="$line"
+  case "$line" in
+    *' u0 '*) rest=${line#*' u0 '} ;;
+    *' u10 '*) rest=${line#*' u10 '} ;;
+  esac
+  pkg=${rest%%/*}
+  pkg=${pkg%% *}
+  pkg=${pkg%%\}*}
+  case "$pkg" in
+    ""|null|none|mcurrentfocus=null) echo "" ;;
+    *) echo "$pkg" ;;
+  esac
 }
 
-sound_screen_open() {
-  blob=$( { dumpsys window displays; dumpsys activity top; } 2>/dev/null | tr 'A-Z' 'a-z' | tr -d ' \t\r\n' )
-  case "$blob" in
-    *secsoundsettings*|*soundsettings*|*secvolumesettings*|*volumelimiter*|*vibrationintensity*|*vibrationpattern*|*zenmodesettings*)
-      return 0
-      ;;
+kick_pkg() {
+  pkg=$1
+  case "$pkg" in
+    ""|__NEVER__) return 0 ;;
   esac
+  am force-stop "$pkg" >/dev/null 2>&1
+  input keyevent 3 >/dev/null 2>&1
+}
+
+sensitive_settings() {
+  blob=$1
   case "$blob" in
-    *com.android.settings*)
-      case "$blob" in
-        *soundmode*|*soundsandvibration*)
-          return 0
-          ;;
-      esac
-      ;;
+    __SENSITIVE__) return 0 ;;
+  esac
+  return 1
+}
+
+picker_context() {
+  blob=$1
+  case "$blob" in
+    __PICKER_BLOB__) return 0 ;;
   esac
   return 1
 }
 
 while true; do
   enforce_audio
-  if sound_screen_open; then
-    kick_sound_settings
-    enforce_audio
-  fi
+  focus=$(dumpsys window 2>/dev/null | grep -i mCurrentFocus | grep -v '=null' | tail -n 1)
+  pkg=$(extract_pkg "$focus")
+  case "$pkg" in
+    ""|__NEVER__|__ALLOWED__)
+      ;;
+    __SETTINGS__)
+      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
+      if sensitive_settings "$top"; then
+        kick_pkg __SETTINGS__
+      fi
+      ;;
+    __PERMISSION__)
+      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
+      if sensitive_settings "$top"; then
+        kick_pkg "$pkg"
+      fi
+      ;;
+    __PICKER__)
+      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
+      if picker_context "$top"; then
+        :
+      else
+        kick_pkg "$pkg"
+      fi
+      ;;
+    *)
+      kick_pkg "$pkg"
+      ;;
+  esac
   sleep 1
 done
 """
+    return (
+        template.replace("__NEVER__", never)
+        .replace("__ALLOWED__", allowed)
+        .replace("__SENSITIVE__", sensitive)
+        .replace("__PICKER_BLOB__", picker_blob)
+        .replace("__PICKER__", picker)
+        .replace("__SETTINGS__", settings_pkg)
+        .replace("__PERMISSION__", permission)
+    )
+
+
+LOCKDOWN_GUARD_SCRIPT = build_lockdown_guard_script()
 
 VOLUME_MUTE_COMMANDS = (
     "cmd audio set-ringer-mode SILENT",
@@ -158,6 +253,19 @@ DPM_RESTRICTION_COMMANDS = (
 QS_TILES_NO_FLASHLIGHT_OR_SOUND = "Wifi,bt,RotationLock,AirplaneMode"
 
 
+def hidden_user_app_commands() -> tuple[str, ...]:
+    """Disable Play Store, Chrome, YouTube, and other non-Phone/SMS apps."""
+    commands: list[str] = []
+    seen: set[str] = set()
+    for package in HIDDEN_USER_PACKAGES:
+        if package in seen:
+            continue
+        seen.add(package)
+        commands.append(f"pm disable-user --user 0 {package}")
+        commands.append(f"am force-stop {package}")
+    return tuple(commands)
+
+
 def disable_all_camera_commands() -> tuple[str, ...]:
     commands: list[str] = []
     seen: set[str] = set()
@@ -204,6 +312,7 @@ def hardware_lockdown_commands() -> tuple[str, ...]:
         *CAMERA_MIC_PRIVACY_COMMANDS,
         *FLASHLIGHT_OFF_COMMANDS,
         *disable_all_camera_commands(),
+        *hidden_user_app_commands(),
         f"settings put secure sysui_qs_tiles {QS_TILES_NO_FLASHLIGHT_OR_SOUND}",
         *DPM_RESTRICTION_COMMANDS,
     )
@@ -370,8 +479,8 @@ def reassert_audio_lockdown(
 ) -> bool:
     """Mute/silent again if the interval elapsed. Home out of Sound settings."""
     from application.session_restriction_policy import (
-        is_sound_settings_activity,
-        sound_settings_dump_matches,
+        package_from_activity,
+        renter_should_kick_foreground,
     )
 
     gate = enforcer or _DEFAULT_ENFORCER
@@ -385,14 +494,17 @@ def reassert_audio_lockdown(
         applied = True
     except (AdbCommandError, OSError, TypeError):
         logger.info("audio_lockdown_reassert_skipped serial=%s", serial)
-    if is_sound_settings_activity(activity) or sound_settings_dump_matches(dump):
+    pkg = package_from_activity(activity)
+    if renter_should_kick_foreground(pkg, dump=dump, activity=activity):
+        stop_pkg = pkg or "com.android.settings"
         try:
             if runner is not None:
                 runner.run(serial, ["shell", "input", "keyevent", "3"])
-                runner.run(serial, ["shell", "am", "force-stop", "com.android.settings"])
+                if stop_pkg not in NEVER_FORCE_STOP_PACKAGES:
+                    runner.run(serial, ["shell", "am", "force-stop", stop_pkg])
             applied = True
         except (AdbCommandError, OSError, TypeError):
-            logger.info("sound_settings_home_skipped serial=%s", serial)
+            logger.info("renter_allowlist_home_skipped serial=%s", serial)
     return applied
 
 

@@ -41,6 +41,11 @@ def test_hardware_lockdown_covers_volume_camera_mic_flashlight():
     assert "cmd flashlight disable" in joined
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in joined
     assert "pm disable-user --user 0 com.sec.android.app.camera" in joined
+    assert "pm disable-user --user 0 com.android.chrome" in joined
+    assert "pm disable-user --user 0 com.android.vending" in joined
+    assert "pm disable-user --user 0 com.google.android.youtube" in joined
+    assert "pm disable-user --user 0 com.google.android.documentsui" not in joined
+    assert "pm disable-user --user 0 com.sec.android.gallery3d" not in joined
     assert "dpm set-user-restriction no_adjust_volume true" in joined
     assert "dpm set-user-restriction no_camera true" in joined
     assert "dpm set-user-restriction no_unmute_microphone true" in joined
@@ -127,15 +132,21 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "settings get system vibrate_on" in script
     assert "settings put system vibrate_on 0" in script
     assert "cmd media_session volume --stream 3 --set 0" in script
-    assert "dumpsys window displays" in script
+    assert "dumpsys window" in script
     assert "dumpsys activity top" in script
     assert "secsoundsettings" in script
     assert "soundsandvibration" in script
+    assert "securitysettings" in script
+    assert "generalmanagement" in script
+    assert "com.google.android.dialer" in script
+    assert "com.google.android.apps.messaging" in script
+    assert "com.google.android.euicc" in script
+    assert "com.sec.android.gallery3d" in script
     assert "input keyevent 3" in script
-    assert "am force-stop com.android.settings" in script
+    assert "am force-stop" in script
     assert "sleep 1" in script
-    assert "euicc" not in script.lower()
-    assert "lpa" not in script.lower()
+    assert "euiccmanager" not in script.lower()
+    assert "wipe_esims" not in script.lower()
 
 
 class _GuardRunner(AdbCommandRunner):
@@ -206,19 +217,28 @@ def test_lockdown_loop_deploys_then_respawns_via_pgrep():
 
 
 S20_SERIAL = "RFCNB056WEV"
+PIXEL_SERIAL = "18171FDF6005WG"
 _SEC_SOUND = (
     "com.android.settings/.Settings$SecSoundSettingsActivity"
 )
 
 
-def _s20_online() -> bool:
+def _serial_online(serial: str) -> bool:
     try:
         state = AdbCommandRunner("adb", timeout_seconds=5.0).run(
-            S20_SERIAL, ["get-state"]
+            serial, ["get-state"]
         ).stdout
     except Exception:
         return False
     return str(state or "").strip() == "device"
+
+
+def _s20_online() -> bool:
+    return _serial_online(S20_SERIAL)
+
+
+def _pixel_online() -> bool:
+    return _serial_online(PIXEL_SERIAL)
 
 
 def _focus_lines(stdout: str) -> str:
@@ -280,3 +300,74 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
     )
     assert "secsoundsettings" not in settings_focus, settings_focus
     assert "sounds and vibration" not in settings_focus, settings_focus
+
+
+def _assert_guard_running(runner: AdbCommandRunner, serial: str) -> None:
+    assert ensure_on_device_lockdown_guard(runner, serial, redeploy=True) is True
+    time.sleep(1.0)
+    try:
+        pids = runner.run(serial, ["shell", "pgrep", "-f", "mobirent_lockdown_guard.sh"]).stdout
+    except AdbCommandError:
+        pids = ""
+    assert any(token.isdigit() for token in pids.replace("\n", " ").split()), pids
+
+
+def _assert_kicked_home(runner: AdbCommandRunner, serial: str) -> str:
+    time.sleep(3.0)
+    focus = _focus_lines(runner.run(serial, ["shell", "dumpsys", "window"]).stdout)
+    assert "launcher" in focus, focus
+    return focus
+
+
+@pytest.mark.skipif(not _s20_online(), reason="Samsung S20 Slot 21 is not on ADB")
+def test_live_s20_allowlist_phone_sms_and_kicks_chrome_security():
+    runner = AdbCommandRunner("adb", timeout_seconds=12.0)
+    _assert_guard_running(runner, S20_SERIAL)
+
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.intent.action.DIAL"])
+    time.sleep(1.6)
+    dial = _focus_lines(runner.run(S20_SERIAL, ["shell", "dumpsys", "window"]).stdout)
+    assert "dialer" in dial or "incallui" in dial or "com.android.phone" in dial, dial
+
+    runner.run(
+        S20_SERIAL,
+        ["shell", "am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.APP_MESSAGING"],
+    )
+    time.sleep(1.6)
+    sms = _focus_lines(runner.run(S20_SERIAL, ["shell", "dumpsys", "window"]).stdout)
+    assert "messaging" in sms or "mms" in sms, sms
+
+    try:
+        runner.run(S20_SERIAL, ["shell", "pm", "enable", "--user", "0", "com.android.chrome"])
+    except AdbCommandError:
+        pass
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-n", "com.android.chrome/com.google.android.apps.chrome.Main"])
+    _assert_kicked_home(runner, S20_SERIAL)
+
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.SECURITY_SETTINGS"])
+    _assert_kicked_home(runner, S20_SERIAL)
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.NOTIFICATION_SETTINGS"])
+    _assert_kicked_home(runner, S20_SERIAL)
+
+
+@pytest.mark.skipif(not _pixel_online(), reason="Pixel Slot 1 is not on ADB")
+def test_live_pixel_allowlist_and_kicks_chrome_play_store():
+    runner = AdbCommandRunner("adb", timeout_seconds=12.0)
+    _assert_guard_running(runner, PIXEL_SERIAL)
+
+    runner.run(PIXEL_SERIAL, ["shell", "am", "start", "-a", "android.intent.action.DIAL"])
+    time.sleep(1.6)
+    dial = _focus_lines(runner.run(PIXEL_SERIAL, ["shell", "dumpsys", "window"]).stdout)
+    assert "dialer" in dial or "incallui" in dial, dial
+
+    try:
+        runner.run(PIXEL_SERIAL, ["shell", "pm", "enable", "--user", "0", "com.android.chrome"])
+    except AdbCommandError:
+        pass
+    runner.run(
+        PIXEL_SERIAL,
+        ["shell", "am", "start", "-n", "com.android.chrome/com.google.android.apps.chrome.Main"],
+    )
+    _assert_kicked_home(runner, PIXEL_SERIAL)
+    runner.run(PIXEL_SERIAL, ["shell", "am", "start", "-a", "android.settings.SECURITY_SETTINGS"])
+    _assert_kicked_home(runner, PIXEL_SERIAL)

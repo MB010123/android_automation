@@ -186,7 +186,7 @@ def test_launcher_settings_apps_and_unknown_are_forwarded(tmp_path: Path):
     assert settings.http_status == 200
     assert settings.body.get("restricted_destination") == "add_esim"
     assert any(t["payload"].get("recover") for t in farm.tasks if t["type"] == "setup_session_inspect")
-    farm.inspect_activity = "com.android.chrome/.MainActivity"
+    farm.inspect_activity = "com.google.android.dialer/.GoogleDialtactsActivity"
     app = service.control_session(
         CUSTOMER_A, rental, {"action": "swipe", "x": 10, "y": 400, "x2": 10, "y2": 200}
     )

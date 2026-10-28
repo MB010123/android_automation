@@ -72,8 +72,6 @@ LOCKDOWN_PACKAGES = (
     "com.sec.android.app.samsungapps",
     "com.android.chrome",
     "com.sec.android.app.sbrowser",
-    "com.google.android.documentsui",
-    "com.sec.android.app.myfiles",
     "com.netflix.mediaclient",
     "com.netflix.partner.activation",
     "com.samsung.android.app.spage",
