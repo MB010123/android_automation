@@ -109,17 +109,14 @@ def read_device_screen_guidance(
     slot_id: int,
     adb_path: str = "adb",
 ) -> dict[str, Any]:
-    """Cat the on-device state file and return catalog JSON. Defaults to Home."""
+    """Cat the on-device state file and return catalog JSON. Defaults to Home.
+
+    Polling never runs dumpsys or getprop over ADB — only ``cat`` of the
+    guard's one-line state file. OEM wording uses the mapped slot/serial.
+    """
     raw = _cat_screen_state(runner, serial, adb_path=adb_path)
     key, reason = parse_screen_state_line(raw)
-    manufacturer = _prop(runner, serial, "ro.product.manufacturer", adb_path=adb_path)
-    model = _prop(runner, serial, "ro.product.model", adb_path=adb_path)
-    family = device_family_for(
-        slot_id=int(slot_id),
-        serial=serial,
-        manufacturer=manufacturer,
-        model=model,
-    )
+    family = device_family_for(slot_id=int(slot_id), serial=serial)
     return public_screen_guidance(
         screen_key=key,
         device_family=family,
@@ -250,23 +247,3 @@ def _cat_screen_state(
         return ""
 
 
-def _prop(
-    runner: AdbCommandRunner | None,
-    serial: str,
-    name: str,
-    *,
-    adb_path: str,
-) -> str:
-    try:
-        if runner is not None:
-            return (runner.run(serial, ["shell", "getprop", name]).stdout or "").strip()
-        completed = subprocess.run(
-            [adb_path, "-s", serial, "shell", "getprop", name],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        return (completed.stdout or "").strip()
-    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
-        return ""

@@ -69,8 +69,8 @@ def test_guard_script_writes_screen_state_and_blocked_kick():
     assert "blocked_kick" in script
     assert "maybe_record" in script
     assert "kick_and_record" in script
-    assert "classify_allowed" in script
-    assert "simcardmgr" in script
+    assert "classify_focus" in script
+    assert "telephonyui" in script
     assert "settings_network" in script
     assert "esim_qr_flow" in script
     assert "about_phone" in script
@@ -79,7 +79,9 @@ def test_guard_script_writes_screen_state_and_blocked_kick():
     assert "blocked_reset" in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
     assert "sleep 1" in script
-    assert "dumpsys window" in script
+    assert "dumpsys window displays" in script
+    assert "is_settings_home" in script
+    assert "settingshomepage" in script
 
 
 def test_catalog_covers_every_screen_key_with_do_and_dont():
@@ -167,6 +169,9 @@ def test_screen_guidance_cache_avoids_repeat_adb():
     assert first["screen_key"] == SCREEN_KEY_DIALER
     assert second["screen_key"] == SCREEN_KEY_DIALER
     assert cats_after == cats
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "dumpsys" not in joined
+    assert "getprop" not in joined
 
 
 def test_rental_and_farm_screen_guidance_routes():

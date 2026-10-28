@@ -21,7 +21,6 @@ from application.session_restriction_policy import (
     HIDDEN_USER_PACKAGES,
     NEVER_FORCE_STOP_PACKAGES,
     PICKER_ONLY_PACKAGES,
-    PICKER_OR_ESIM_MARKERS,
     RENTER_ALLOWED_PACKAGES,
     RENTER_SETTINGS_PACKAGE,
     SENSITIVE_SETTINGS_DUMP_MARKERS,
@@ -44,27 +43,22 @@ SCREEN_STATE_REMOTE = "/data/local/tmp/mobirent_screen_state"
 SCREEN_STATE_KICK_SECONDS = 6
 DEVICE_ACCESS_MODE_TASK = "device_access_mode"
 
-ABOUT_PHONE_DUMP_MARKERS = (
-    "mydeviceinfo",
-    "deviceinfosettings",
-    "aboutphone",
-    "mydeviceinfoactivity",
-)
-NETWORK_SETTINGS_DUMP_MARKERS = (
+ALLOWED_SETTINGS_ACTIVITY_MARKERS = (
+    "connectionssettings",
     "networkdashboard",
     "mobilenetwork",
     "simsettings",
-    "connectionssettings",
-    "simcardmanager",
-    "simcardmgr",
     "wirelesssettings",
-    "networkandinternet",
-)
-ESIM_QR_FLOW_DUMP_MARKERS = (
+    "wifisettings",
+    "tethersettings",
+    "airplane",
     "euicc",
-    "addesim",
-    "qrcodescanner",
-    "photopicker",
+    "mydeviceinfo",
+    "deviceinfosettings",
+    "aboutdevice",
+    "aboutphone",
+    "statusactivity",
+    "settingshomepage",
 )
 
 
@@ -86,25 +80,24 @@ def build_lockdown_guard_script() -> str:
             "com.android.permissioncontroller",
         }
     )
+    # Gallery / Photos / My Files are always allowed for the eSIM QR picker so
+    # the hot path never needs `dumpsys activity top` to confirm picker context.
     allowed = _shell_or_pattern(
-        RENTER_ALLOWED_PACKAGES
+        (RENTER_ALLOWED_PACKAGES | PICKER_ONLY_PACKAGES)
         - {RENTER_SETTINGS_PACKAGE}
-        - PICKER_ONLY_PACKAGES
         - {
             "com.google.android.permissioncontroller",
             "com.android.permissioncontroller",
         }
     )
     never = _shell_or_pattern(NEVER_FORCE_STOP_PACKAGES - {""})
-    picker = _shell_or_pattern(PICKER_ONLY_PACKAGES)
-    picker_blob = _shell_case_globs(PICKER_OR_ESIM_MARKERS)
     sensitive = _shell_case_globs(SENSITIVE_SETTINGS_DUMP_MARKERS)
-    about_blob = _shell_case_globs(ABOUT_PHONE_DUMP_MARKERS)
-    network_blob = _shell_case_globs(NETWORK_SETTINGS_DUMP_MARKERS)
-    esim_flow_blob = _shell_case_globs(ESIM_QR_FLOW_DUMP_MARKERS)
+    allowed_settings = _shell_case_globs(ALLOWED_SETTINGS_ACTIVITY_MARKERS)
     settings_pkg = RENTER_SETTINGS_PACKAGE
     template = r"""#!/system/bin/sh
 # On-device Phone/SMS/eSIM allowlist + mute. Independent of GADS/HTTP.
+# Hot path per 1s tick: two `settings get` reads + one `dumpsys window displays`
+# focus grep. `dumpsys activity top` only runs for com.android.settings/.SubSettings.
 PIDFILE=/data/local/tmp/mobirent_lockdown_guard.pid
 if [ -f "$PIDFILE" ]; then
   old=$(cat "$PIDFILE" 2>/dev/null)
@@ -117,22 +110,28 @@ if [ -f "$PIDFILE" ]; then
 fi
 echo $$ > "$PIDFILE"
 
-enforce_audio() {
-  ringer=$(settings get global mode_ringer 2>/dev/null)
-  if [ "$ringer" != "0" ]; then
-    cmd audio set-ringer-mode SILENT >/dev/null 2>&1
-    settings put global mode_ringer 0 >/dev/null 2>&1
-  fi
-  vibrate=$(settings get system vibrate_on 2>/dev/null)
-  if [ "$vibrate" != "0" ]; then
-    settings put system vibrate_on 0 >/dev/null 2>&1
-    settings put system vibrate_when_ringing 0 >/dev/null 2>&1
-  fi
+mute_streams() {
   cmd media_session volume --stream 1 --set 0 >/dev/null 2>&1
   cmd media_session volume --stream 2 --set 0 >/dev/null 2>&1
   cmd media_session volume --stream 3 --set 0 >/dev/null 2>&1
   cmd media_session volume --stream 4 --set 0 >/dev/null 2>&1
   cmd media_session volume --stream 5 --set 0 >/dev/null 2>&1
+}
+
+apply_mute() {
+  cmd audio set-ringer-mode SILENT >/dev/null 2>&1
+  settings put global mode_ringer 0 >/dev/null 2>&1
+  settings put system vibrate_on 0 >/dev/null 2>&1
+  settings put system vibrate_when_ringing 0 >/dev/null 2>&1
+  mute_streams
+}
+
+enforce_audio() {
+  ringer=$(settings get global mode_ringer 2>/dev/null)
+  vibrate=$(settings get system vibrate_on 2>/dev/null)
+  if [ "$ringer" != "0" ] || [ "$vibrate" != "0" ]; then
+    apply_mute
+  fi
 }
 
 extract_pkg() {
@@ -151,163 +150,181 @@ extract_pkg() {
   esac
 }
 
+extract_act() {
+  line=$(echo "$1" | tr 'A-Z' 'a-z' | tr '$' '.')
+  rest="$line"
+  case "$line" in
+    *' u0 '*) rest=${line#*' u0 '} ;;
+    *' u10 '*) rest=${line#*' u10 '} ;;
+  esac
+  comp=${rest%% *}
+  comp=${comp%%\}*}
+  act=${comp#*/}
+  echo "$act"
+}
+
 kick_pkg() {
   pkg=$1
   case "$pkg" in
     ""|__NEVER__) return 0 ;;
+    *.*) ;;
+    *) return 0 ;;
   esac
   am force-stop "$pkg" >/dev/null 2>&1
   input keyevent 3 >/dev/null 2>&1
 }
 
-sensitive_settings() {
-  blob=$1
-  case "$blob" in
-    __SENSITIVE__) return 0 ;;
+is_settings_home() {
+  act=$1
+  case "$act" in
+    .settings|settings|com.android.settings.settings|*settingshomepage*)
+      return 0 ;;
   esac
   return 1
 }
 
-picker_context() {
-  blob=$1
-  case "$blob" in
-    __PICKER_BLOB__) return 0 ;;
+allowed_settings_act() {
+  act=$1
+  case "$act" in
+    __ALLOWED_SETTINGS__) return 0 ;;
   esac
   return 1
 }
 
-about_phone_screen() {
+forbidden_reason() {
   blob=$1
   case "$blob" in
-    __ABOUT_BLOB__) return 0 ;;
+    *secsound*|*soundsettings*|*soundsandvibration*|*volumesettings*|*secvolume*|*zenmode*|*soundmode*|*vibrationintensity*)
+      echo blocked_sound; return 0 ;;
+    *securitysettings*|*securityadvanced*|*securitydashboard*|*biometric*|*chooselock*|*safetycenter*|*fingerprint*|*facesettings*|*privacysettings*|*privacydashboard*|*lockscreenmenu*|*screenlock*)
+      echo blocked_security; return 0 ;;
+    *resetdashboard*|*resetsettings*|*secreset*|*generalmanagement*|*masterclear*|*factoryreset*|*eraseesim*)
+      echo blocked_reset; return 0 ;;
+    *notificationsettings*|*configurenotification*|*appnotificationsettings*|*accountdashboard*|*accountssettings*|*addaccount*|*backupsettings*|*backupandrestore*)
+      echo blocked_app; return 0 ;;
+    __SENSITIVE__)
+      echo blocked_app; return 0 ;;
   esac
+  echo ""
   return 1
 }
 
-network_screen() {
-  blob=$1
-  case "$blob" in
-    __NETWORK_BLOB__) return 0 ;;
-  esac
-  return 1
-}
-
-esim_flow_screen() {
-  blob=$1
-  case "$blob" in
-    __ESIM_FLOW_BLOB__) return 0 ;;
-  esac
-  return 1
-}
-
-blocked_reason() {
-  blob=$1
-  case "$blob" in
-    *sound*|*vibrate*|*volume*|*zenmode*|*secsound*) echo blocked_sound; return ;;
-    *security*|*biometrics*|*chooselock*|*safetycenter*|*lockscreen*) echo blocked_security; return ;;
-    *reset*|*masterclear*|*factoryreset*|*eraseesim*|*generalmanagement*) echo blocked_reset; return ;;
-  esac
-  echo blocked_app
-}
-
-classify_allowed() {
-  p=$1
-  focus=$2
-  blob=$(echo "$focus" | tr 'A-Z' 'a-z' | tr -d '[:space:]')
-  case "$blob" in
-    *simcardmgr*|*simcardmanager*|*networkdashboard*|*connectionssettings*|*mobilenetwork*|*wirelesssettings*)
-      echo settings_network; return ;;
-    *mydeviceinfo*|*deviceinfosettings*|*aboutphone*)
-      echo about_phone; return ;;
-    *euicc*|*addesim*|*qrcodescanner*|*photopicker*)
-      echo esim_qr_flow; return ;;
-  esac
-  case "$p" in
-    *euicc*|*documentsui*|*photospicker*|*gallery*|*photos*|*myfiles*|*providers.media*)
-      echo esim_qr_flow ;;
-    *telephonyui*)
-      echo settings_network ;;
+classify_focus() {
+  pkg=$1
+  act=$2
+  case "$pkg" in
     *nexuslauncher*|*sec.android.app.launcher*|*launcher3*|*samsung.android.launcher*)
-      echo home ;;
+      echo home; return ;;
     *dialer*|*incallui*|*com.android.phone*|*com.android.server.telecom*)
-      echo dialer ;;
+      echo dialer; return ;;
     *messaging*|*mms*)
-      echo messages ;;
-    *)
-      echo home ;;
+      echo messages; return ;;
+    *euicc*|*documentsui*|*photospicker*|*gallery*|*photos*|*myfiles*|*providers.media*)
+      echo esim_qr_flow; return ;;
+    *telephonyui*)
+      echo settings_network; return ;;
+    *settings*)
+      case "$act" in
+        *mydeviceinfo*|*deviceinfosettings*|*aboutdevice*|*aboutphone*|*statusactivity*)
+          echo about_phone; return ;;
+        *connectionssettings*|*networkdashboard*|*mobilenetwork*|*simsettings*|*wirelesssettings*|*wifisettings*|*tethersettings*|*euicc*|*airplane*)
+          echo settings_network; return ;;
+        *)
+          echo settings_main; return ;;
+      esac
+      ;;
   esac
+  echo home
 }
 
 STATE=/data/local/tmp/mobirent_screen_state
+cur_line=""
+kick_until=0
 
 write_state() {
   printf '%s\n' "$1" > "$STATE"
+  cur_line=$1
 }
 
 kick_and_record() {
   reason=$1
   pkg=$2
   now=$(date +%s)
-  write_state "blocked_kick|${reason}|$((now + 6))"
+  kick_until=$((now + 6))
+  write_state "blocked_kick|${reason}|${kick_until}"
   kick_pkg "$pkg"
 }
 
 maybe_record() {
   key=$1
-  now=$(date +%s)
-  prev=$(cat "$STATE" 2>/dev/null | tr -d '\r')
-  old_key=${prev%%|*}
-  rest=${prev#*|}
-  old_until=${rest##*|}
-  if [ "$old_key" = "blocked_kick" ] && [ "$old_until" -gt "$now" ] 2>/dev/null; then
-    return 0
-  fi
   line="${key}||0"
-  [ "$prev" = "$line" ] && return 0
+  [ "$line" = "$cur_line" ] && return 0
+  if [ "$kick_until" != "0" ]; then
+    now=$(date +%s)
+    [ "$now" -lt "$kick_until" ] && return 0
+    kick_until=0
+  fi
   write_state "$line"
 }
+
+subsettings_reason() {
+  # Only the fragment / back-stack entries of the SubSettings task. Never the
+  # view hierarchy text (menu titles like "Sounds and vibration" live there).
+  frag=$(dumpsys activity top 2>/dev/null | sed -n '/ACTIVITY com.android.settings\/.SubSettings/,/ACTIVITY [a-z]/p' | grep -E '#[0-9]+: [A-Za-z0-9_.$]+\{' | head -n 12 | tr 'A-Z' 'a-z' | tr -d '[:space:]')
+  forbidden_reason "$frag"
+}
+
+apply_mute
+write_state "home||0"
 
 while true; do
   if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi
   enforce_audio
-  focus=$(dumpsys window 2>/dev/null | grep -i mCurrentFocus | grep -v '=null' | tail -n 1)
+  focus=$(dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -v '=null' | tail -n 1)
   pkg=$(extract_pkg "$focus")
+  act=$(extract_act "$focus")
   case "$pkg" in
     "")
       ;;
     __NEVER__)
       ;;
     __ALLOWED__)
-      maybe_record "$(classify_allowed "$pkg" "$focus")"
-      ;;
-    __SETTINGS__)
-      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
-      if sensitive_settings "$top"; then
-        kick_and_record "$(blocked_reason "$top")" __SETTINGS__
-      elif esim_flow_screen "$top"; then
-        maybe_record esim_qr_flow
-      elif about_phone_screen "$top"; then
-        maybe_record about_phone
-      elif network_screen "$top"; then
-        maybe_record settings_network
-      else
-        maybe_record settings_main
-      fi
+      maybe_record "$(classify_focus "$pkg" "$act")"
       ;;
     __PERMISSION__)
-      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
-      if sensitive_settings "$top"; then
-        kick_and_record "$(blocked_reason "$top")" "$pkg"
-      else
-        maybe_record "$(classify_allowed "$pkg" "$focus")"
-      fi
+      case "$act" in
+        *safetycenter*)
+          kick_and_record blocked_security "$pkg"
+          ;;
+        *)
+          maybe_record "$(classify_focus "$pkg" "$act")"
+          ;;
+      esac
       ;;
-    __PICKER__)
-      top=$(dumpsys activity top 2>/dev/null | tr 'A-Z' 'a-z' | tr -d '[:space:]')
-      if picker_context "$top"; then
-        maybe_record esim_qr_flow
+    __SETTINGS__)
+      if is_settings_home "$act"; then
+        maybe_record settings_main
+      elif allowed_settings_act "$act"; then
+        maybe_record "$(classify_focus "$pkg" "$act")"
       else
-        kick_and_record blocked_app "$pkg"
+        reason=$(forbidden_reason "$act")
+        if [ -n "$reason" ]; then
+          kick_and_record "$reason" __SETTINGS__
+        else
+          case "$act" in
+            *subsettings*)
+              reason=$(subsettings_reason)
+              if [ -n "$reason" ]; then
+                kick_and_record "$reason" __SETTINGS__
+              else
+                maybe_record settings_network
+              fi
+              ;;
+            *)
+              kick_and_record blocked_app __SETTINGS__
+              ;;
+          esac
+        fi
       fi
       ;;
     *)
@@ -319,13 +336,9 @@ done
 """
     return (
         template.replace("__NEVER__", never)
+        .replace("__ALLOWED_SETTINGS__", allowed_settings)
         .replace("__ALLOWED__", allowed)
         .replace("__SENSITIVE__", sensitive)
-        .replace("__ABOUT_BLOB__", about_blob)
-        .replace("__NETWORK_BLOB__", network_blob)
-        .replace("__ESIM_FLOW_BLOB__", esim_flow_blob)
-        .replace("__PICKER_BLOB__", picker_blob)
-        .replace("__PICKER__", picker)
         .replace("__SETTINGS__", settings_pkg)
         .replace("__PERMISSION__", permission)
     )

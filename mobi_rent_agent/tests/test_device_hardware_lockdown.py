@@ -15,6 +15,7 @@ from application.device_hardware_lockdown import (
     ADMIN_MODE_FLAG,
     LOCKDOWN_GUARD_REMOTE,
     LOCKDOWN_GUARD_SCRIPT,
+    SCREEN_STATE_REMOTE,
     AudioLockdownEnforcer,
     audio_lockdown_reassert_commands,
     ensure_on_device_lockdown_guard,
@@ -138,7 +139,12 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "settings get system vibrate_on" in script
     assert "settings put system vibrate_on 0" in script
     assert "cmd media_session volume --stream 3 --set 0" in script
-    assert "dumpsys window" in script
+    assert "apply_mute" in script
+    assert "dumpsys window displays" in script
+    assert "mFocusedApp" in script
+    assert "settingshomepage" in script
+    assert "connectionssettings" in script
+    assert "subsettings" in script
     assert "dumpsys activity top" in script
     assert "secsoundsettings" in script
     assert "soundsandvibration" in script
@@ -152,12 +158,6 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "am force-stop" in script
     assert "sleep 1" in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
-    assert "/data/local/tmp/mobirent_screen_state" in script
-    assert "blocked_kick" in script
-    assert "settings_network" in script
-    assert "esim_qr_flow" in script
-    assert "about_phone" in script
-    assert "blocked_sound" in script
     assert "euiccmanager" not in script.lower()
     assert "wipe_esims" not in script.lower()
 
@@ -334,6 +334,23 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
         S20_SERIAL,
         ["shell", "am", "start", "-a", "android.settings.SOUND_SETTINGS"],
     )
+    time.sleep(1.5)
+    focus = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
+    assert "secsoundsettings" not in focus, focus
+    assert "soundsettings" not in focus, focus
+    assert "launcher" in focus, focus
+    state = runner.run(S20_SERIAL, ["shell", "cat", SCREEN_STATE_REMOTE]).stdout.strip()
+    assert state.startswith("blocked_kick|blocked_sound|"), state
+    top = runner.run(S20_SERIAL, ["shell", "dumpsys", "activity", "top"]).stdout.lower()
+    top_head = "\n".join(top.splitlines()[:40])
+    assert "secsoundsettings" not in top_head, top_head
+
+    # On some One UI builds Settings$SecSoundSettingsActivity resolves to the
+    # Settings root (homepage) instead of the sound screen. The homepage is an
+    # allowed screen in customer mode, so only assert that no sound screen
+    # survives -- the guard must not kick the homepage itself.
     try:
         runner.run(S20_SERIAL, ["shell", "am", "start", "-n", _SEC_SOUND])
     except AdbCommandError:
@@ -344,10 +361,7 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
     )
     assert "secsoundsettings" not in focus, focus
     assert "soundsettings" not in focus, focus
-    assert "launcher" in focus, focus
-    top = runner.run(S20_SERIAL, ["shell", "dumpsys", "activity", "top"]).stdout.lower()
-    top_head = "\n".join(top.splitlines()[:40])
-    assert "secsoundsettings" not in top_head, top_head
+    assert "launcher" in focus or "com.android.settings/.settings}" in focus, focus
 
     runner.run(S20_SERIAL, ["shell", "settings", "put", "global", "mode_ringer", "1"])
     runner.run(S20_SERIAL, ["shell", "settings", "put", "system", "vibrate_on", "1"])
@@ -362,10 +376,12 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
     assert vibrate == "0", vibrate
 
     runner.run(S20_SERIAL, ["shell", "am", "start", "-n", "com.android.settings/.Settings"])
-    time.sleep(1.5)
+    time.sleep(1.8)
     settings_focus = _focus_lines(
         runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
     )
+    assert "com.android.settings" in settings_focus, settings_focus
+    assert "launcher" not in settings_focus, settings_focus
     assert "secsoundsettings" not in settings_focus, settings_focus
     assert "sounds and vibration" not in settings_focus, settings_focus
 
