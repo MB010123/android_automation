@@ -16,6 +16,8 @@ from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWA
 from application.device_hardware_lockdown import (
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
+    parse_admin_flag,
+    set_device_admin_mode,
 )
 from application.remote_access_farm_task import (
     detect_device_oem,
@@ -238,6 +240,13 @@ def run_device_screen_prepare(
             warnings.append("lockdown_guard: start_failed")
     except (AdbCommandError, OSError, TypeError) as exc:
         warnings.append(f"lockdown_guard: {exc.__class__.__name__}")
+    admin = parse_admin_flag(request.payload.get("admin"))
+    if admin is None:
+        admin = False
+    try:
+        set_device_admin_mode(runner, serial, admin, ensure_guard=False)
+    except (AdbCommandError, OSError, TypeError) as exc:
+        warnings.append(f"access_mode: {exc.__class__.__name__}")
     esim_setup_launched = ""
     if open_esim:
         esim_setup_launched = ensure_esim_setup_screen_open(runner, serial, oem)
@@ -264,6 +273,7 @@ def run_device_screen_prepare(
             "status": "screen_prepared",
             "wait_boot": wait_boot,
             "skip_home": skip_home,
+            "admin": admin,
             "esim_setup_launched": esim_setup_launched,
             "setup_ui_state": SETUP_UI_AWAITING if open_esim else None,
             "warnings": warnings,
@@ -279,11 +289,12 @@ def request_device_screen_prepare(
     voidfix_package: str | None = None,
     skip_home: bool = False,
     open_esim_settings: bool = False,
+    admin: bool = False,
 ) -> None:
     """Best-effort VPS → Farm unlock. Never raises; never fails the caller."""
     if farm_client is None:
         return
-    payload: dict[str, Any] = {"wait_boot": bool(wait_boot)}
+    payload: dict[str, Any] = {"wait_boot": bool(wait_boot), "admin": bool(admin)}
     if skip_home:
         payload["skip_home"] = True
     if open_esim_settings or skip_home:

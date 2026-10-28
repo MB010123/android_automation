@@ -981,6 +981,18 @@ def _paths(webhook_path: str) -> dict[str, Any]:
     bearer: list[dict[str, list[str]]] = [{"FarmServiceBearer": []}]
     user_bearer: list[dict[str, list[str]]] = [{"UserAccessBearer": []}]
     user_or_farm: list[dict[str, list[str]]] = [{"UserAccessBearer": []}, {"FarmServiceBearer": []}]
+    admin_query_param = {
+        "name": "admin",
+        "in": "query",
+        "required": False,
+        "schema": {"type": "boolean"},
+        "description": (
+            "`true` sets `/data/local/tmp/mobirent_admin_mode` so the 1s guard stays "
+            "alive but skips kicks. `false` deletes the flag and enforces client lockdown. "
+            "JSON body `{\"admin\": true}` is also accepted. Admin live-access defaults true; "
+            "customer remote-access is always false."
+        ),
+    }
     auth_example = {
         "email": "user@example.com",
         "password": "strong-password-12",
@@ -1894,6 +1906,84 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             }
         },
+        "/farm/access-mode": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "Flip a slot between admin and client lockdown",
+                "description": (
+                    "Query `slot` (farm bay) and `admin=true|false`. Touches or removes "
+                    "`/data/local/tmp/mobirent_admin_mode` on that phone. The 1-second "
+                    "guard daemon stays running. Farm-service token or admin JWT."
+                ),
+                "security": user_or_farm,
+                "parameters": [
+                    {
+                        "name": "slot",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 32},
+                    },
+                    admin_query_param,
+                ],
+                "responses": {
+                    "200": {"description": "{ok:true, admin:bool, slot_id, serial}"},
+                    "400": {"description": "invalid_slot or invalid_admin"},
+                },
+            },
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Flip a slot between admin and client lockdown",
+                "description": (
+                    "Same as GET. Accepts `slot`/`admin` as query parameters or JSON "
+                    "`{\"slot\": 21, \"admin\": true}`."
+                ),
+                "security": user_or_farm,
+                "parameters": [
+                    {
+                        "name": "slot",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "integer", "minimum": 1, "maximum": 32},
+                    },
+                    admin_query_param,
+                ],
+                "responses": {
+                    "200": {"description": "{ok:true, admin:bool, slot_id, serial}"},
+                },
+            },
+        },
+        "/farm/slots/{bay}/access-mode": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "Flip this bay between admin and client lockdown",
+                "security": user_or_farm,
+                "parameters": [bay_param, admin_query_param],
+                "responses": {"200": {"description": "{ok:true, admin:bool}"}},
+            },
+            "post": {
+                "tags": ["Farm management"],
+                "summary": "Flip this bay between admin and client lockdown",
+                "security": user_or_farm,
+                "parameters": [bay_param, admin_query_param],
+                "responses": {"200": {"description": "{ok:true, admin:bool}"}},
+            },
+        },
+        "/admin/devices/{bay}/access-mode": {
+            "get": {
+                "tags": ["Admin"],
+                "summary": "Flip this device between admin and client lockdown",
+                "security": user_or_farm,
+                "parameters": [bay_param, admin_query_param],
+                "responses": {"200": {"description": "{ok:true, admin:bool}"}},
+            },
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Flip this device between admin and client lockdown",
+                "security": user_or_farm,
+                "parameters": [bay_param, admin_query_param],
+                "responses": {"200": {"description": "{ok:true, admin:bool}"}},
+            },
+        },
         "/farm/slots/{bay}/reboot": {
             "post": {
                 "tags": ["Farm management"],
@@ -2152,7 +2242,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                     "change availability, mark cleanup complete, or reboot the phone. "
                     "Request body is ignored: role/slot claims in JSON are never authorization. "
                     "GADS hub credentials stay on the VPS; the browser receives only `session_id` "
-                    "and a VPS-proxied `stream_path`."
+                    "and a VPS-proxied `stream_path`. "
+                    "`admin=true` (default) unlocks the phone; `admin=false` applies client lockdown."
                 ),
                 "security": user_bearer,
                 "parameters": [
@@ -2165,7 +2256,8 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                             "Device reference: farm bay number (1–32), slot public UUID, "
                             "or ADB serial."
                         ),
-                    }
+                    },
+                    admin_query_param,
                 ],
                 "responses": {
                     "200": {

@@ -339,6 +339,36 @@ def run_esim_auto_activation(
         if marker and (not qr_sha256 or qr_sha256 in marker.lower()):
             walk_already_done = True
     disable_native_cameras(runner, serial, oem)
+    from application.device_hardware_lockdown import pause_renter_lockdown
+
+    with pause_renter_lockdown(runner, serial):
+        return _run_esim_auto_activation_body(
+            runner=runner,
+            serial=serial,
+            slot_id=slot_id,
+            request=request,
+            oem=oem,
+            method=method,
+            qr_sha256=qr_sha256,
+            transitions=transitions,
+            taps=taps,
+            steps_done=steps_done,
+        )
+
+
+def _run_esim_auto_activation_body(
+    *,
+    runner: AdbCommandRunner,
+    serial: str,
+    slot_id: int,
+    request: FarmTaskRequest,
+    oem: str,
+    method: str,
+    qr_sha256: str,
+    transitions: list[str],
+    taps: list[str],
+    steps_done: list[str],
+) -> FarmTaskResult:
     try:
         wake_and_unlock_device(runner, serial)
         launched = launch_esim_setup_screen(runner, serial, oem)

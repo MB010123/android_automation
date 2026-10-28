@@ -24,6 +24,7 @@ from typing import Any, Callable
 from application.device_hardware_lockdown import (
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
+    pause_renter_lockdown,
 )
 from application.device_screen_prepare import (
     BOOT_WAIT_TIMEOUT_SECONDS,
@@ -274,6 +275,30 @@ def run_device_data_cleanup(
         )
 
     warnings: list[str] = []
+    with pause_renter_lockdown(runner, mapped):
+        return _run_device_data_cleanup_body(
+            runner=runner,
+            mapped=mapped,
+            slot_id=slot_id,
+            request=request,
+            lockdown=lockdown,
+            preserve_esim=preserve_esim,
+            sleeper=sleeper,
+            warnings=warnings,
+        )
+
+
+def _run_device_data_cleanup_body(
+    *,
+    runner: AdbCommandRunner,
+    mapped: str,
+    slot_id: int,
+    request: FarmTaskRequest,
+    lockdown: bool,
+    preserve_esim: bool,
+    sleeper: Callable[[float], None],
+    warnings: list[str],
+) -> FarmTaskResult:
     rebooted = False
     if not preserve_esim:
         run_best_effort_shell(

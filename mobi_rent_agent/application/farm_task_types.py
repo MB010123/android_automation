@@ -21,6 +21,7 @@ SUPPORTED_TASK_TYPES = {
     "device_display_size",
     "device_screen_prepare",
     "device_about_phone_screenshot",
+    "device_access_mode",
 }
 
 

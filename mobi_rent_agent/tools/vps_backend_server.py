@@ -577,6 +577,62 @@ class Handler(BaseHTTPRequestHandler):
             from_body = str(payload.get("session_id") or "").strip()
         return from_body or from_query or header or None
 
+    def _admin_flag(
+        self,
+        payload: dict[str, Any] | None,
+        *,
+        default: bool | None,
+        allow_true: bool,
+    ) -> bool | None:
+        from application.device_hardware_lockdown import resolve_admin_mode
+
+        query = parse_qs(urlparse(self.path).query)
+        admin = resolve_admin_mode(query=query, body=payload, default=default)
+        if admin is None:
+            return None
+        if not allow_true:
+            return False
+        return bool(admin)
+
+    def _slot_from_query_or_body(self, payload: dict[str, Any] | None) -> int | None:
+        query = parse_qs(urlparse(self.path).query)
+        raw: Any = None
+        for key in ("slot", "farm_slot_id", "slot_id"):
+            listed = query.get(key)
+            if listed:
+                raw = listed[0]
+                break
+        if raw is None and isinstance(payload, dict):
+            for key in ("slot", "farm_slot_id", "slot_id"):
+                if payload.get(key) is not None:
+                    raw = payload.get(key)
+                    break
+        try:
+            bay = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= bay <= MAX_FARM_SLOT_ID:
+            return None
+        return bay
+
+    def _handle_farm_access_mode(self, route, payload: dict[str, Any] | None) -> bool:
+        farm = self.farm_management_service
+        if farm is None:
+            return False
+        bay = route.farm_bay if route.farm_bay is not None else self._slot_from_query_or_body(payload)
+        if bay is None and getattr(route, "device_ref", None):
+            bay = self._resolve_admin_bay(route)
+        if bay is None:
+            self._send_json(400, error_body("invalid_slot"))
+            return True
+        admin = self._admin_flag(payload, default=None, allow_true=True)
+        if admin is None:
+            self._send_json(400, error_body("invalid_admin"))
+            return True
+        result = farm.set_access_mode(bay, admin)
+        self._send_json(result.http_status, result.body)
+        return True
+
     def _rate_limit_admin_live_access(self, slot_id: int) -> bool:
         limiter = self.admin_live_access_rate_limiter
         if limiter is None:
@@ -614,11 +670,14 @@ class Handler(BaseHTTPRequestHandler):
         if not self._rate_limit_admin_live_access(slot_id):
             return True
         method = self.command
+        admin_mode = self._admin_flag(payload, default=True, allow_true=True)
+        if admin_mode is None:
+            admin_mode = True
         if route.kind == "admin_live_access":
             if method != "POST":
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return True
-            result = service.create_session(ctx.user, slot_id)
+            result = service.create_session(ctx.user, slot_id, admin_mode=bool(admin_mode))
             self._send_json(result.http_status, result.body)
             return True
         action = route.action
@@ -626,7 +685,12 @@ class Handler(BaseHTTPRequestHandler):
             if method != "GET":
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
                 return True
-            opened = service.open_stream(ctx.user, slot_id, self._admin_session_id(payload))
+            opened = service.open_stream(
+                ctx.user,
+                slot_id,
+                self._admin_session_id(payload),
+                admin_mode=bool(admin_mode),
+            )
             if hasattr(opened, "http_status") and hasattr(opened, "body"):
                 self._send_json(int(opened.http_status), dict(opened.body))
                 return True
@@ -760,6 +824,8 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         if route.kind == "farm_about_phone" or route.kind == "admin_device_about_phone":
             return self._handle_farm_admin_device_op(route, {})
+        if route.kind in {"farm_access_mode", "farm_access_mode_slot", "admin_device_access_mode"}:
+            return self._handle_farm_access_mode(route, None)
         if route.kind == "farm_available":
             assert self.farm_management_service is not None
             result = self.farm_management_service.list_available_slots()
@@ -947,6 +1013,12 @@ class Handler(BaseHTTPRequestHandler):
             result = farm.run_airplane_mode(bay, body)
         elif kind in {"farm_about_phone", "admin_device_about_phone"} and bay is not None:
             result = farm.about_phone_screenshot(bay)
+        elif kind in {
+            "farm_access_mode",
+            "farm_access_mode_slot",
+            "admin_device_access_mode",
+        }:
+            return self._handle_farm_access_mode(route, body)
         else:
             return False
         self._send_json(result.http_status, result.body)

@@ -19,6 +19,7 @@ from application.device_airplane_mode import (
     public_airplane_body,
     requested_airplane_state,
 )
+from application.device_hardware_lockdown import request_device_access_mode
 from application.device_screen_prepare import request_device_screen_prepare
 from application.device_display_size import (
     DEVICE_DISPLAY_SIZE_TASK,
@@ -158,7 +159,9 @@ class AdminLiveAccessService:
     def sweep_stale_sessions(self) -> int:
         return self._store.expire_stale(now=self._clock())
 
-    def create_session(self, admin: AuthUser, slot_id: int) -> ApiResult:
+    def create_session(
+        self, admin: AuthUser, slot_id: int, *, admin_mode: bool = True
+    ) -> ApiResult:
         if not is_admin_user(admin):
             logger.info("admin_live_access_auth denied slot=%s", slot_id)
             return ApiResult(403, error_body("admin_forbidden"))
@@ -190,7 +193,7 @@ class AdminLiveAccessService:
                     parsed,
                     admin.user_id[:8],
                 )
-                self._prepare_device_screen(parsed, wait_boot=False)
+                self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
                 return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
@@ -202,11 +205,16 @@ class AdminLiveAccessService:
         self._audit(parsed, "admin_live_access_opened", admin.user_id)
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
         _ = platform
-        self._prepare_device_screen(parsed, wait_boot=False)
+        self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
         return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
-        self, admin: AuthUser, slot_id: int, session_id: str | None
+        self,
+        admin: AuthUser,
+        slot_id: int,
+        session_id: str | None,
+        *,
+        admin_mode: bool = True,
     ) -> ApiResult | Any:
         bound = self._bound_session(admin, slot_id, session_id)
         if isinstance(bound, ApiResult):
@@ -217,7 +225,7 @@ class AdminLiveAccessService:
         device_id, platform = ready
         if device_id != bound.device_id:
             return ApiResult(409, error_body("phone_unavailable"))
-        self._prepare_device_screen(bound.slot_id, wait_boot=False)
+        self._prepare_device_screen(bound.slot_id, wait_boot=False, admin_mode=admin_mode)
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))
@@ -244,7 +252,12 @@ class AdminLiveAccessService:
         payload: dict[str, Any] | None,
     ) -> ApiResult:
         raw = payload if isinstance(payload, dict) else {}
-        control_body = {key: value for key, value in raw.items() if key != "session_id"}
+        from application.device_hardware_lockdown import parse_admin_flag
+
+        admin_flag = parse_admin_flag(raw.get("admin")) if "admin" in raw else None
+        control_body = {
+            key: value for key, value in raw.items() if key not in {"session_id", "admin"}
+        }
         if _is_airplane_request(control_body):
             if not is_admin_user(admin):
                 return ApiResult(403, error_body("admin_forbidden"))
@@ -256,6 +269,18 @@ class AdminLiveAccessService:
         bound = self._bound_session(admin, slot_id, session_id)
         if isinstance(bound, ApiResult):
             return bound
+        if admin_flag is not None:
+            request_device_access_mode(self._farm, bound.slot_id, admin=admin_flag)
+            if not control_body:
+                return ApiResult(
+                    200,
+                    {
+                        "ok": True,
+                        "admin": bool(admin_flag),
+                        "slot_id": bound.slot_id,
+                        "session_id": bound.session_id,
+                    },
+                )
         decision = decide_control(control_body, setup_mode=False)
         if not decision.allowed or decision.command is None:
             code = (
@@ -434,8 +459,13 @@ class AdminLiveAccessService:
         attach_native_resolution(body, native, unavailable)
         return body
 
-    def _prepare_device_screen(self, slot_id: int, *, wait_boot: bool) -> None:
-        request_device_screen_prepare(self._farm, int(slot_id), wait_boot=wait_boot)
+    def _prepare_device_screen(
+        self, slot_id: int, *, wait_boot: bool, admin_mode: bool = True
+    ) -> None:
+        request_device_access_mode(self._farm, int(slot_id), admin=bool(admin_mode))
+        request_device_screen_prepare(
+            self._farm, int(slot_id), wait_boot=wait_boot, admin=bool(admin_mode)
+        )
         self._native_resolution_cache.pop(int(slot_id), None)
 
     def _mapped_touch_command(self, slot_id: int, command: ControlCommand) -> ControlCommand:

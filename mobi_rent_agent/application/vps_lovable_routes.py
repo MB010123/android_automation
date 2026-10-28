@@ -40,9 +40,10 @@ RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
 RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$")
+RE_FARM_ACCESS_MODE = re.compile(r"^/farm/access-mode$")
 RE_FARM_SLOT_OP = re.compile(
     r"^/farm/slots/(\d{1,2})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|clean)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|clean|access-mode)$"
 )
 RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 # Admin live view. The device reference may be a farm bay number (1–32), a
@@ -51,7 +52,7 @@ RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 _DEVICE_REF = r"[0-9a-zA-Z\-]{1,64}"
 RE_ADMIN_DEVICE_OP = re.compile(
     rf"^/admin/devices/({_DEVICE_REF})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|cleanup-verified|clean)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|cleanup-verified|clean|access-mode)$"
 )
 RE_ADMIN_SLOT_CLEAN = re.compile(rf"^/admin/slots/({_DEVICE_REF})/clean$")
 RE_ADMIN_LIVE_ACCESS = re.compile(rf"^/admin/devices/({_DEVICE_REF})/live-access$")
@@ -98,6 +99,7 @@ _FARM_SLOT_KIND = {
     "enable-rental": "farm_enable_rental",
     "force-available": "farm_force_available",
     "clean": "farm_clean",
+    "access-mode": "farm_access_mode_slot",
 }
 _ADMIN_DEVICE_KIND = {
     "reboot": "admin_device_reboot",
@@ -108,6 +110,7 @@ _ADMIN_DEVICE_KIND = {
     "force-available": "admin_device_force_available",
     "cleanup-verified": "admin_device_cleanup_verified",
     "clean": "admin_device_clean",
+    "access-mode": "admin_device_access_mode",
 }
 FARM_OR_ADMIN_KINDS = frozenset(
     {
@@ -130,6 +133,9 @@ FARM_OR_ADMIN_KINDS = frozenset(
         "admin_device_cleanup_verified",
         "admin_live_airplane",
         "devices_airplane_mode",
+        "farm_access_mode",
+        "farm_access_mode_slot",
+        "admin_device_access_mode",
     }
 )
 
@@ -158,6 +164,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="remote_access", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS_ACTION.match(path):
         return ParsedRoute(kind="remote_access_action", rental_id=m.group(1), action=m.group(2))
+    if RE_FARM_ACCESS_MODE.match(path):
+        return ParsedRoute(kind="farm_access_mode")
     if RE_FARM_SLOTS.match(path):
         return ParsedRoute(kind="farm_slots")
     if m := RE_FARM_AVAILABLE.match(path):

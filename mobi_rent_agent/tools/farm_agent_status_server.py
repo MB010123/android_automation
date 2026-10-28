@@ -17,7 +17,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -33,6 +33,7 @@ HEALTH_PATH = "/agent/health"
 STATUS_PATH = "/agent/status"
 SMS_SEND_PATH = "/agent/sms/send"
 TASKS_RUN_PATH = "/agent/tasks/run"
+ACCESS_MODE_PATHS = frozenset({"/access-mode", "/agent/access-mode", "/api/remote-access"})
 JOB_PATH_RE = re.compile(r"^/agent/jobs/([^/]+)$")
 
 logger = logging.getLogger("farm_agent_status")
@@ -118,8 +119,60 @@ class Handler(BaseHTTPRequestHandler):
         token = extract_bearer_token(self.headers.get("Authorization"))
         return authorize_farm_request(token, self.api_token)
 
+    def _handle_access_mode(self, query: dict[str, list[str]], body: dict[str, Any] | None) -> None:
+        from application.device_hardware_lockdown import resolve_admin_mode
+        from application.farm_task_types import FarmTaskRequest
+        from domain.farm import MAX_FARM_SLOT_ID
+
+        raw_slot = None
+        for key in ("slot", "farm_slot_id", "slot_id"):
+            listed = query.get(key) if query else None
+            if listed:
+                raw_slot = listed[0]
+                break
+        if raw_slot is None and isinstance(body, dict):
+            for key in ("slot", "farm_slot_id", "slot_id"):
+                if body.get(key) is not None:
+                    raw_slot = body.get(key)
+                    break
+        try:
+            slot_id = int(raw_slot)
+        except (TypeError, ValueError):
+            self._send_json(400, {"ok": False, "error": "invalid_slot"})
+            return
+        if not 1 <= slot_id <= MAX_FARM_SLOT_ID:
+            self._send_json(400, {"ok": False, "error": "invalid_slot"})
+            return
+        admin = resolve_admin_mode(query=query, body=body, default=None)
+        if admin is None:
+            self._send_json(400, {"ok": False, "error": "invalid_admin"})
+            return
+        import uuid
+
+        result = execute_farm_task(
+            adb_path=self.adb_path,
+            slot_map=self.slot_map,
+            request=FarmTaskRequest(
+                job_id=f"access-mode-{slot_id}-{uuid.uuid4().hex[:8]}",
+                task_type="device_access_mode",
+                farm_slot_id=slot_id,
+                payload={"admin": bool(admin)},
+            ),
+            agent_config=self.agent_config,
+        )
+        payload: dict[str, Any] = {
+            "ok": result.ok,
+            "admin": bool(admin),
+            "error": result.error,
+        }
+        if result.details:
+            payload.update(result.details)
+        payload["admin"] = bool(admin)
+        self._send_json(result.http_status, payload)
+
     def do_GET(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         job_match = JOB_PATH_RE.match(path)
         if job_match:
             if not self._authorized():
@@ -132,6 +185,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send_json(200, cached)
             return
+        if path in ACCESS_MODE_PATHS:
+            if not self._authorized():
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return
+            self._handle_access_mode(parse_qs(parsed.query), None)
+            return
         if path not in (HEALTH_PATH, STATUS_PATH):
             self._send_json(404, {"ok": False, "error": "not found"})
             return
@@ -142,7 +201,24 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(200, body)
 
     def do_POST(self) -> None:
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ACCESS_MODE_PATHS:
+            if not self._authorized():
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                data = json.loads(raw.decode("utf-8") if raw else "{}")
+            except json.JSONDecodeError:
+                self._send_json(400, {"ok": False, "error": "invalid JSON"})
+                return
+            if data and not isinstance(data, dict):
+                self._send_json(400, {"ok": False, "error": "body must be object"})
+                return
+            self._handle_access_mode(parse_qs(parsed.query), data if isinstance(data, dict) else {})
+            return
         if path not in (SMS_SEND_PATH, TASKS_RUN_PATH):
             self._send_json(404, {"ok": False, "error": "not found"})
             return

@@ -748,6 +748,9 @@ def run_remote_access_place_qr(
         )
 
     runner = command_runner or AdbCommandRunner(adb_path, agent_config.provisioning_timeout_seconds)
+    from application.device_hardware_lockdown import apply_payload_admin_mode
+
+    apply_payload_admin_mode(runner, serial, request.payload)
     try:
         state = runner.run(serial, ["get-state"]).stdout
     except AdbCommandError as exc:

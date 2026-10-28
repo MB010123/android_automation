@@ -178,6 +178,16 @@ def _tap(runner: AdbCommandRunner, serial: str, x: int, y: int) -> bool:
         return False
 
 
+def _swipe_pixel_imei2_into_view(runner: AdbCommandRunner, serial: str) -> None:
+    """One short upward swipe so IMEI 2 is on the About phone page."""
+    _run_adb(
+        runner,
+        serial,
+        ["shell", "input", "swipe", "540", "1560", "540", "1080", "220"],
+        PIXEL_COMMAND_TIMEOUT_SECONDS,
+    )
+
+
 def _swipe_settings_list(runner: AdbCommandRunner, serial: str, ui_xml: str) -> None:
     width, height = _visible_size(ui_xml)
     x = max(1, width // 2)
@@ -281,6 +291,9 @@ def open_about_phone_page(
         launched = _start_pixel_device_info(runner, serial, warnings)
         sleep_fn(0.35)
         if launched:
+            logger.info("about_phone_step slot=%s serial=%s step=scroll_imei2", slot_id, serial)
+            _swipe_pixel_imei2_into_view(runner, serial)
+            sleep_fn(0.25)
             logger.info("about_phone_verified slot=%s serial=%s via=pixel_intent", slot_id, serial)
             return True
         warnings.append("about_phone_not_open")
@@ -458,6 +471,24 @@ def run_device_about_phone_screenshot(
         logger.warning("about_phone_offline slot=%s serial=%s", slot_id, serial)
         return FarmTaskResult(ok=False, http_status=409, error="device_offline")
 
+    from application.device_hardware_lockdown import pause_renter_lockdown
+
+    with pause_renter_lockdown(runner, serial):
+        return _run_about_phone_capture(
+            runner=runner,
+            serial=serial,
+            slot_id=slot_id,
+            sleeper=sleeper,
+        )
+
+
+def _run_about_phone_capture(
+    *,
+    runner: AdbCommandRunner,
+    serial: str,
+    slot_id: int,
+    sleeper: Callable[[float], None],
+) -> FarmTaskResult:
     warnings: list[str] = []
     manufacturer = ""
     model = ""

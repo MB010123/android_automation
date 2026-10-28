@@ -1098,6 +1098,20 @@ class VpsFarmManagementService:
             payload["rental_disabled"] = bool(rental_disabled)
         return self.run_airplane_mode(bay, payload)
 
+    def set_access_mode(self, bay: int, admin: bool) -> ApiResult:
+        """Flip on-device admin/client mode. The 1s guard stays running."""
+        result = self._farm_task_result(
+            bay, "device_access_mode", {"admin": bool(admin)}
+        )
+        if result.http_status >= 400:
+            return result
+        body = dict(result.body)
+        body["ok"] = True
+        body["admin"] = bool(admin)
+        body.setdefault("slot_id", int(bay))
+        body.setdefault("serial", self._serial_for(bay))
+        return ApiResult(200, body)
+
     def reboot_slot(self, bay: int) -> ApiResult:
         """Admin/farm reboot without an active customer rental. Then unlock home."""
         rebooted = self._farm_task_result(bay, "reboot", {})

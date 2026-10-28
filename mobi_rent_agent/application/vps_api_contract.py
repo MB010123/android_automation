@@ -70,6 +70,7 @@ ERROR_MESSAGES: dict[str, str] = {
     "rental_disabled": "Rental is disabled for this phone",
     "cleanup_required": "Bay is held for operator cleanup before the next rental",
     "invalid_slot": "slot_id must be a farm bay number from 1 to 20",
+    "invalid_admin": "admin must be true or false",
     "live_access_not_found": "No admin live-access session exists for this slot",
     "live_access_slot_mismatch": "This live-access session belongs to a different slot",
     "admin_live_access_not_configured": (

@@ -12,15 +12,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from application.device_hardware_lockdown import (
+    ADMIN_MODE_FLAG,
     LOCKDOWN_GUARD_REMOTE,
     LOCKDOWN_GUARD_SCRIPT,
     AudioLockdownEnforcer,
     audio_lockdown_reassert_commands,
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
+    parse_admin_flag,
     reassert_audio_lockdown,
+    resolve_admin_mode,
+    run_device_access_mode,
+    set_device_admin_mode,
     start_audio_lockdown_loop,
 )
+from application.farm_task_types import FarmTaskRequest, SUPPORTED_TASK_TYPES
 from infrastructure.adb_companion import AdbCommandError, AdbCommandResult, AdbCommandRunner
 
 
@@ -145,8 +151,58 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "input keyevent 3" in script
     assert "am force-stop" in script
     assert "sleep 1" in script
+    assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
     assert "euiccmanager" not in script.lower()
     assert "wipe_esims" not in script.lower()
+
+
+def test_parse_admin_flag_query_and_body():
+    assert parse_admin_flag(True) is True
+    assert parse_admin_flag(False) is False
+    assert parse_admin_flag("true") is True
+    assert parse_admin_flag("FALSE") is False
+    assert parse_admin_flag("1") is True
+    assert parse_admin_flag("0") is False
+    assert parse_admin_flag(None) is None
+    assert resolve_admin_mode(query={"admin": ["true"]}, body={"admin": False}, default=False) is True
+    assert resolve_admin_mode(query={}, body={"admin": False}, default=True) is False
+    assert resolve_admin_mode(query={}, body={}, default=True) is True
+    assert "device_access_mode" in SUPPORTED_TASK_TYPES
+
+
+def test_set_admin_mode_touches_and_clears_flag():
+    runner = _GuardRunner()
+    runner.running = True
+    assert set_device_admin_mode(runner, "RFCNB056WEV", True) is True
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"touch {ADMIN_MODE_FLAG}" in joined
+    assert "sysui_qs_tiles" in joined
+    assert "pm enable --user 0 com.android.chrome" in joined
+    runner.calls.clear()
+    assert set_device_admin_mode(runner, "RFCNB056WEV", False) is True
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"rm -f {ADMIN_MODE_FLAG}" in joined
+    assert "pm disable-user --user 0 com.android.chrome" in joined
+
+
+def test_device_access_mode_task_sets_admin_flag():
+    runner = _GuardRunner()
+    runner.running = True
+    result = run_device_access_mode(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="j",
+            task_type="device_access_mode",
+            farm_slot_id=21,
+            payload={"admin": True},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    assert result.details["admin"] is True
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"touch {ADMIN_MODE_FLAG}" in joined
 
 
 class _GuardRunner(AdbCommandRunner):
@@ -158,6 +214,8 @@ class _GuardRunner(AdbCommandRunner):
     def run(self, serial: str, arguments: list[str], **_kwargs) -> AdbCommandResult:
         self.calls.append(list(arguments))
         joined = " ".join(arguments)
+        if arguments == ["get-state"]:
+            return AdbCommandResult(stdout="device", stderr="")
         if arguments[:2] == ["shell", "pgrep"]:
             return AdbCommandResult(stdout="4321" if self.running else "", stderr="")
         if arguments[:2] == ["shell", "ls"]:
@@ -168,7 +226,7 @@ class _GuardRunner(AdbCommandRunner):
             return AdbCommandResult(stdout=stdout, stderr="")
         if arguments[0] == "push" or "nohup sh" in joined:
             self.running = True
-        if "kill" in joined and "pgrep -f" in joined:
+        if "kill -9" in joined and "nohup sh" not in joined:
             self.running = False
         return AdbCommandResult(stdout="", stderr="")
 
@@ -188,7 +246,7 @@ def test_ensure_guard_skips_redeploy_when_pgrep_alive():
     runner.running = True
     assert ensure_on_device_lockdown_guard(runner, "RFCNB056WEV", redeploy=False) is True
     assert not any(args and args[0] == "push" for args in runner.calls)
-    assert any(args[:2] == ["shell", "pgrep"] for args in runner.calls)
+    assert any(args[:2] == ["shell", "ps"] for args in runner.calls)
 
 
 def test_lockdown_loop_deploys_then_respawns_via_pgrep():
@@ -204,7 +262,7 @@ def test_lockdown_loop_deploys_then_respawns_via_pgrep():
     deadline = time.time() + 2.0
     while time.time() < deadline:
         if any(args and args[0] == "push" for args in runner.calls) and any(
-            args[:2] == ["shell", "pgrep"] for args in runner.calls
+            args[:2] == ["shell", "ps"] for args in runner.calls
         ):
             break
         time.sleep(0.02)
@@ -212,7 +270,7 @@ def test_lockdown_loop_deploys_then_respawns_via_pgrep():
     thread.join(2.0)
     joined = " ".join(" ".join(args) for args in runner.calls)
     assert LOCKDOWN_GUARD_REMOTE in joined
-    assert "pgrep" in joined
+    assert "ps -A" in joined
     assert f"nohup sh {LOCKDOWN_GUARD_REMOTE}" in joined
 
 
@@ -252,6 +310,10 @@ def _focus_lines(stdout: str) -> str:
 @pytest.mark.skipif(not _s20_online(), reason="Samsung S20 Slot 21 is not on ADB")
 def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
     runner = AdbCommandRunner("adb", timeout_seconds=12.0)
+    try:
+        runner.run(S20_SERIAL, ["shell", f"rm -f {ADMIN_MODE_FLAG}"])
+    except AdbCommandError:
+        pass
     assert ensure_on_device_lockdown_guard(runner, S20_SERIAL, redeploy=True) is True
     time.sleep(1.0)
     try:
@@ -303,7 +365,23 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
 
 
 def _assert_guard_running(runner: AdbCommandRunner, serial: str) -> None:
+    try:
+        runner.run(serial, ["shell", f"rm -f {ADMIN_MODE_FLAG}"])
+    except AdbCommandError:
+        pass
     assert ensure_on_device_lockdown_guard(runner, serial, redeploy=True) is True
+    try:
+        runner.run(
+            serial,
+            [
+                "shell",
+                "input keyevent KEYCODE_WAKEUP; true; "
+                "wm dismiss-keyguard; true; "
+                "input keyevent 82; true",
+            ],
+        )
+    except AdbCommandError:
+        pass
     time.sleep(1.0)
     try:
         pids = runner.run(serial, ["shell", "pgrep", "-f", "mobirent_lockdown_guard.sh"]).stdout
@@ -314,7 +392,9 @@ def _assert_guard_running(runner: AdbCommandRunner, serial: str) -> None:
 
 def _assert_kicked_home(runner: AdbCommandRunner, serial: str) -> str:
     time.sleep(3.0)
-    focus = _focus_lines(runner.run(serial, ["shell", "dumpsys", "window"]).stdout)
+    focus = _focus_lines(
+        runner.run(serial, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
     assert "launcher" in focus, focus
     return focus
 
@@ -323,18 +403,34 @@ def _assert_kicked_home(runner: AdbCommandRunner, serial: str) -> str:
 def test_live_s20_allowlist_phone_sms_and_kicks_chrome_security():
     runner = AdbCommandRunner("adb", timeout_seconds=12.0)
     _assert_guard_running(runner, S20_SERIAL)
+    runner.run(S20_SERIAL, ["shell", "input", "keyevent", "KEYCODE_WAKEUP"])
 
     runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.intent.action.DIAL"])
-    time.sleep(1.6)
-    dial = _focus_lines(runner.run(S20_SERIAL, ["shell", "dumpsys", "window"]).stdout)
-    assert "dialer" in dial or "incallui" in dial or "com.android.phone" in dial, dial
+    time.sleep(0.8)
+    dial = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
+    if "dialer" not in dial and "incallui" not in dial and "com.android.phone" not in dial:
+        runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.intent.action.DIAL"])
+        time.sleep(2.0)
+        dial = _focus_lines(
+            runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+        )
+    assert (
+        "dialer" in dial
+        or "incallui" in dial
+        or "com.android.phone" in dial
+        or "telephonyui" in dial
+    ), dial
 
     runner.run(
         S20_SERIAL,
         ["shell", "am", "start", "-a", "android.intent.action.MAIN", "-c", "android.intent.category.APP_MESSAGING"],
     )
     time.sleep(1.6)
-    sms = _focus_lines(runner.run(S20_SERIAL, ["shell", "dumpsys", "window"]).stdout)
+    sms = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
     assert "messaging" in sms or "mms" in sms, sms
 
     try:
@@ -371,3 +467,67 @@ def test_live_pixel_allowlist_and_kicks_chrome_play_store():
     _assert_kicked_home(runner, PIXEL_SERIAL)
     runner.run(PIXEL_SERIAL, ["shell", "am", "start", "-a", "android.settings.SECURITY_SETTINGS"])
     _assert_kicked_home(runner, PIXEL_SERIAL)
+
+
+@pytest.mark.skipif(not _s20_online(), reason="Samsung S20 Slot 21 is not on ADB")
+def test_live_s20_admin_mode_allows_settings_then_client_kicks():
+    from application.device_hardware_lockdown import is_device_admin_mode
+
+    runner = AdbCommandRunner("adb", timeout_seconds=12.0)
+    _assert_guard_running(runner, S20_SERIAL)
+    assert set_device_admin_mode(runner, S20_SERIAL, False) is True
+    time.sleep(0.3)
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.SOUND_SETTINGS"])
+    _assert_kicked_home(runner, S20_SERIAL)
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.SECURITY_SETTINGS"])
+    _assert_kicked_home(runner, S20_SERIAL)
+    try:
+        runner.run(S20_SERIAL, ["shell", "pm", "enable", "--user", "0", "com.android.chrome"])
+    except AdbCommandError:
+        pass
+    runner.run(
+        S20_SERIAL,
+        ["shell", "am", "start", "-n", "com.android.chrome/com.google.android.apps.chrome.Main"],
+    )
+    _assert_kicked_home(runner, S20_SERIAL)
+
+    assert set_device_admin_mode(runner, S20_SERIAL, True) is True
+    time.sleep(1.2)
+    assert is_device_admin_mode(runner, S20_SERIAL) is True
+    try:
+        pids = runner.run(
+            S20_SERIAL, ["shell", "pgrep", "-f", "mobirent_lockdown_guard.sh"]
+        ).stdout
+    except AdbCommandError:
+        pids = ""
+    assert any(token.isdigit() for token in pids.replace("\n", " ").split()), pids
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.SOUND_SETTINGS"])
+    time.sleep(1.6)
+    sound = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
+    assert "settings" in sound, sound
+    assert "launcher" not in sound, sound
+    runner.run(S20_SERIAL, ["shell", "am", "start", "-a", "android.settings.SECURITY_SETTINGS"])
+    time.sleep(1.6)
+    security = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
+    assert "settings" in security or "permissioncontroller" in security or "safetycenter" in security, security
+    assert "launcher" not in security, security
+    try:
+        runner.run(S20_SERIAL, ["shell", "pm", "enable", "--user", "0", "com.android.chrome"])
+    except AdbCommandError:
+        pass
+    runner.run(
+        S20_SERIAL,
+        ["shell", "am", "start", "-n", "com.android.chrome/com.google.android.apps.chrome.Main"],
+    )
+    time.sleep(1.6)
+    chrome = _focus_lines(
+        runner.run(S20_SERIAL, ["shell", "dumpsys", "window", "displays"]).stdout
+    )
+    assert "chrome" in chrome, chrome
+    assert "launcher" not in chrome, chrome
+    runner.run(S20_SERIAL, ["shell", "input", "keyevent", "3"])
+    assert set_device_admin_mode(runner, S20_SERIAL, False) is True

@@ -661,7 +661,15 @@ class RemoteAccessService:
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
-        decision = decide_control(payload, setup_mode=False)
+        raw = payload if isinstance(payload, dict) else {}
+        control_body = {key: value for key, value in raw.items() if key != "admin"}
+        if "admin" in raw:
+            from application.device_hardware_lockdown import request_device_access_mode
+
+            request_device_access_mode(self._farm, auth.slot_id, admin=False)
+            if not control_body:
+                return ApiResult(200, {"ok": True, "admin": False, "slot_id": auth.slot_id})
+        decision = decide_control(control_body, setup_mode=False)
         if not decision.allowed or decision.command is None:
             code = (
                 decision.reason
@@ -1657,6 +1665,7 @@ class RemoteAccessService:
             voidfix_package=self._voidfix_package,
             skip_home=bool(skip_home),
             open_esim_settings=bool(skip_home),
+            admin=False,
         )
         self._native_resolution_cache.pop(int(slot_id), None)
 

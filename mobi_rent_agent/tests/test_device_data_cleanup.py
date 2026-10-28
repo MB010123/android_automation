@@ -132,8 +132,11 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     ]
     assert details["warnings"] == []
     assert runner.calls[0][1] == ["get-state"]
-    assert runner.calls[1][1][0] == "shell"
-    script = runner.calls[1][1][1]
+    script = next(
+        args[1]
+        for _serial, args in runner.calls
+        if args[:1] == ["shell"] and "rm -rf /sdcard/Pictures; true" in (args[1] if len(args) > 1 else "")
+    )
     assert "rm -rf /sdcard/Pictures; true" in script
     assert "mkdir -p /sdcard/Pictures; true" in script
     assert "rm -f /sdcard/Pictures/esim_qr.png; true" in script
@@ -451,6 +454,15 @@ def test_auto_cleanup_route_parses_slot_21():
     listed = parse_route("/farm/slots")
     assert listed is not None
     assert listed.kind == "farm_slots"
+
+
+def test_access_mode_routes_parse():
+    query = parse_route("/farm/access-mode")
+    assert query is not None and query.kind == "farm_access_mode"
+    farm = parse_route("/farm/slots/21/access-mode")
+    assert farm is not None and farm.kind == "farm_access_mode_slot" and farm.farm_bay == 21
+    admin = parse_route("/admin/devices/21/access-mode")
+    assert admin is not None and admin.kind == "admin_device_access_mode" and admin.farm_bay == 21
 
 
 def test_parse_preserve_esim_defaults_true():

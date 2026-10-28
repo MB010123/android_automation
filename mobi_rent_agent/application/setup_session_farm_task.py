@@ -153,9 +153,13 @@ def run_setup_session_inspect(
         )
     activity = parse_foreground_activity(activities)
     try:
-        from application.device_hardware_lockdown import reassert_audio_lockdown
+        from application.device_hardware_lockdown import (
+            apply_payload_admin_mode,
+            reassert_audio_lockdown,
+        )
 
         lock_runner = runner or AdbCommandRunner(adb_path, timeout_seconds=8.0)
+        apply_payload_admin_mode(lock_runner, serial, payload)
         reassert_audio_lockdown(lock_runner, serial, activity=activity, force=True)
     except Exception:
         logger.info("audio_lockdown_inspect_skipped slot=%s", request.farm_slot_id)
@@ -333,6 +337,16 @@ def run_setup_session_input(
     payload = request.payload if isinstance(request.payload, dict) else {}
     kind = str(payload.get("kind") or "").strip().lower()
     runner = command_runner
+    try:
+        from application.device_hardware_lockdown import apply_payload_admin_mode
+
+        apply_payload_admin_mode(
+            runner or AdbCommandRunner(adb_path, timeout_seconds=8.0),
+            serial,
+            payload,
+        )
+    except Exception:
+        logger.info("setup_session_input_admin_skipped slot=%s", request.farm_slot_id)
     try:
         if kind == "back":
             _shell(runner, adb_path, serial, ["input", "keyevent", "4"])
