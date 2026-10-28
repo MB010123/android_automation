@@ -41,6 +41,31 @@ def _created(tmp_path: Path, *, farm: FakeFarm | None = None, voidfix_package: s
     return tenant, platform, farm, service, store, rental
 
 
+def test_customer_remote_access_always_flips_phone_to_client_mode(tmp_path: Path):
+    """Customer open/stream => Farm `device_access_mode admin=false`; never admin=true."""
+    _tenant, _platform, farm, service, _store, rental = _created(tmp_path)
+    flips = [t for t in farm.tasks if t["type"] == "device_access_mode"]
+    assert flips and flips[-1]["slot"] == 2
+    assert all(t["payload"] == {"admin": False} for t in flips)
+    created_again = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created_again.http_status == 200
+    assert created_again.body["admin"] is False
+    fetched = service.get_remote_access(CUSTOMER_A, None, rental)
+    assert fetched.http_status == 200
+    assert fetched.body["admin"] is False
+    before = len([t for t in farm.tasks if t["type"] == "device_access_mode"])
+    stream = service.open_stream(CUSTOMER_A, rental)
+    assert getattr(stream, "device_id") == SLOT2_SERIAL
+    flips = [t for t in farm.tasks if t["type"] == "device_access_mode"]
+    assert len(flips) == before + 1
+    assert all(t["payload"] == {"admin": False} for t in flips)
+    # Customer `control` with admin=true is clamped to client mode.
+    clamped = service.control_session(CUSTOMER_A, rental, {"admin": True})
+    assert clamped.http_status == 200
+    assert clamped.body["admin"] is False
+    assert not any(t["payload"].get("admin") is True for t in farm.tasks)
+
+
 def test_settings_redirects_to_add_esim_not_homepage(tmp_path: Path):
     farm = FakeFarm()
     farm.inspect_activity = "com.google.android.apps.nexuslauncher/.NexusLauncherActivity"

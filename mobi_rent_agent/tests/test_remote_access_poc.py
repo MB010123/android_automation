@@ -256,6 +256,13 @@ class FakePlatform:
         return FakeMjpeg(device_id)
 
 
+# Side-effect-free Farm tasks customer routes may issue alongside the real action:
+# inspect, screen prepare, and the admin=false access-mode flip (1s guard stays on).
+PASSIVE_FARM_TYPES = frozenset(
+    {"setup_session_inspect", "device_screen_prepare", "device_access_mode"}
+)
+
+
 class FakeFarm:
     def __init__(self) -> None:
         self.tasks: list[dict[str, Any]] = []
@@ -849,7 +856,7 @@ def test_h_reboot_only_slot1_via_existing_farm_task(tmp_path: Path):
     assert accepted.http_status == 202
     assert store.get(rental).prepare_state == PREPARE_READY
     assert all(task["slot"] == 1 for task in farm.tasks)
-    assert [t["type"] for t in farm.tasks if t["type"] not in {"setup_session_inspect", "device_screen_prepare"}] == ["reboot", "reboot"]
+    assert [t["type"] for t in farm.tasks if t["type"] not in PASSIVE_FARM_TYPES] == ["reboot", "reboot"]
 
 
 def test_h_reboot_timeout_is_reported(tmp_path: Path):
@@ -1212,7 +1219,7 @@ def test_prepare_esim_flow_places_qr_then_reboots(tmp_path: Path):
     service.create_remote_access(CUSTOMER_A, None, rental)
     accepted = service.prepare_esim(CUSTOMER_A, rental)
     assert accepted.http_status == 202, accepted.body
-    action_tasks = [t for t in farm.tasks if t["type"] not in {"setup_session_inspect", "device_screen_prepare"}]
+    action_tasks = [t for t in farm.tasks if t["type"] not in PASSIVE_FARM_TYPES]
     assert [t["type"] for t in action_tasks] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
     assert action_tasks[0]["slot"] == 1
     assert action_tasks[0]["payload"]["esim_qr_url"] == "https://example.test/private/qr"
@@ -1228,7 +1235,7 @@ def test_prepare_esim_fails_closed_when_qr_ref_not_allowlisted(tmp_path: Path):
     service.create_remote_access(CUSTOMER_A, None, rental)
     result = service.prepare_esim(CUSTOMER_A, rental)
     assert result.http_status == 400
-    assert all(t["type"] in {"setup_session_inspect", "device_screen_prepare"} for t in farm.tasks)
+    assert all(t["type"] in PASSIVE_FARM_TYPES for t in farm.tasks)
 
 
 def test_prepare_esim_records_failure_when_farm_rejects(tmp_path: Path):
@@ -1241,7 +1248,7 @@ def test_prepare_esim_records_failure_when_farm_rejects(tmp_path: Path):
     assert service.prepare_esim(CUSTOMER_A, rental).http_status == 202
     session = store.get(rental)
     assert session.prepare_state == PREPARE_FAILED and session.prepare_detail.startswith("place_qr:")
-    assert [t["type"] for t in farm.tasks if t["type"] not in {"setup_session_inspect", "device_screen_prepare"}] == [REMOTE_ACCESS_PLACE_QR_TASK]  # no reboot after failure
+    assert [t["type"] for t in farm.tasks if t["type"] not in PASSIVE_FARM_TYPES] == [REMOTE_ACCESS_PLACE_QR_TASK]  # no reboot after failure
 
 
 # ---------------------------------------------------------------------------
@@ -1522,7 +1529,7 @@ def test_prepare_esim_is_idempotent_while_ready(tmp_path: Path):
     second = service.prepare_esim(CUSTOMER_A, rental)
     assert second.http_status == 202
     assert second.body["prepare_state"] == PREPARE_READY
-    assert [t["type"] for t in farm.tasks if t["type"] not in {"setup_session_inspect", "device_screen_prepare"}] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
+    assert [t["type"] for t in farm.tasks if t["type"] not in PASSIVE_FARM_TYPES] == [REMOTE_ACCESS_PLACE_QR_TASK, "reboot"]
 
 
 def test_prepare_esim_storage_key_without_https_url_fails_closed(tmp_path: Path):
@@ -1533,7 +1540,7 @@ def test_prepare_esim_storage_key_without_https_url_fails_closed(tmp_path: Path)
     service.create_remote_access(CUSTOMER_A, None, rental)
     result = service.prepare_esim(CUSTOMER_A, rental)
     assert result.http_status == 503
-    assert all(t["type"] in {"setup_session_inspect", "device_screen_prepare"} for t in farm.tasks)
+    assert all(t["type"] in PASSIVE_FARM_TYPES for t in farm.tasks)
 
 
 def test_expired_rental_revokes_platform_lease(tmp_path: Path):

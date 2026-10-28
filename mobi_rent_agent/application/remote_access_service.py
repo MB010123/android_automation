@@ -560,7 +560,8 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            body = {"ok": True, **self._session_public(existing, now)}
+            self._enforce_client_mode(auth.slot_id)
+            body = {"ok": True, **self._session_public(existing, now), "admin": False}
             return ApiResult(200, body)
 
         self.initialize_new_rental_state(
@@ -623,8 +624,19 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        body = {"ok": True, **self._session_public(session, now)}
+        self._enforce_client_mode(auth.slot_id)
+        body = {"ok": True, **self._session_public(session, now), "admin": False}
         return ApiResult(201, body)
+
+    def _enforce_client_mode(self, slot_id: int) -> None:
+        """Customer routes always run the phone in client lockdown (``admin=false``).
+
+        Best-effort VPS -> Farm flip: removes ``/data/local/tmp/mobirent_admin_mode``
+        and makes sure the 1s guard is running. Never raises, never blocks access.
+        """
+        from application.device_hardware_lockdown import request_device_access_mode
+
+        request_device_access_mode(self._farm, int(slot_id), admin=False)
 
     def screen_guidance_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         """Lightweight polling payload for the dashboard instruction bubble."""
@@ -686,7 +698,7 @@ class RemoteAccessService:
         ):
             evidence = self._observe_activation(auth, force=False)
             session = self._store.get(auth.rental_id) or session
-        body = {"ok": True, **self._session_public(session)}
+        body = {"ok": True, **self._session_public(session), "admin": False}
         if evidence:
             body["activation_evidence"] = evidence
         self._attach_screen_guidance(auth.slot_id, body)
@@ -761,6 +773,7 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
+        self._enforce_client_mode(auth.slot_id)
         try:
             return opener(
                 device_id=session.device_id,

@@ -498,6 +498,10 @@ class Handler(BaseHTTPRequestHandler):
         rental_id = route.rental_id or ""
         method = self.command
         customer_id = ctx.user.user_id if (ctx.kind == "user" and ctx.user is not None) else None
+        # Customer routes accept `?admin=` / `{"admin": ...}` but always clamp to
+        # client lockdown. Only /admin/ live-access routes may request admin=true.
+        if self._raw_admin_requested(payload) is True:
+            logger.info("remote_access_admin_clamped rental=%s", rental_id)
         if route.kind == "rental_screen_guidance":
             if method != "GET":
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
@@ -600,6 +604,13 @@ class Handler(BaseHTTPRequestHandler):
         if not allow_true:
             return False
         return bool(admin)
+
+    def _raw_admin_requested(self, payload: dict[str, Any] | None) -> bool | None:
+        """Unclamped `admin` from query/body (for logging clamps on customer routes)."""
+        from application.device_hardware_lockdown import resolve_admin_mode
+
+        query = parse_qs(urlparse(self.path).query)
+        return resolve_admin_mode(query=query, body=payload, default=None)
 
     def _slot_from_query_or_body(self, payload: dict[str, Any] | None) -> int | None:
         query = parse_qs(urlparse(self.path).query)

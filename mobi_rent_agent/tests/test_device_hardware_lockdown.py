@@ -211,17 +211,49 @@ def test_device_access_mode_task_sets_admin_flag():
     assert f"touch {ADMIN_MODE_FLAG}" in joined
 
 
+def test_pause_renter_lockdown_restores_previous_mode():
+    """Internal farm tasks pause kicks via the flag, then restore the prior state."""
+    from application.device_hardware_lockdown import pause_renter_lockdown
+
+    runner = _GuardRunner()
+    runner.running = True
+    runner.admin_flag = False
+    with pause_renter_lockdown(runner, "RFCNB056WEV"):
+        joined = " ".join(" ".join(args) for args in runner.calls)
+        assert f"touch {ADMIN_MODE_FLAG}" in joined
+        assert "sysui_qs_tiles" not in joined  # no policy churn for bots
+        runner.calls.clear()
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"rm -f {ADMIN_MODE_FLAG}" in joined
+    assert "pm disable-user" not in joined
+
+    runner.calls.clear()
+    runner.admin_flag = True
+    with pause_renter_lockdown(runner, "RFCNB056WEV"):
+        runner.calls.clear()
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"touch {ADMIN_MODE_FLAG}" in joined
+    assert f"rm -f {ADMIN_MODE_FLAG}" not in joined
+
+
 class _GuardRunner(AdbCommandRunner):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[list[str]] = []
         self.running = False
+        self.admin_flag = False
 
     def run(self, serial: str, arguments: list[str], **_kwargs) -> AdbCommandResult:
         self.calls.append(list(arguments))
         joined = " ".join(arguments)
         if arguments == ["get-state"]:
             return AdbCommandResult(stdout="device", stderr="")
+        if joined == f"shell if [ -f {ADMIN_MODE_FLAG} ]; then echo 1; fi":
+            return AdbCommandResult(stdout="1" if self.admin_flag else "", stderr="")
+        if joined == f"shell touch {ADMIN_MODE_FLAG}":
+            self.admin_flag = True
+        if joined == f"shell rm -f {ADMIN_MODE_FLAG}":
+            self.admin_flag = False
         if arguments[:2] == ["shell", "pgrep"]:
             return AdbCommandResult(stdout="4321" if self.running else "", stderr="")
         if arguments[:2] == ["shell", "ls"]:
