@@ -26,6 +26,7 @@ from application.session_restriction_policy import (
     REASON_SETTINGS_REDIRECT,
     REASON_SHADE_BLOCKED,
     is_shade_pull_swipe,
+    is_sound_settings_activity,
     add_esim_public_body,
     classify_foreground_activity,
     decide_restriction,
@@ -210,6 +211,26 @@ def test_classify_esim_settings_voidfix_and_apps():
     assert is_shade_pull_swipe(y=8, y2=400, x=100, x2=100) is True
     assert is_shade_pull_swipe(y=2900, y2=2000, x=720, x2=720) is False
     assert is_shade_pull_swipe(y=8, y2=10, x=100, x2=100) is False
+    assert (
+        classify_foreground_activity(
+            "com.android.settings/.Settings$SoundSettingsActivity"
+        ).kind
+        == KIND_SETTINGS
+    )
+    assert is_sound_settings_activity(
+        "com.android.settings/.Settings$SoundSettingsActivity"
+    )
+    assert is_sound_settings_activity(
+        "com.android.settings/.notification.SoundSettings"
+    )
+    assert not is_sound_settings_activity(
+        "com.android.settings/.network.telephony.MobileNetworkActivity"
+    )
+    sound = decide_restriction(
+        action="tap",
+        activity="com.android.settings/.Settings$SoundSettingsActivity",
+    )
+    assert sound.escape_settings is True and sound.launch_esim is True
 
 
 def test_operator_ui_packages_are_exact_system_identities():

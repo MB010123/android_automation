@@ -311,6 +311,32 @@ def test_setup_session_inspect_uses_mapped_serial():
     assert ("SERIAL-A", ["reboot"]) in runner.calls
 
 
+def test_setup_session_inspect_reasserts_silent_and_leaves_sound_settings():
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 "
+        "com.android.settings/.Settings$SoundSettingsActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=21,
+        payload={"phase": "esim", "recover": False},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "mode_ringer 0" in joined
+    assert "vibrate_on 0" in joined
+    assert "input keyevent 3" in joined
+
+
 def test_setup_session_inspect_recover_uses_samsung_sim_manager():
     from application.setup_activity_guard import SAMSUNG_SIM_MGR_COMPONENT
 

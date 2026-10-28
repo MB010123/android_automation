@@ -165,6 +165,21 @@ _SENSITIVE_SETTINGS_MARKERS = (
     "privacydashboard",
     "location",
     "notification",
+    "soundsettings",
+    "soundsandvibration",
+    "soundandvibration",
+    "soundmode",
+    "volumesettings",
+    "zenmode",
+)
+_SOUND_SETTINGS_MARKERS = (
+    "soundsettings",
+    "soundsandvibration",
+    "soundandvibration",
+    "soundmode",
+    "volumesettings",
+    "soundsettingsactivity",
+    "zenmodesettings",
 )
 _BLOCKED_APP_PACKAGES = frozenset(
     {
@@ -240,6 +255,14 @@ def _is_gads_remote_access(package: str, lowered: str) -> bool:
     return package == GADS_SETTINGS_PACKAGE and any(
         marker in lowered for marker in _GADS_REMOTE_ACCESS_MARKERS
     )
+
+
+def is_sound_settings_activity(activity: str | None) -> bool:
+    """True for Pixel/Samsung Sound & vibration / ringer screens."""
+    text = str(activity or "").strip().lower()
+    if not text or "/" not in text:
+        return False
+    return any(marker in text for marker in _SOUND_SETTINGS_MARKERS)
 
 
 def is_shade_pull_swipe(

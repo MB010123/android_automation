@@ -276,6 +276,10 @@ def main() -> int:
     cache_path = Path(os.getenv("FARM_JOB_RESULT_CACHE_PATH") or (ROOT / "logs" / "farm_job_results.json"))
     Handler.job_cache = FarmJobResultCache(cache_path)
 
+    from application.device_hardware_lockdown import start_audio_lockdown_loop
+
+    start_audio_lockdown_loop(adb_path=config.adb_path, slot_map=slot_map)
+
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     logger.info(
         "farm agent listening http://%s:%s (health %s, sms %s, tasks %s)",

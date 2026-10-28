@@ -152,6 +152,13 @@ def run_setup_session_inspect(
             details={"allowed": False, "reason": "adb_failed"},
         )
     activity = parse_foreground_activity(activities)
+    try:
+        from application.device_hardware_lockdown import reassert_audio_lockdown
+
+        lock_runner = runner or AdbCommandRunner(adb_path, timeout_seconds=8.0)
+        reassert_audio_lockdown(lock_runner, serial, activity=activity, force=True)
+    except Exception:
+        logger.info("audio_lockdown_inspect_skipped slot=%s", request.farm_slot_id)
     decision = decide_setup_guard(phase=phase, activity=activity, voidfix_package=voidfix_package)
     recovered = False
     samsung = False
