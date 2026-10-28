@@ -51,7 +51,12 @@ FILE_DIRS = (
     "/sdcard/DCIM/Screenshots",
     "/sdcard/Documents",
 )
-MEDIA_SCAN_URIS = ("file:///sdcard/Pictures", "file:///sdcard/DCIM", "file:///sdcard")
+MEDIA_SCAN_URIS = (
+    "file:///sdcard/DCIM/Camera",
+    "file:///sdcard/DCIM",
+    "file:///sdcard/Pictures",
+    "file:///sdcard",
+)
 MEDIA_MOUNTED_URI = "file:///sdcard"
 OPTIONAL_CLEAR_PACKAGES = (
     "com.google.android.apps.messaging",

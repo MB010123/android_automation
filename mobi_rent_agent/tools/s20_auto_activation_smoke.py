@@ -7,9 +7,9 @@ syntactically valid but unreachable activation code. Expected outcome:
 
 Methods:
   --method ui (default): generates a QR for the dummy code, pushes it to
-    /sdcard/Pictures/ (exactly like remote_access_place_qr), then runs the
-    full One UI walk: SIM manager → Add eSIM → Other ways to connect →
-    Scan QR code → Open Gallery → Pictures → newest image → Done.
+    /sdcard/DCIM/Camera/esim_qr.png (exactly like remote_access_place_qr),
+    then runs the full One UI walk: SIM manager → Add eSIM → Other ways
+    to connect → Scan QR code → Open Gallery → Camera → newest image → Done.
   --method deeplink: passes the code via esimmanagerfromqr:// directly.
 
 Usage: python tools/s20_auto_activation_smoke.py [--method ui|deeplink] [--code LPA:1$...]
@@ -31,7 +31,7 @@ from application.farm_task_types import FarmTaskRequest
 from infrastructure.config import load_config
 
 DEFAULT_CODE = "LPA:1$smdp.example.invalid$MOBIRENT-SMOKE-TEST"
-SMOKE_QR_REMOTE = "/sdcard/Pictures/mobirent_esim_qr_smoke.png"
+SMOKE_QR_REMOTE = "/sdcard/DCIM/Camera/esim_qr.png"
 
 
 def _push_smoke_qr(adb_path: str, serial: str, code: str) -> None:
@@ -42,9 +42,14 @@ def _push_smoke_qr(adb_path: str, serial: str, code: str) -> None:
     height, width = bitmap.shape
     image = Image.frombuffer("L", (width, height), bytes(memoryview(bitmap)), "raw", "L", 0, 1)
     with tempfile.TemporaryDirectory() as tmp:
-        local = Path(tmp, "mobirent_esim_qr_smoke.png")
+        local = Path(tmp, "esim_qr.png")
         image.save(local, format="PNG")
+        subprocess.run(
+            [adb_path, "-s", serial, "shell", "mkdir", "-p", "/sdcard/DCIM/Camera"],
+            check=True,
+        )
         subprocess.run([adb_path, "-s", serial, "push", str(local), SMOKE_QR_REMOTE], check=True)
+        subprocess.run([adb_path, "-s", serial, "shell", "touch", SMOKE_QR_REMOTE], check=False)
     subprocess.run(
         [
             adb_path, "-s", serial, "shell", "am", "broadcast",
@@ -61,7 +66,7 @@ def _remove_smoke_qr(adb_path: str, serial: str) -> None:
         [
             adb_path, "-s", serial, "shell", "am", "broadcast",
             "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
-            "-d", "file:///sdcard/Pictures",
+            "-d", "file:///sdcard/DCIM/Camera/esim_qr.png",
         ],
         check=False,
     )

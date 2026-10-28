@@ -139,11 +139,14 @@ def test_cleanup_wipes_files_media_contacts_sms_no_reboot(tmp_path: Path):
     assert "rm -f /sdcard/Pictures/esim_qr.png; true" in script
     assert "rm -f /sdcard/Download/esim_qr.png; true" in script
     assert "rm -f /sdcard/DCIM/esim_qr.png; true" in script
+    assert "rm -f /sdcard/DCIM/Camera/esim_qr.png; true" in script
     assert "rm -rf /sdcard/DCIM; true" in script
+    assert "rm -rf /sdcard/DCIM/Camera; true" in script
     assert "*" not in script
     assert "sh -c" not in script
     assert "MEDIA_SCANNER_SCAN_FILE" in script and "file:///sdcard/Pictures" in script
     assert "file:///sdcard/DCIM" in script
+    assert "file:///sdcard/DCIM/Camera" in script
     assert "MEDIA_MOUNTED" in script and "file:///sdcard" in script
     assert "content://call_log/calls" in script
     assert "pm clear com.android.providers.contacts" in script

@@ -101,9 +101,7 @@ def test_valid_qr_download_push_and_size():
     assert details["ok"] is True
     assert details["job_id"] == "6d4acb6e-1111-2222-3333-444444444444"
     assert details["serial"] == BAY1_SERIAL
-    assert details["destination"] == (
-        "/sdcard/Pictures/mobirent_esim_qr_1dd479bda3a3_6d4acb6e.png"
-    )
+    assert details["destination"] == "/sdcard/DCIM/Camera/esim_qr.png"
     assert details["downloaded_size"] == len(PNG_BYTES)
     assert details["remote_size"] == len(PNG_BYTES)
     assert details["placed"] is True
@@ -112,7 +110,16 @@ def test_valid_qr_download_push_and_size():
     serials = {serial for serial, _ in runner.calls}
     assert serials == {BAY1_SERIAL}
     assert any(args[:3] == ["shell", "wc", "-c"] for _, args in runner.calls)
-    assert any(args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/Pictures" for _, args in runner.calls)
+    assert any(
+        args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/DCIM/Camera"
+        for _, args in runner.calls
+    )
+    assert any(
+        args[:2] == ["shell", "touch"] and args[-1] == "/sdcard/DCIM/Camera/esim_qr.png"
+        for _, args in runner.calls
+    )
+    joined = " ".join(" ".join(args) for _, args in runner.calls)
+    assert "file:///sdcard/DCIM/Camera/esim_qr.png" in joined
     _assert_safe(result)
 
 
@@ -149,16 +156,15 @@ def test_adb_serial_resolution_from_farm_slot_map():
     assert missing.details["placed"] is False
 
 
-def test_successful_push_uses_pictures_destination():
+def test_successful_push_uses_camera_destination():
     runner = _QrRunner(remote_size=len(PNG_BYTES))
     result = _place(runner)
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
-    assert push[2].startswith("/sdcard/Pictures/mobirent_esim_qr_")
-    assert push[2].endswith(".png")
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
     assert result.details["destination"] == push[2]
 
 
-def test_renter_samsung_slot_21_pushes_to_pictures():
+def test_renter_samsung_slot_21_pushes_to_camera():
     runner = _QrRunner(remote_size=len(PNG_BYTES))
     request = _req()
     request.farm_slot_id = 21
@@ -170,15 +176,15 @@ def test_renter_samsung_slot_21_pushes_to_pictures():
     )
     assert result.ok is True
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
-    assert push[2].startswith("/sdcard/Pictures/mobirent_esim_qr_")
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
     assert result.details["destination"] == push[2]
     assert any(
-        args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/Pictures"
+        args[:3] == ["shell", "mkdir", "-p"] and args[-1] == "/sdcard/DCIM/Camera"
         for _, args in runner.calls
     )
     copied = [" ".join(args) for _, args in runner.calls]
     assert not any(" cp " in f" {line} " and "/sdcard/Download/esim_qr.png" in line for line in copied)
-    assert not any(" cp " in f" {line} " and "/sdcard/DCIM/esim_qr.png" in line for line in copied)
+    assert not any(" cp " in f" {line} " and "/sdcard/Pictures/esim_qr.png" in line for line in copied)
     assert result.details["gallery_aliases"] == [push[2]]
     joined = " ".join(" ".join(args) for _, args in runner.calls)
     assert "dismiss-keyguard" in joined
@@ -194,13 +200,13 @@ def test_renter_cannot_override_samsung_qr_dir():
     request = _req()
     request.farm_slot_id = 21
     request.payload["actor"] = "renter"
-    request.payload["qr_dir"] = "/sdcard/DCIM/Camera"
+    request.payload["qr_dir"] = "/sdcard/Pictures"
     result = _place(runner, slot_map={21: "RFCNB056WEV"}, request=request)
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
-    assert push[2].startswith("/sdcard/Pictures/")
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
 
 
-def test_renter_samsung_manufacturer_uses_pictures_on_other_bays():
+def test_renter_samsung_manufacturer_uses_camera_on_other_bays():
     class SamsungRunner(_QrRunner):
         def run(self, serial: str, arguments: list[str]):
             if arguments == ["shell", "getprop", "ro.product.manufacturer"]:
@@ -214,10 +220,10 @@ def test_renter_samsung_manufacturer_uses_pictures_on_other_bays():
     result = _place(runner, slot_map={8: "SAMSUNG-OTHER"}, request=request)
     assert result.ok is True
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
-    assert push[2].startswith("/sdcard/Pictures/")
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
 
 
-def test_admin_samsung_qr_defaults_to_pictures_unless_override():
+def test_admin_samsung_qr_defaults_to_camera_unless_override():
     runner = _QrRunner(remote_size=len(PNG_BYTES))
     request = _req()
     request.farm_slot_id = 21
@@ -225,17 +231,17 @@ def test_admin_samsung_qr_defaults_to_pictures_unless_override():
     result = _place(runner, slot_map={21: "RFCNB056WEV"}, request=request)
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
     assert result.ok is True
-    assert push[2].startswith("/sdcard/Pictures/")
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
 
     runner2 = _QrRunner(remote_size=len(PNG_BYTES))
     request2 = _req()
     request2.farm_slot_id = 21
     request2.payload["actor"] = "admin"
-    request2.payload["qr_dir"] = "/sdcard/DCIM/Camera"
+    request2.payload["qr_dir"] = "/sdcard/Pictures"
     result2 = _place(runner2, slot_map={21: "RFCNB056WEV"}, request=request2)
     push2 = [args for _, args in runner2.calls if args and args[0] == "push"][0]
     assert result2.ok is True
-    assert push2[2].startswith("/sdcard/DCIM/Camera/")
+    assert push2[2] == "/sdcard/Pictures/esim_qr.png"
 
 
 def test_tempfile_is_written_to_disk_before_adb_push():

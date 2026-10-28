@@ -328,7 +328,7 @@ class FakeFarm:
                 import base64
 
                 size = len(base64.b64decode(raw))
-            dest = "/sdcard/Pictures/mobirent_esim_qr_placed.png"
+            dest = "/sdcard/DCIM/Camera/esim_qr.png"
             body["message"] = f"qr_placed:{dest};media_scanned=true"
             oem = "samsung" if int(farm_slot_id) == 21 else "pixel"
             body["details"] = {
@@ -1129,7 +1129,7 @@ def _agent_config(**overrides) -> AgentConfig:
     return AgentConfig(**base)
 
 
-def test_qr_task_pushes_image_to_pictures_only():
+def test_qr_task_pushes_image_to_camera_only():
     runner = _QrRunner()
     config = _agent_config(remote_access_poc_enabled=True)
     req = FarmTaskRequest(
@@ -1146,7 +1146,7 @@ def test_qr_task_pushes_image_to_pictures_only():
     serials = {serial for serial, _ in runner.calls}
     assert serials == {SLOT1_SERIAL}
     push = [args for _, args in runner.calls if args and args[0] == "push"][0]
-    assert push[2] == "/sdcard/Pictures/mobirent_esim_qr_aaaaaaaabbbb_11111111.png"
+    assert push[2] == "/sdcard/DCIM/Camera/esim_qr.png"
     joined = " ".join(" ".join(args) for _, args in runner.calls)
     for forbidden in (
         "provision_esim",
@@ -1161,7 +1161,7 @@ def test_qr_task_pushes_image_to_pictures_only():
     assert "android.settings.WIRELESS_SETTINGS" in joined
     assert "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS" not in joined
     assert "pm disable-user --user 0 com.google.android.GoogleCamera" in joined
-    assert "/sdcard/Pictures/mobirent_esim_qr_aaaaaaaabbbb_11111111.png" in joined
+    assert "/sdcard/DCIM/Camera/esim_qr.png" in joined
     assert "shell cp " not in joined and not any(
         args[:2] == ["shell", "cp"] for _s, args in runner.calls
     )

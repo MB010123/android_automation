@@ -1,11 +1,12 @@
 """Farm Agent task: place a validated eSIM QR image on the phone.
 
-Renters get a single file in ``/sdcard/Pictures/``. Old QR copies in
-Pictures, Download, and DCIM are deleted first so Gallery/Recents show
-one image. Admin payloads may pick an allowlisted directory. After the
-push the farm wakes the phone and opens the OEM eSIM screen once
-(Samsung ``SimCardMgrActivity``, Pixel ``WIRELESS_SETTINGS`` /
-Network & internet), then stops.
+Renters get a single file at ``/sdcard/DCIM/Camera/esim_qr.png`` so Samsung
+One UI and Pixel photo pickers show it in Recents / the Camera album without
+opening Other albums. Old QR copies in Camera, DCIM, Pictures, and Download
+are deleted first. Admin payloads may pick an allowlisted directory. After
+the push the farm touches the file, MediaScans it, wakes the phone, and
+opens the OEM eSIM screen once (Samsung ``SimCardMgrActivity``, Pixel
+``WIRELESS_SETTINGS`` / Network & internet), then stops.
 
 Explicitly NOT done here: no ``provision_esim``, no companion socket, no
 EuiccManager, no LPA parsing, no WRITE_EMBEDDED_SUBSCRIPTIONS, no policy or
@@ -87,13 +88,13 @@ DOWNLOAD_DIR = "/sdcard/Download"
 ALLOWED_QR_DIRS = frozenset({DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR})
 SAMSUNG_S20_SERIAL = "RFCNB056WEV"
 SAMSUNG_USER_QR_SLOT = 21
-PLACED_ESIM_QR_PATHS = (
-    f"{PICTURES_DIR}/esim_qr.png",
-    f"{DOWNLOAD_DIR}/esim_qr.png",
-    f"{DCIM_DIR}/esim_qr.png",
-    f"{DCIM_CAMERA_DIR}/esim_qr.png",
+PLACED_ESIM_QR_NAMES = ("esim_qr.png", "esim_qr.jpg", "esim_qr.jpeg", "esim_qr.webp")
+QR_MEDIA_DIRS = (DCIM_CAMERA_DIR, DCIM_DIR, PICTURES_DIR, DOWNLOAD_DIR)
+PLACED_ESIM_QR_PATHS = tuple(
+    f"{directory}/{name}"
+    for directory in QR_MEDIA_DIRS
+    for name in PLACED_ESIM_QR_NAMES
 )
-QR_MEDIA_DIRS = (PICTURES_DIR, DOWNLOAD_DIR, DCIM_DIR, DCIM_CAMERA_DIR)
 PIXEL_SETTINGS_INTENT = "android.settings.SETTINGS"
 PIXEL_WIRELESS_INTENT = "android.settings.WIRELESS_SETTINGS"
 PIXEL_MANAGE_EMBEDDED_INTENT = "android.telephony.euicc.action.MANAGE_EMBEDDED_SUBSCRIPTIONS"
@@ -171,9 +172,9 @@ def qr_placement_dir(
     payload: dict[str, Any] | None,
     manufacturer: str | None = None,
 ) -> str:
-    """Directory for the QR file. Renters always use Pictures.
+    """Directory for the QR file. Renters always use DCIM/Camera.
 
-    Admin ``actor=admin`` may pick an allowlisted ``qr_dir``; otherwise Pictures.
+    Admin ``actor=admin`` may pick an allowlisted ``qr_dir``; otherwise Camera.
     """
     _ = (slot_id, serial, manufacturer)
     body = payload if isinstance(payload, dict) else {}
@@ -181,7 +182,7 @@ def qr_placement_dir(
     requested = str(body.get("qr_dir") or "").strip().rstrip("/")
     if actor == "admin" and requested in ALLOWED_QR_DIRS:
         return requested
-    return PICTURES_DIR
+    return DCIM_CAMERA_DIR
 
 
 def _media_scan(runner: AdbCommandRunner, serial: str, remote_path: str) -> bool:
@@ -530,9 +531,9 @@ def _inline_image_from_payload(payload: dict[str, Any]) -> bytes | None:
 
 
 def remote_qr_filename(rental_id: str, job_id: str, extension: str) -> str:
-    rental_token = _RENTAL_TOKEN_RE.sub("", str(rental_id).lower())[:12] or "rental"
-    job_token = _RENTAL_TOKEN_RE.sub("", str(job_id).lower())[:8] or "job"
-    return f"mobirent_esim_qr_{rental_token}_{job_token}.{extension}"
+    """Stable Gallery filename so Recents/Camera pickers show one newest QR."""
+    _ = (rental_id, job_id)
+    return f"esim_qr.{extension}"
 
 
 def _parse_remote_byte_size(stdout: str) -> int | None:
@@ -800,7 +801,9 @@ def run_remote_access_place_qr(
                 message="temporary QR file was empty before ADB push",
             )
         delete_placed_esim_qr(runner, serial, refresh=False)
-        runner.run(serial, ["shell", "mkdir", "-p", media_dir])
+        runner.run(serial, ["shell", "mkdir", "-p", DCIM_CAMERA_DIR])
+        if media_dir != DCIM_CAMERA_DIR:
+            runner.run(serial, ["shell", "mkdir", "-p", media_dir])
         runner.run(serial, ["push", tmp_path, remote_path])
         try:
             listed = runner.run(serial, ["shell", "ls", remote_path]).stdout
@@ -813,6 +816,10 @@ def run_remote_access_place_qr(
             raise AdbCommandError("qr_not_on_device")
         if remote_size <= 0:
             raise AdbCommandError("qr_zero_byte")
+        try:
+            runner.run(serial, ["shell", "touch", remote_path])
+        except AdbCommandError:
+            pass
     except AdbCommandError as exc:
         reason = str(exc)
         if reason == "qr_zero_byte":

@@ -461,7 +461,12 @@ def run_setup_session_safe_cleanup(
             for directory in (DCIM_CAMERA_DIR, PICTURES_DIR, DOWNLOAD_DIR, "/sdcard/DCIM"):
                 listing = _shell(runner, adb_path, serial, ["ls", directory])
                 for name in (listing or "").split():
-                    if not name.startswith(QR_PREFIX) and name != "esim_qr.png":
+                    if not name.startswith(QR_PREFIX) and name not in (
+                        "esim_qr.png",
+                        "esim_qr.jpg",
+                        "esim_qr.jpeg",
+                        "esim_qr.webp",
+                    ):
                         continue
                     _shell(runner, adb_path, serial, ["rm", "-f", f"{directory}/{name}"])
                     removed = True
