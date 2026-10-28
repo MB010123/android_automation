@@ -36,6 +36,7 @@ RE_REMOTE_ACCESS_ACTION = re.compile(
     rf"^/rentals/({_UUID})/remote-access/"
     r"(revoke|release|device-status|reboot|prepare-esim|activation-status|control|complete|stream|reconnect-cellular|troubleshoot)$"
 )
+RE_RENTAL_SCREEN_GUIDANCE = re.compile(rf"^/rentals/({_UUID})/screen-guidance$")
 RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
@@ -43,7 +44,7 @@ RE_FARM_CLEANUP_VERIFIED = re.compile(r"^/farm/slots/(\d{1,2})/cleanup-verified$
 RE_FARM_ACCESS_MODE = re.compile(r"^/farm/access-mode$")
 RE_FARM_SLOT_OP = re.compile(
     r"^/farm/slots/(\d{1,2})/"
-    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|clean|access-mode)$"
+    r"(reboot|airplane-mode|about-phone-screenshot|disable-rental|enable-rental|force-available|clean|access-mode|screen-guidance)$"
 )
 RE_DEVICES_AIRPLANE = re.compile(r"^/devices/(\d{1,2})/airplane-mode$")
 # Admin live view. The device reference may be a farm bay number (1–32), a
@@ -64,7 +65,7 @@ RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
 RE_WHMCS_SSO = re.compile(r"^/api/public/auth/whmcs-sso$")
 RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
 RE_BILLING_CREDITS = re.compile(r"^/billing/credits$")
-REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action"})
+REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action", "rental_screen_guidance"})
 ADMIN_LIVE_ACCESS_KINDS = frozenset(
     {"admin_live_access", "admin_live_access_action"}
 )
@@ -100,6 +101,7 @@ _FARM_SLOT_KIND = {
     "force-available": "farm_force_available",
     "clean": "farm_clean",
     "access-mode": "farm_access_mode_slot",
+    "screen-guidance": "farm_screen_guidance",
 }
 _ADMIN_DEVICE_KIND = {
     "reboot": "admin_device_reboot",
@@ -136,6 +138,7 @@ FARM_OR_ADMIN_KINDS = frozenset(
         "farm_access_mode",
         "farm_access_mode_slot",
         "admin_device_access_mode",
+        "farm_screen_guidance",
     }
 )
 
@@ -164,6 +167,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="remote_access", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS_ACTION.match(path):
         return ParsedRoute(kind="remote_access_action", rental_id=m.group(1), action=m.group(2))
+    if m := RE_RENTAL_SCREEN_GUIDANCE.match(path):
+        return ParsedRoute(kind="rental_screen_guidance", rental_id=m.group(1))
     if RE_FARM_ACCESS_MODE.match(path):
         return ParsedRoute(kind="farm_access_mode")
     if RE_FARM_SLOTS.match(path):

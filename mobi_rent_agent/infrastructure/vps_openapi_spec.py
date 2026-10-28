@@ -465,6 +465,47 @@ def _schemas() -> dict[str, Any]:
                         "unknown",
                     ],
                 },
+                "screen_guidance": {"$ref": "#/components/schemas/ScreenGuidance"},
+            },
+        },
+        "ScreenGuidance": {
+            "type": "object",
+            "description": (
+                "Dashboard instruction bubble for the phone screen currently in the "
+                "foreground. Driven by `/data/local/tmp/mobirent_screen_state` from the "
+                "1-second lockdown guard. Poll `GET /rentals/{rental_id}/screen-guidance` "
+                "or `GET /farm/slots/{bay}/screen-guidance` (cached 1–2s per slot)."
+            ),
+            "required": ["screen_key", "title", "badge", "severity", "do_list", "dont_list"],
+            "properties": {
+                "screen_key": {
+                    "type": "string",
+                    "enum": [
+                        "home",
+                        "dialer",
+                        "messages",
+                        "settings_main",
+                        "settings_network",
+                        "esim_qr_flow",
+                        "about_phone",
+                        "blocked_kick",
+                    ],
+                },
+                "title": {"type": "string"},
+                "badge": {"type": "string"},
+                "severity": {"type": "string", "enum": ["info", "success", "warning"]},
+                "do_list": {"type": "array", "items": {"type": "string"}},
+                "dont_list": {"type": "array", "items": {"type": "string"}},
+                "device_family": {"type": "string", "enum": ["s20", "pixel"]},
+                "blocked_reason": {
+                    "type": "string",
+                    "enum": [
+                        "blocked_sound",
+                        "blocked_security",
+                        "blocked_reset",
+                        "blocked_app",
+                    ],
+                },
             },
         },
         "SlotEventsResponse": {
@@ -1262,6 +1303,46 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             },
         },
+        "/rentals/{rental_id}/screen-guidance": {
+            "get": {
+                "tags": ["Remote access (in-app setup)"],
+                "summary": "Current instruction bubble for the rental phone screen",
+                "description": (
+                    "Lightweight poll of the on-device screen-state file. Returns "
+                    "`screen_guidance` with `do_list` / `dont_list` for Home, Phone, "
+                    "Messages, Settings, SIM/Network, eSIM QR, About Phone, or a 6-second "
+                    "`blocked_kick` warning after a restricted screen is sent Home. "
+                    "Cached 1–2 seconds per slot so polling never bottlenecks ADB. "
+                    "Customer JWT; rental must be owned by the caller."
+                ),
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "200": {
+                        "description": "{ok:true, slot_id, screen_key, screen_guidance}",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ok": {"type": "boolean"},
+                                        "rental_id": {"type": "string", "format": "uuid"},
+                                        "slot_id": {"type": "integer"},
+                                        "screen_key": {"type": "string"},
+                                        "screen_guidance": {
+                                            "$ref": "#/components/schemas/ScreenGuidance"
+                                        },
+                                        "stale": {"type": "boolean"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "forbidden"},
+                },
+            },
+        },
         "/rentals/{rental_id}/remote-access/{action}": {
             "get": {
                 "tags": ["Remote access (in-app setup)"],
@@ -1949,6 +2030,22 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 ],
                 "responses": {
                     "200": {"description": "{ok:true, admin:bool, slot_id, serial}"},
+                },
+            },
+        },
+        "/farm/slots/{bay}/screen-guidance": {
+            "get": {
+                "tags": ["Farm management"],
+                "summary": "Current instruction bubble for this bay",
+                "description": (
+                    "Farm/admin poll of `/data/local/tmp/mobirent_screen_state`. Same payload "
+                    "as the customer rental route. Cached 1–2 seconds per slot."
+                ),
+                "security": user_or_farm,
+                "parameters": [bay_param],
+                "responses": {
+                    "200": {"description": "{ok:true, slot_id, serial, screen_key, screen_guidance}"},
+                    "404": {"description": "slot_not_found"},
                 },
             },
         },

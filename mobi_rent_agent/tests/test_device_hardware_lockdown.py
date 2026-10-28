@@ -152,6 +152,12 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "am force-stop" in script
     assert "sleep 1" in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
+    assert "/data/local/tmp/mobirent_screen_state" in script
+    assert "blocked_kick" in script
+    assert "settings_network" in script
+    assert "esim_qr_flow" in script
+    assert "about_phone" in script
+    assert "blocked_sound" in script
     assert "euiccmanager" not in script.lower()
     assert "wipe_esims" not in script.lower()
 

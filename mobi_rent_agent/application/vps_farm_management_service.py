@@ -231,7 +231,13 @@ class VpsFarmManagementService:
             logger.warning("tenant_slot_id_lookup_failed")
             return None
 
-    def get_slot_status(self, slot_public_id: str, *, mapped: frozenset[int] | None = None) -> ApiResult:
+    def get_slot_status(
+        self,
+        slot_public_id: str,
+        *,
+        mapped: frozenset[int] | None = None,
+        include_screen_guidance: bool = False,
+    ) -> ApiResult:
         """Per-slot status derived from heartbeat + assignment + jobs (never from caller input)."""
         farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None:
@@ -328,6 +334,12 @@ class VpsFarmManagementService:
         )
         body.update(hold)
         body["serial"] = self._serial_for(farm_slot) or serial_from_farm_slots(farm_body, farm_slot)
+        if include_screen_guidance:
+            from application.screen_guidance import fetch_screen_guidance_via_farm
+
+            guidance = fetch_screen_guidance_via_farm(self._farm_tasks, farm_slot)
+            if guidance:
+                body["screen_guidance"] = guidance
         if hold["hold_reason"] != "none" or hold["connection_reason"] != "none":
             logger.info(
                 "slot_status bay=%s hold=%s occupancy=%s cleanup=%s connection=%s/%s",
@@ -1097,6 +1109,45 @@ class VpsFarmManagementService:
         if rental_disabled is not None:
             payload["rental_disabled"] = bool(rental_disabled)
         return self.run_airplane_mode(bay, payload)
+
+    def get_screen_guidance(self, bay: int) -> ApiResult:
+        """Fast per-slot instruction bubble from the on-device screen-state file."""
+        from application.screen_guidance import (
+            device_family_for,
+            fetch_screen_guidance_via_farm,
+            public_screen_guidance,
+        )
+
+        if not self._is_configured_bay(bay, allow_cleanup_hold=True):
+            return ApiResult(404, error_body("slot_not_found"))
+        guidance = fetch_screen_guidance_via_farm(self._farm_tasks, int(bay))
+        if guidance is None:
+            serial = self._serial_for(bay) or ""
+            guidance = public_screen_guidance(
+                screen_key="home",
+                device_family=device_family_for(slot_id=int(bay), serial=serial),
+            )
+            return ApiResult(
+                200,
+                {
+                    "ok": True,
+                    "slot_id": int(bay),
+                    "serial": self._serial_for(bay),
+                    "screen_key": str(guidance.get("screen_key") or "home"),
+                    "screen_guidance": guidance,
+                    "stale": True,
+                },
+            )
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "slot_id": int(bay),
+                "serial": self._serial_for(bay),
+                "screen_key": str(guidance.get("screen_key") or "home"),
+                "screen_guidance": guidance,
+            },
+        )
 
     def set_access_mode(self, bay: int, admin: bool) -> ApiResult:
         """Flip on-device admin/client mode. The 1s guard stays running."""

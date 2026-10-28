@@ -498,6 +498,13 @@ class Handler(BaseHTTPRequestHandler):
         rental_id = route.rental_id or ""
         method = self.command
         customer_id = ctx.user.user_id if (ctx.kind == "user" and ctx.user is not None) else None
+        if route.kind == "rental_screen_guidance":
+            if method != "GET":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            result = service.screen_guidance_for_customer(customer_id or "", rental_id)
+            self._send_json(result.http_status, result.body)
+            return True
         if route.kind == "remote_access":
             if method == "GET":
                 result = service.get_remote_access(customer_id or "", None, rental_id)
@@ -824,6 +831,11 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(urlparse(self.path).query)
         if route.kind == "farm_about_phone" or route.kind == "admin_device_about_phone":
             return self._handle_farm_admin_device_op(route, {})
+        if route.kind == "farm_screen_guidance" and route.farm_bay is not None:
+            assert self.farm_management_service is not None
+            result = self.farm_management_service.get_screen_guidance(int(route.farm_bay))
+            self._send_json(result.http_status, result.body)
+            return True
         if route.kind in {"farm_access_mode", "farm_access_mode_slot", "admin_device_access_mode"}:
             return self._handle_farm_access_mode(route, None)
         if route.kind == "farm_available":
@@ -896,7 +908,10 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if route.kind == "slot_status" and route.slot_public_id:
             assert self.farm_management_service is not None
-            result = self.farm_management_service.get_slot_status(route.slot_public_id)
+            result = self.farm_management_service.get_slot_status(
+                route.slot_public_id,
+                include_screen_guidance=True,
+            )
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "slots_list":

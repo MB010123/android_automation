@@ -92,8 +92,11 @@ MUTATING_FARM_TYPES = {
 }
 
 
+_SIDECAR_FARM_TYPES = frozenset({"device_screen_guidance"})
+
+
 def _farm_types(farm: FakeFarm) -> list[str]:
-    return [str(t["type"]) for t in farm.tasks]
+    return [str(t["type"]) for t in farm.tasks if t["type"] not in _SIDECAR_FARM_TYPES]
 
 
 def test_customer_eid_fields_never_invent_placeholder():

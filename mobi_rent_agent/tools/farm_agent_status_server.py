@@ -1,6 +1,7 @@
 """Physical-PC Farm Agent HTTP API (health + authenticated VPS SMS commands).
 
   GET  /agent/health   — ADB/slot status
+  GET  /screen-guidance?slot=N — cached on-device screen_guidance JSON
   POST /agent/sms/send — VPS-originated SMS via SmsDispatchService
 
   python tools/farm_agent_status_server.py
@@ -34,6 +35,7 @@ STATUS_PATH = "/agent/status"
 SMS_SEND_PATH = "/agent/sms/send"
 TASKS_RUN_PATH = "/agent/tasks/run"
 ACCESS_MODE_PATHS = frozenset({"/access-mode", "/agent/access-mode", "/api/remote-access"})
+SCREEN_GUIDANCE_PATHS = frozenset({"/screen-guidance", "/agent/screen-guidance"})
 JOB_PATH_RE = re.compile(r"^/agent/jobs/([^/]+)$")
 
 logger = logging.getLogger("farm_agent_status")
@@ -170,6 +172,44 @@ class Handler(BaseHTTPRequestHandler):
         payload["admin"] = bool(admin)
         self._send_json(result.http_status, payload)
 
+    def _handle_screen_guidance(self, query: dict[str, list[str]]) -> None:
+        from application.farm_task_types import FarmTaskRequest
+        from domain.farm import MAX_FARM_SLOT_ID
+
+        raw_slot = None
+        for key in ("slot", "farm_slot_id", "slot_id"):
+            listed = query.get(key) if query else None
+            if listed:
+                raw_slot = listed[0]
+                break
+        try:
+            slot_id = int(raw_slot)
+        except (TypeError, ValueError):
+            self._send_json(400, {"ok": False, "error": "invalid_slot"})
+            return
+        if not 1 <= slot_id <= MAX_FARM_SLOT_ID:
+            self._send_json(400, {"ok": False, "error": "invalid_slot"})
+            return
+        result = execute_farm_task(
+            adb_path=self.adb_path,
+            slot_map=self.slot_map,
+            request=FarmTaskRequest(
+                job_id=f"screen-guidance-{slot_id}",
+                task_type="device_screen_guidance",
+                farm_slot_id=slot_id,
+                payload={},
+            ),
+            agent_config=self.agent_config,
+        )
+        payload: dict[str, Any] = {
+            "ok": result.ok,
+            "error": result.error,
+        }
+        if result.details:
+            payload.update(result.details)
+        payload["ok"] = result.ok
+        self._send_json(result.http_status, payload)
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -190,6 +230,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(401, {"ok": False, "error": "unauthorized"})
                 return
             self._handle_access_mode(parse_qs(parsed.query), None)
+            return
+        if path in SCREEN_GUIDANCE_PATHS:
+            if not self._authorized():
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return
+            self._handle_screen_guidance(parse_qs(parsed.query))
             return
         if path not in (HEALTH_PATH, STATUS_PATH):
             self._send_json(404, {"ok": False, "error": "not found"})

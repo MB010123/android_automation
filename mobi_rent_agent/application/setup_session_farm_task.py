@@ -274,6 +274,14 @@ def run_setup_session_inspect(
         "qr_deleted": bool(qr_deleted),
         **public_setup_ui_body(classification),
     }
+    try:
+        from application.screen_guidance import cached_device_screen_guidance
+
+        details["screen_guidance"] = cached_device_screen_guidance(
+            runner, serial, slot_id=int(request.farm_slot_id), adb_path=adb_path
+        )
+    except Exception:
+        logger.warning("setup_session_inspect_screen_guidance_failed slot=%s", request.farm_slot_id)
     return FarmTaskResult(ok=True, http_status=200, details=details)
 
 

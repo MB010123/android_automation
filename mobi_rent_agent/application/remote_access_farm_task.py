@@ -940,4 +940,12 @@ def run_remote_access_activation_status(
         "esim_current_token": baseline.get("esim_current_token"),
     }
     logger.info("remote_access_activation_observed slot=%s verdict=%s", slot_id, verdict.value)
+    try:
+        from application.screen_guidance import cached_device_screen_guidance
+
+        evidence["screen_guidance"] = cached_device_screen_guidance(
+            runner, serial, slot_id=slot_id, adb_path=adb_path
+        )
+    except Exception:
+        logger.warning("remote_access_activation_screen_guidance_failed slot=%s", slot_id)
     return FarmTaskResult(ok=True, http_status=200, details=evidence)

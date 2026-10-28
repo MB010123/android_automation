@@ -236,6 +236,15 @@ def execute_controlled_farm_task(
             request=request,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "device_screen_guidance":
+        from application.screen_guidance import run_device_screen_guidance
+
+        return run_device_screen_guidance(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 

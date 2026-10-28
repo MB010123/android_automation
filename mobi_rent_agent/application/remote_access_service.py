@@ -626,6 +626,43 @@ class RemoteAccessService:
         body = {"ok": True, **self._session_public(session, now)}
         return ApiResult(201, body)
 
+    def screen_guidance_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
+        """Lightweight polling payload for the dashboard instruction bubble."""
+        auth = self._authorize(customer_id, rental_id)
+        if isinstance(auth, ApiResult):
+            return auth
+        from application.screen_guidance import (
+            device_family_for,
+            fetch_screen_guidance_via_farm,
+            public_screen_guidance,
+        )
+
+        guidance = fetch_screen_guidance_via_farm(self._farm, auth.slot_id)
+        stale = guidance is None
+        if guidance is None:
+            serial = str(self._devices.get(int(auth.slot_id)) or "")
+            guidance = public_screen_guidance(
+                screen_key="home",
+                device_family=device_family_for(slot_id=int(auth.slot_id), serial=serial),
+            )
+        body: dict[str, Any] = {
+            "ok": True,
+            "rental_id": auth.rental_id,
+            "slot_id": auth.slot_id,
+            "screen_key": str(guidance.get("screen_key") or "home"),
+            "screen_guidance": guidance,
+        }
+        if stale:
+            body["stale"] = True
+        return ApiResult(200, body)
+
+    def _attach_screen_guidance(self, slot_id: int, body: dict[str, Any]) -> None:
+        from application.screen_guidance import fetch_screen_guidance_via_farm
+
+        guidance = fetch_screen_guidance_via_farm(self._farm, int(slot_id))
+        if isinstance(guidance, dict) and guidance.get("screen_key"):
+            body["screen_guidance"] = guidance
+
     def get_remote_access(self, customer_id: str, slot_id: int | None, rental_id: str) -> ApiResult:
         auth = self._authorize(customer_id, rental_id, slot_id)
         if isinstance(auth, ApiResult):
@@ -633,10 +670,15 @@ class RemoteAccessService:
         session = self._store.get(auth.rental_id)
         now = self._clock()
         if session is None or session.customer_id != auth.customer_id:
-            return ApiResult(
-                200,
-                {"ok": True, "rental_id": auth.rental_id, "slot_id": auth.slot_id, "status": "none", "active": False},
-            )
+            body = {
+                "ok": True,
+                "rental_id": auth.rental_id,
+                "slot_id": auth.slot_id,
+                "status": "none",
+                "active": False,
+            }
+            self._attach_screen_guidance(auth.slot_id, body)
+            return ApiResult(200, body)
         evidence: dict[str, Any] = {}
         if (
             session.is_active(now)
@@ -647,6 +689,7 @@ class RemoteAccessService:
         body = {"ok": True, **self._session_public(session)}
         if evidence:
             body["activation_evidence"] = evidence
+        self._attach_screen_guidance(auth.slot_id, body)
         return ApiResult(200, body)
 
     def control_session(
@@ -931,6 +974,7 @@ class RemoteAccessService:
                 self._observe_activation(auth, force=False)
                 own = self._store.get(auth.rental_id) or own
             body.update(self._live_setup_ui_fields(auth.rental_id, auth.slot_id, session=own))
+        self._attach_screen_guidance(auth.slot_id, body)
         return ApiResult(200, body)
 
     def reconnect_cellular_for_customer(
