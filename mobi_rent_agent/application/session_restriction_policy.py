@@ -174,11 +174,25 @@ _SENSITIVE_SETTINGS_MARKERS = (
 )
 _SOUND_SETTINGS_MARKERS = (
     "soundsettings",
+    "secsoundsettings",
     "soundsandvibration",
     "soundandvibration",
     "soundmode",
     "volumesettings",
+    "secvolumesettings",
     "soundsettingsactivity",
+    "zenmodesettings",
+    "volumelimiter",
+    "vibrationintensity",
+    "vibrationpattern",
+)
+_SOUND_DUMP_ALWAYS_MARKERS = (
+    "secsoundsettings",
+    "soundsettings",
+    "secvolumesettings",
+    "volumelimiter",
+    "vibrationintensity",
+    "vibrationpattern",
     "zenmodesettings",
 )
 _BLOCKED_APP_PACKAGES = frozenset(
@@ -257,12 +271,35 @@ def _is_gads_remote_access(package: str, lowered: str) -> bool:
     )
 
 
+def _collapsed_sound_blob(text: str | None) -> str:
+    return "".join(str(text or "").lower().split())
+
+
 def is_sound_settings_activity(activity: str | None) -> bool:
-    """True for Pixel/Samsung Sound & vibration / ringer screens."""
-    text = str(activity or "").strip().lower()
-    if not text or "/" not in text:
+    """True for Pixel/Samsung Sound & vibration / ringer screens.
+
+    Matches component names and dump snippets. Samsung One UI often shows
+    ``Settings$SecSoundSettingsActivity``, ``SubSettings`` plus a
+    ``SecSoundSettings`` fragment, or the title ``Sounds and vibration``.
+    """
+    collapsed = _collapsed_sound_blob(activity)
+    if not collapsed:
         return False
-    return any(marker in text for marker in _SOUND_SETTINGS_MARKERS)
+    return any(marker in collapsed for marker in _SOUND_SETTINGS_MARKERS)
+
+
+def sound_settings_dump_matches(dump: str | None) -> bool:
+    """True when window/activity dumps show a Sound & vibration screen."""
+    text = str(dump or "")
+    collapsed = _collapsed_sound_blob(text)
+    if not collapsed:
+        return False
+    if any(marker in collapsed for marker in _SOUND_DUMP_ALWAYS_MARKERS):
+        return True
+    settings_top = "com.android.settings" in text.lower()
+    if settings_top and ("soundmode" in collapsed or "soundsandvibration" in collapsed):
+        return True
+    return False
 
 
 def is_shade_pull_swipe(

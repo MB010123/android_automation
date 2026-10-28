@@ -13,7 +13,10 @@ from typing import Any, Callable
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWAITING
-from application.device_hardware_lockdown import hardware_lockdown_commands
+from application.device_hardware_lockdown import (
+    ensure_on_device_lockdown_guard,
+    hardware_lockdown_commands,
+)
 from application.remote_access_farm_task import (
     detect_device_oem,
     ensure_esim_setup_screen_open,
@@ -230,6 +233,11 @@ def run_device_screen_prepare(
         warnings,
         "hardware_lockdown",
     )
+    try:
+        if not ensure_on_device_lockdown_guard(runner, serial, redeploy=True):
+            warnings.append("lockdown_guard: start_failed")
+    except (AdbCommandError, OSError, TypeError) as exc:
+        warnings.append(f"lockdown_guard: {exc.__class__.__name__}")
     esim_setup_launched = ""
     if open_esim:
         esim_setup_launched = ensure_esim_setup_screen_open(runner, serial, oem)

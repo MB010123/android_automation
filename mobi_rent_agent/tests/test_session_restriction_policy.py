@@ -27,6 +27,7 @@ from application.session_restriction_policy import (
     REASON_SHADE_BLOCKED,
     is_shade_pull_swipe,
     is_sound_settings_activity,
+    sound_settings_dump_matches,
     add_esim_public_body,
     classify_foreground_activity,
     decide_restriction,
@@ -221,10 +222,27 @@ def test_classify_esim_settings_voidfix_and_apps():
         "com.android.settings/.Settings$SoundSettingsActivity"
     )
     assert is_sound_settings_activity(
+        "com.android.settings/.Settings$SecSoundSettingsActivity"
+    )
+    assert is_sound_settings_activity(
         "com.android.settings/.notification.SoundSettings"
     )
+    assert is_sound_settings_activity("Sounds and vibration")
     assert not is_sound_settings_activity(
         "com.android.settings/.network.telephony.MobileNetworkActivity"
+    )
+    assert not is_sound_settings_activity("com.android.settings/.SubSettings")
+    assert sound_settings_dump_matches(
+        "mCurrentFocus=Window{abc u0 com.android.settings/.Settings$SecSoundSettingsActivity}"
+    )
+    assert sound_settings_dump_matches(
+        "ACTIVITY com.android.settings/.SubSettings\ntext=\"Sounds and vibration\""
+    )
+    assert sound_settings_dump_matches(
+        "ACTIVITY com.android.settings/.Settings$SecVolumeSettingsActivity"
+    )
+    assert not sound_settings_dump_matches(
+        "mCurrentFocus=Window{abc u0 com.sec.android.app.launcher/.Launcher}"
     )
     sound = decide_restriction(
         action="tap",

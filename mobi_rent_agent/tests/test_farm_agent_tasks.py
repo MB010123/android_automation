@@ -316,7 +316,7 @@ def test_setup_session_inspect_reasserts_silent_and_leaves_sound_settings():
     runner = FakeRunner()
     runner.dumpsys_activity = (
         "mResumedActivity: ActivityRecord{abc u0 "
-        "com.android.settings/.Settings$SoundSettingsActivity t1}"
+        "com.android.settings/.Settings$SecSoundSettingsActivity t1}"
     )
     req = FarmTaskRequest(
         job_id="j",
@@ -335,6 +335,7 @@ def test_setup_session_inspect_reasserts_silent_and_leaves_sound_settings():
     assert "mode_ringer 0" in joined
     assert "vibrate_on 0" in joined
     assert "input keyevent 3" in joined
+    assert "force-stop com.android.settings" in joined
 
 
 def test_setup_session_inspect_recover_uses_samsung_sim_manager():

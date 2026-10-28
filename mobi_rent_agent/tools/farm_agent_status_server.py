@@ -278,6 +278,7 @@ def main() -> int:
 
     from application.device_hardware_lockdown import start_audio_lockdown_loop
 
+    # On-device 1s guard (GADS WebRTC taps never hit Farm HTTP inspect).
     start_audio_lockdown_loop(adb_path=config.adb_path, slot_map=slot_map)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)

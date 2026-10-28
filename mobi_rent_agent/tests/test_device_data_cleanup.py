@@ -572,6 +572,9 @@ def test_device_screen_prepare_resets_display_and_unlocks():
     assert "pm disable-user --user 0 com.sec.android.app.camera" in scripts
     assert "media volume --stream 3 --set 0" in scripts
     assert "cmd flashlight disable" in scripts
+    joined_all = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "/data/local/tmp/mobirent_lockdown_guard.sh" in joined_all
+    assert "nohup sh /data/local/tmp/mobirent_lockdown_guard.sh" in joined_all
 
 
 def test_device_screen_prepare_skip_home_omits_keycode_home():

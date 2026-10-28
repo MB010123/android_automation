@@ -21,7 +21,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from application.device_hardware_lockdown import hardware_lockdown_commands
+from application.device_hardware_lockdown import (
+    ensure_on_device_lockdown_guard,
+    hardware_lockdown_commands,
+)
 from application.device_screen_prepare import (
     BOOT_WAIT_TIMEOUT_SECONDS,
     WAKE_UNLOCK_COMMANDS,
@@ -306,6 +309,11 @@ def run_device_data_cleanup(
     script_ok = run_best_effort_shell(
         runner, mapped, commands, warnings, "cleanup_script"
     )
+    if lockdown:
+        try:
+            ensure_on_device_lockdown_guard(runner, mapped, redeploy=True)
+        except (AdbCommandError, OSError, TypeError):
+            warnings.append("lockdown_guard: skipped")
     delete_placed_esim_qr(runner, mapped, refresh=False)
     refresh_media_store(runner, mapped)
     cleared = ["files", "call_log", "contacts", "sms_mms", "browsers", "accounts", "launchers", "esim_qr"]
