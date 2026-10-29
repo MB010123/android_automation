@@ -225,6 +225,7 @@ def run_device_screen_prepare(
                 "slot_id": slot_id,
                 "serial": serial,
                 "status": "device_offline",
+                "hint": USB_REPLUG_HINT,
                 "warnings": warnings,
             },
         )

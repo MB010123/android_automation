@@ -457,15 +457,15 @@ def test_lockdown_loop_recovers_serial_that_comes_back_online():
     assert recovered == ["RFCNB056WEV"]  # exactly once per transition
 
 
-def test_farm_agent_forces_native_adb_usb_backend():
+def test_farm_agent_forces_libusb_adb_usb_backend():
     from tools.farm_agent_status_server import ADB_USB_LEGACY_ENV, ensure_adb_usb_legacy_env
 
     env: dict[str, str] = {}
     assert ensure_adb_usb_legacy_env(env) is True
-    assert env[ADB_USB_LEGACY_ENV] == "1"
-    env = {ADB_USB_LEGACY_ENV: "0"}
-    assert ensure_adb_usb_legacy_env(env) is False  # operator override respected
     assert env[ADB_USB_LEGACY_ENV] == "0"
+    env = {ADB_USB_LEGACY_ENV: "1"}
+    assert ensure_adb_usb_legacy_env(env) is False
+    assert env[ADB_USB_LEGACY_ENV] == "1"
 
 
 def test_pause_renter_lockdown_restores_previous_mode():

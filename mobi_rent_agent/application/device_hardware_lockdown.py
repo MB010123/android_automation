@@ -1069,7 +1069,17 @@ def run_device_access_mode(
     except AdbCommandError:
         state = ""
     if state != "device":
-        return FarmTaskResult(ok=False, http_status=409, error="device_offline")
+        return FarmTaskResult(
+            ok=False,
+            http_status=409,
+            error="device_offline",
+            details={
+                "ok": False,
+                "slot_id": slot_id,
+                "serial": serial,
+                "hint": USB_REPLUG_HINT,
+            },
+        )
     if not adb_shell_responsive(runner, serial):
         logger.warning("device_access_mode_adb_unresponsive slot=%s serial=%s", slot_id, serial)
         return FarmTaskResult(
