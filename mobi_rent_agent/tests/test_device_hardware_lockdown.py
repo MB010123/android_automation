@@ -424,6 +424,49 @@ def test_recover_device_after_reconnect_waits_boot_then_wakes_and_redeploys():
     assert not any(args and args[0] == "push" for args in runner.calls)
 
 
+def test_wait_boot_ignores_first_unresponsive_appearance():
+    """S20 can show `device` + boot_completed=1 before adbd answers shells."""
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    class _Flicker(_GuardRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.echoes = 0
+
+        def run(self, serial, arguments, **kw):
+            if arguments == ["get-state"] or arguments == ["wait-for-device"]:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="device" if arguments == ["get-state"] else "", stderr="")
+            if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="1", stderr="")
+            if arguments[:2] == ["shell", "echo"]:
+                self.echoes += 1
+                self.calls.append(list(arguments))
+                if self.echoes < 3:
+                    raise AdbCommandError("ADB command timed out")
+                return AdbCommandResult(stdout="mobirent_ok", stderr="")
+            return super().run(serial, arguments, **kw)
+
+    slept: list[float] = []
+    runner = _Flicker()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="flicker",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"wait_boot": True, "admin": True},
+        ),
+        command_runner=runner,
+        sleep_fn=slept.append,
+    )
+    assert result.ok is True
+    assert runner.echoes >= 3
+    assert slept
+
+
 def test_lockdown_loop_recovers_serial_that_comes_back_online():
     stop = threading.Event()
     runner = _GuardRunner()

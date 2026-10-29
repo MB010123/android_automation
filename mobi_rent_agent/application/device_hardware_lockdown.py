@@ -757,11 +757,16 @@ def recover_device_after_reconnect(
     result["booted"] = _wait_boot_completed_quick(
         runner, key, timeout_seconds=boot_wait_seconds, poll_seconds=poll_seconds, stop=stop
     )
+    if result["booted"]:
+        while not stop.is_set() and time.monotonic() - started < boot_wait_seconds:
+            if adb_shell_responsive(runner, key):
+                result["responsive"] = True
+                break
+            stop.wait(poll_seconds)
     result["boot_wait_seconds"] = round(time.monotonic() - started, 1)
     if not result["booted"]:
         logger.warning("device_reconnect_boot_timeout serial=%s", key)
         return result
-    result["responsive"] = adb_shell_responsive(runner, key)
     if not result["responsive"]:
         logger.warning("device_reconnect_adb_unresponsive serial=%s hint=%s", key, USB_REPLUG_HINT)
         return result

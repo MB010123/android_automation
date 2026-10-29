@@ -172,7 +172,10 @@ def _wait_boot_completed(
         except AdbCommandError:
             boot = ""
         if state == "device" and boot == "1":
-            return True
+            # S20 USB can appear in `adb devices` for a couple of seconds
+            # before adbd answers shells (then it drops). Require a live echo.
+            if adb_shell_responsive(runner, serial, timeout_seconds=poll_timeout):
+                return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
