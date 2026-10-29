@@ -463,8 +463,91 @@ def test_wait_boot_ignores_first_unresponsive_appearance():
         sleep_fn=slept.append,
     )
     assert result.ok is True
-    assert runner.echoes >= 3
+    assert runner.echoes >= 5
     assert slept
+
+
+def test_wait_boot_ignores_brief_responsive_flicker():
+    """One live echo then a drop is not ready; wait for consecutive echoes."""
+    from application.device_hardware_lockdown import ADB_UNRESPONSIVE_ERROR
+    from application.device_screen_prepare import run_device_screen_prepare
+
+    class _Flicker(_GuardRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.echoes = 0
+
+        def run(self, serial, arguments, **kw):
+            if arguments == ["get-state"] or arguments == ["wait-for-device"]:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="device" if arguments == ["get-state"] else "", stderr="")
+            if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="1", stderr="")
+            if arguments[:2] == ["shell", "echo"]:
+                self.echoes += 1
+                self.calls.append(list(arguments))
+                if self.echoes == 2:
+                    raise AdbCommandError("device not found")
+                return AdbCommandResult(stdout="mobirent_ok", stderr="")
+            return super().run(serial, arguments, **kw)
+
+    slept: list[float] = []
+    runner = _Flicker()
+    result = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="flicker2",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"wait_boot": True, "admin": True},
+        ),
+        command_runner=runner,
+        sleep_fn=slept.append,
+    )
+    assert result.ok is True
+    # 1 ok + 1 drop + 3 consecutive settle, plus post-wait / trailing probes.
+    assert runner.echoes >= 6
+    assert slept
+
+    class _DropAfterSettle(_GuardRunner):
+        def __init__(self) -> None:
+            super().__init__()
+            self.echoes = 0
+
+        def run(self, serial, arguments, **kw):
+            if arguments == ["get-state"] or arguments == ["wait-for-device"]:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="device" if arguments == ["get-state"] else "", stderr="")
+            if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout="1", stderr="")
+            if arguments[:2] == ["shell", "echo"]:
+                self.echoes += 1
+                self.calls.append(list(arguments))
+                if self.echoes >= 5:
+                    raise AdbCommandError("device not found")
+                return AdbCommandResult(stdout="mobirent_ok", stderr="")
+            if self.echoes >= 4:
+                raise AdbCommandError("device not found")
+            return super().run(serial, arguments, **kw)
+
+    dropped = run_device_screen_prepare(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="drop",
+            task_type="device_screen_prepare",
+            farm_slot_id=21,
+            payload={"wait_boot": True, "admin": True},
+        ),
+        command_runner=_DropAfterSettle(),
+        sleep_fn=lambda _s: None,
+    )
+    assert dropped.ok is False
+    assert dropped.http_status == 409
+    assert dropped.error == ADB_UNRESPONSIVE_ERROR
 
 
 def test_lockdown_loop_recovers_serial_that_comes_back_online():

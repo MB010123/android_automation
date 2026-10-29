@@ -18,6 +18,7 @@ from application.device_hardware_lockdown import (
     ADB_UNRESPONSIVE_ERROR,
     USB_REPLUG_HINT,
     adb_shell_responsive,
+    adb_shell_settled,
     apply_usb_popup_suppression,
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
@@ -173,9 +174,18 @@ def _wait_boot_completed(
             boot = ""
         if state == "device" and boot == "1":
             # S20 USB can appear in `adb devices` for a couple of seconds
-            # before adbd answers shells (then it drops). Require a live echo.
-            if adb_shell_responsive(runner, serial, timeout_seconds=poll_timeout):
+            # with one live echo, then drop. Require consecutive echoes.
+            remaining = deadline - time.monotonic()
+            if adb_shell_settled(
+                runner,
+                serial,
+                timeout_seconds=remaining,
+                poll_seconds=BOOT_POLL_SECONDS,
+                sleep_fn=sleep_fn,
+                echo_timeout_seconds=poll_timeout,
+            ):
                 return True
+            continue
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
@@ -312,6 +322,25 @@ def run_device_screen_prepare(
         safe = normalize_voidfix_package(package)
         if safe:
             apply_voidfix_keepalive(runner, serial, safe, warnings, restart=False)
+    if wait_boot and not adb_shell_responsive(runner, serial):
+        logger.warning(
+            "device_screen_prepare_dropped_after_boot slot=%s serial=%s",
+            slot_id,
+            serial,
+        )
+        return FarmTaskResult(
+            ok=False,
+            http_status=409,
+            error=ADB_UNRESPONSIVE_ERROR,
+            details={
+                "ok": False,
+                "slot_id": slot_id,
+                "serial": serial,
+                "status": ADB_UNRESPONSIVE_ERROR,
+                "hint": USB_REPLUG_HINT,
+                "warnings": warnings,
+            },
+        )
     logger.info(
         "device_screen_prepare_ok slot=%s wait_boot=%s warnings=%s",
         slot_id,

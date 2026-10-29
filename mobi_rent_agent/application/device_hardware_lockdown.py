@@ -682,6 +682,7 @@ def apply_usb_popup_suppression(
 
 
 ADB_RESPONSIVE_TIMEOUT_SECONDS = 5.0
+ADB_SETTLE_ECHOES = 3
 ADB_UNRESPONSIVE_ERROR = "device_adb_unresponsive"
 USB_REPLUG_HINT = "adbd does not answer shell streams; USB replug or port reset required"
 
@@ -707,6 +708,56 @@ def adb_shell_responsive(
     except (AdbCommandError, OSError):
         return False
     return True
+
+
+def adb_shell_settled(
+    runner: Any,
+    serial: str,
+    *,
+    needed: int = ADB_SETTLE_ECHOES,
+    timeout_seconds: float,
+    poll_seconds: float,
+    sleep_fn: Callable[[float], None] | None = None,
+    stop: threading.Event | None = None,
+    echo_timeout_seconds: float | None = None,
+) -> bool:
+    """True after ``needed`` consecutive live shell echoes within ``timeout_seconds``.
+
+    S20 USB can answer one ``echo`` for ~1s after boot, then drop the transport
+    before Windows re-enumerates a stable ADB interface. A single success is
+    not ready.
+    """
+    key = str(serial or "").strip()
+    if not key or runner is None:
+        return False
+    want = max(1, int(needed))
+    budget = max(0.0, float(timeout_seconds))
+    pause = max(0.0, float(poll_seconds))
+    echo_timeout = (
+        ADB_RESPONSIVE_TIMEOUT_SECONDS
+        if echo_timeout_seconds is None
+        else float(echo_timeout_seconds)
+    )
+    sleeper = sleep_fn or time.sleep
+    deadline = time.monotonic() + budget
+    streak = 0
+    while time.monotonic() < deadline:
+        if stop is not None and stop.is_set():
+            return False
+        if adb_shell_responsive(runner, key, timeout_seconds=echo_timeout):
+            streak += 1
+            if streak >= want:
+                return True
+        else:
+            streak = 0
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        if stop is not None:
+            stop.wait(min(pause, remaining))
+        else:
+            sleeper(min(pause, remaining))
+    return False
 
 
 def _wait_boot_completed_quick(
@@ -758,11 +809,14 @@ def recover_device_after_reconnect(
         runner, key, timeout_seconds=boot_wait_seconds, poll_seconds=poll_seconds, stop=stop
     )
     if result["booted"]:
-        while not stop.is_set() and time.monotonic() - started < boot_wait_seconds:
-            if adb_shell_responsive(runner, key):
-                result["responsive"] = True
-                break
-            stop.wait(poll_seconds)
+        remaining = boot_wait_seconds - (time.monotonic() - started)
+        result["responsive"] = adb_shell_settled(
+            runner,
+            key,
+            timeout_seconds=max(0.0, remaining),
+            poll_seconds=poll_seconds,
+            stop=stop,
+        )
     result["boot_wait_seconds"] = round(time.monotonic() - started, 1)
     if not result["booted"]:
         logger.warning("device_reconnect_boot_timeout serial=%s", key)
