@@ -14,6 +14,7 @@ from typing import Any, Callable
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWAITING
 from application.device_hardware_lockdown import (
+    apply_usb_popup_suppression,
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
     parse_admin_flag,
@@ -240,6 +241,13 @@ def run_device_screen_prepare(
             warnings.append("lockdown_guard: start_failed")
     except (AdbCommandError, OSError, TypeError) as exc:
         warnings.append(f"lockdown_guard: {exc.__class__.__name__}")
+    # USB replug / reboot popups + ADB auth timer. Settings only here; the
+    # runtime `svc usb setFunctions` is startup-only (may bounce USB on AOSP).
+    try:
+        if not apply_usb_popup_suppression(runner, serial, set_functions=False):
+            warnings.append("usb_popup_suppression: skipped")
+    except (AdbCommandError, OSError, TypeError) as exc:
+        warnings.append(f"usb_popup_suppression: {exc.__class__.__name__}")
     admin = parse_admin_flag(request.payload.get("admin"))
     if admin is None:
         admin = False

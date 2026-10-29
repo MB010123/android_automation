@@ -49,6 +49,26 @@ SCREEN_STATE_REMOTE = "/data/local/tmp/mobirent_screen_state"
 SCREEN_STATE_KICK_SECONDS = 6
 DEVICE_ACCESS_MODE_TASK = "device_access_mode"
 
+# USB replug / reboot popups. One UI 5 ships the "Allow access to phone data?"
+# dialog in com.samsung.android.mtp (older builds: com.samsung.android.MtpApplication)
+# and the USB-mode sheet in com.sec.usbsettings. The AOSP app-level USB
+# permission dialogs live in com.android.systemui.
+SAMSUNG_MTP_PACKAGES = (
+    "com.samsung.android.mtp",
+    "com.samsung.android.MtpApplication",
+)
+SAMSUNG_USB_SETTINGS_PACKAGE = "com.sec.usbsettings"
+USB_POPUP_PACKAGES = (*SAMSUNG_MTP_PACKAGES, SAMSUNG_USB_SETTINGS_PACKAGE)
+# Dismissed with BACK by the guard. UsbDebuggingActivity (the RSA "Allow USB
+# debugging?" prompt) is deliberately NOT here: BACK there means Deny, which
+# would cut ADB for the bay. adb_allowed_connection_time=0 keeps it from
+# re-appearing on an authorised host.
+USB_POPUP_ACTIVITY_MARKERS = (
+    "usbconfirmactivity",
+    "usbpermissionactivity",
+    "usbaccessoryuriactivity",
+)
+
 ALLOWED_SETTINGS_ACTIVITY_MARKERS = (
     "connectionssettings",
     "networkdashboard",
@@ -100,6 +120,9 @@ def build_lockdown_guard_script() -> str:
     sensitive = _shell_case_globs(SENSITIVE_SETTINGS_DUMP_MARKERS)
     allowed_settings = _shell_case_globs(ALLOWED_SETTINGS_ACTIVITY_MARKERS)
     settings_pkg = RENTER_SETTINGS_PACKAGE
+    # extract_pkg lowercases the focus, so match lowercase package names.
+    usb_popup_pkgs = _shell_or_pattern(tuple(pkg.lower() for pkg in USB_POPUP_PACKAGES))
+    usb_popup_acts = _shell_case_globs(USB_POPUP_ACTIVITY_MARKERS)
     template = r"""#!/system/bin/sh
 # On-device Phone/SMS/eSIM allowlist + mute. Independent of GADS/HTTP.
 # Hot path per 0.4s tick: one `dumpsys window displays` focus grep, then the
@@ -287,16 +310,37 @@ subsettings_reason() {
   forbidden_reason "$frag"
 }
 
+# USB replug / reboot popups ("Allow access to phone data?", USB mode sheet,
+# app-level USB permission). Dismissed in BOTH admin and client mode, before
+# the admin check. UsbDebuggingActivity is left alone on purpose: BACK = Deny.
+dismiss_usb_popup() {
+  case "$1" in
+    __USB_POPUP_PKGS__)
+      am force-stop "$1"
+      input keyevent 4
+      return 0
+      ;;
+  esac
+  case "$2" in
+    __USB_POPUP_ACTS__)
+      input keyevent 4
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 apply_mute
 write_state "home||0"
 
 while true; do
-  if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi
   # Hot path first: one focus read, then the state file is written by the
   # classify/kick branches below BEFORE any slower work (audio every ~4s).
   focus=$(dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -v '=null' | tail -n 1)
   pkg=$(extract_pkg "$focus")
   act=$(extract_act "$focus")
+  if dismiss_usb_popup "$pkg" "$act"; then sleep 0.4; continue; fi
+  if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi
   case "$pkg" in
     "")
       ;;
@@ -360,6 +404,8 @@ done
         .replace("__SENSITIVE__", sensitive)
         .replace("__SETTINGS__", settings_pkg)
         .replace("__PERMISSION__", permission)
+        .replace("__USB_POPUP_PKGS__", usb_popup_pkgs)
+        .replace("__USB_POPUP_ACTS__", usb_popup_acts)
     )
 
 
@@ -557,6 +603,69 @@ def hardware_lockdown_commands() -> tuple[str, ...]:
 
 def best_effort_lockdown_script(commands: tuple[str, ...] | list[str]) -> str:
     return "; ".join(f"{command}; true" for command in commands if str(command).strip())
+
+
+def usb_popup_suppression_commands() -> tuple[str, ...]:
+    """Settings that stop USB replug / reboot popups and the ADB auth timer.
+
+    * ``adb_allowed_connection_time 0`` disables the 7-day USB-debugging
+      revocation so the farm host's RSA key never expires.
+    * ``usb_mass_storage_enabled 0`` + ``usb_audio_automatic_routing_disabled 1``
+      keep the gadget from advertising storage/audio roles.
+    * Samsung MTP app: overlay permission off, disabled, stopped (best-effort;
+      no-ops on Pixel). ``com.sec.usbsettings`` keeps running (it owns the USB
+      notification state) but loses its overlay permission.
+    """
+    return (
+        "settings put global adb_allowed_connection_time 0",
+        "settings put global usb_mass_storage_enabled 0",
+        "settings put secure usb_audio_automatic_routing_disabled 1",
+        *(f"cmd appops set {pkg} SYSTEM_ALERT_WINDOW ignore" for pkg in USB_POPUP_PACKAGES),
+        *(f"pm disable-user --user 0 {pkg}" for pkg in SAMSUNG_MTP_PACKAGES),
+        *(f"am force-stop {pkg}" for pkg in USB_POPUP_PACKAGES),
+    )
+
+
+def usb_config_has_mtp(config: str) -> bool:
+    parts = {part.strip().lower() for part in str(config or "").split(",")}
+    return bool(parts & {"mtp", "ptp"})
+
+
+def apply_usb_popup_suppression(
+    runner: Any,
+    serial: str,
+    *,
+    set_functions: bool = False,
+) -> bool:
+    """Apply :func:`usb_popup_suppression_commands` on one phone (best-effort).
+
+    ``set_functions=True`` (Farm Agent startup only) additionally tries
+    ``svc usb setFunctions adb`` when ``sys.usb.config`` still carries mtp/ptp.
+    That call is runtime-only, can re-enumerate USB on AOSP, and is killed by
+    One UI (rc 137, no effect) - so it runs as its own last command and never
+    during session prepare where a GADS stream may be open.
+    """
+    key = str(serial or "").strip()
+    if not key or runner is None:
+        return False
+    script = best_effort_lockdown_script(usb_popup_suppression_commands())
+    try:
+        runner.run(key, ["shell", script])
+    except (AdbCommandError, OSError, TypeError):
+        logger.info("usb_popup_suppression_skipped serial=%s", key)
+        return False
+    if set_functions:
+        try:
+            config = runner.run(key, ["shell", "getprop", "sys.usb.config"]).stdout or ""
+        except (AdbCommandError, OSError, TypeError):
+            config = ""
+        if usb_config_has_mtp(config):
+            try:
+                runner.run(key, ["shell", "svc usb setFunctions adb"])
+            except (AdbCommandError, OSError, TypeError):
+                logger.info("usb_set_functions_rejected serial=%s", key)
+    logger.info("usb_popup_suppression_applied serial=%s", key)
+    return True
 
 
 class AudioLockdownEnforcer:
@@ -954,6 +1063,10 @@ def start_audio_lockdown_loop(
                     ensure_on_device_lockdown_guard(
                         runner, serial, redeploy=first
                     )
+                    if first:
+                        # Farm Agent startup: pin USB/ADB popup suppression on
+                        # every connected phone (one shell call per serial).
+                        apply_usb_popup_suppression(runner, serial, set_functions=True)
                 except (AdbCommandError, OSError, TypeError):
                     logger.info("lockdown_guard_loop_skipped serial=%s", serial)
             first = False

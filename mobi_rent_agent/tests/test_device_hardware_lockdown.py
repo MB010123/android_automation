@@ -252,6 +252,70 @@ def test_device_access_mode_task_sets_admin_flag():
     assert f"touch {ADMIN_MODE_FLAG}" in joined
 
 
+def test_usb_popup_suppression_commands_and_guard_branch():
+    from application.device_hardware_lockdown import (
+        USB_POPUP_PACKAGES,
+        apply_usb_popup_suppression,
+        usb_config_has_mtp,
+        usb_popup_suppression_commands,
+    )
+
+    joined = " ; ".join(usb_popup_suppression_commands())
+    assert "settings put global adb_allowed_connection_time 0" in joined
+    assert "settings put global usb_mass_storage_enabled 0" in joined
+    assert "settings put secure usb_audio_automatic_routing_disabled 1" in joined
+    assert "cmd appops set com.samsung.android.mtp SYSTEM_ALERT_WINDOW ignore" in joined
+    assert "cmd appops set com.samsung.android.MtpApplication SYSTEM_ALERT_WINDOW ignore" in joined
+    assert "pm disable-user --user 0 com.samsung.android.mtp" in joined
+    assert "pm disable-user --user 0 com.samsung.android.MtpApplication" in joined
+    # usbsettings owns the USB notification state: stopped + overlay off, not disabled.
+    assert "pm disable-user --user 0 com.sec.usbsettings" not in joined
+    assert "am force-stop com.sec.usbsettings" in joined
+    assert "svc usb" not in joined  # runtime-only, applied separately at startup
+    assert usb_config_has_mtp("mtp,conn_gadget,adb") is True
+    assert usb_config_has_mtp("adb") is False
+
+    # Guard: dismissed in BOTH modes (branch precedes the admin-mode skip) and
+    # never touches the RSA UsbDebuggingActivity prompt.
+    script = LOCKDOWN_GUARD_SCRIPT
+    loop = script[script.index("while true; do") :]
+    assert "dismiss_usb_popup" in script
+    assert loop.index('dismiss_usb_popup "$pkg" "$act"') < loop.index(
+        "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi"
+    )
+    assert "com.samsung.android.mtp|com.samsung.android.mtpapplication|com.sec.usbsettings)" in script
+    assert "*usbconfirmactivity*|*usbpermissionactivity*" in script
+    assert "*usbdebuggingactivity*" not in script.lower()  # never a case pattern
+    for pkg in USB_POPUP_PACKAGES:
+        assert pkg.lower() in script
+
+    # Startup applier: settings script + conditional setFunctions.
+    class _UsbRunner(_GuardRunner):
+        def __init__(self, config: str) -> None:
+            super().__init__()
+            self.config = config
+
+        def run(self, serial: str, arguments: list[str], **kw) -> AdbCommandResult:
+            if arguments[:2] == ["shell", "getprop"]:
+                self.calls.append(list(arguments))
+                return AdbCommandResult(stdout=self.config, stderr="")
+            return super().run(serial, arguments, **kw)
+
+    runner = _UsbRunner("mtp,conn_gadget,adb")
+    assert apply_usb_popup_suppression(runner, "RFCNB056WEV", set_functions=True) is True
+    flat = " || ".join(" ".join(args) for args in runner.calls)
+    assert "adb_allowed_connection_time 0" in flat
+    assert "svc usb setFunctions adb" in flat
+    runner = _UsbRunner("adb")
+    assert apply_usb_popup_suppression(runner, "18171FDF6005WG", set_functions=True) is True
+    flat = " || ".join(" ".join(args) for args in runner.calls)
+    assert "svc usb setFunctions" not in flat
+    runner = _UsbRunner("mtp,adb")
+    assert apply_usb_popup_suppression(runner, "RFCNB056WEV", set_functions=False) is True
+    flat = " || ".join(" ".join(args) for args in runner.calls)
+    assert "svc usb setFunctions" not in flat and "getprop" not in flat
+
+
 def test_pause_renter_lockdown_restores_previous_mode():
     """Internal farm tasks pause kicks via the flag, then restore the prior state."""
     from application.device_hardware_lockdown import pause_renter_lockdown
