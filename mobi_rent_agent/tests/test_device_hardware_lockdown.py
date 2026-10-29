@@ -156,7 +156,12 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "com.sec.android.gallery3d" in script
     assert "input keyevent 3" in script
     assert "am force-stop" in script
-    assert "sleep 1" in script
+    assert "sleep 0.4" in script
+    assert 'mv -f "$STATE.tmp" "$STATE"' in script
+    # Single-instance takeover is done on-device (one `ps` pass, exact ARGS
+    # match) so a missed host-side kill sweep can never leave two guards.
+    assert "kill_siblings" in script
+    assert '[ "$rest" = "sh /data/local/tmp/mobirent_lockdown_guard.sh" ]' in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
     assert "euiccmanager" not in script.lower()
     assert "wipe_esims" not in script.lower()
@@ -189,6 +194,42 @@ def test_set_admin_mode_touches_and_clears_flag():
     joined = " ".join(" ".join(args) for args in runner.calls)
     assert f"rm -f {ADMIN_MODE_FLAG}" in joined
     assert "pm disable-user --user 0 com.android.chrome" in joined
+
+
+def test_set_admin_mode_without_transition_skips_policy_churn():
+    """Re-opening a stream on a phone already in client mode must not re-run
+    pm disable / am force-stop (that is what disconnects live GADS sessions)."""
+    runner = _GuardRunner()
+    runner.running = True
+    runner.admin_flag = False
+    assert set_device_admin_mode(runner, "RFCNB056WEV", False) is True
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert f"rm -f {ADMIN_MODE_FLAG}" in joined
+    assert "pm disable-user" not in joined
+    assert "am force-stop" not in joined
+    assert "sysui_qs_tiles" not in joined
+    assert len(runner.calls) <= 3, runner.calls
+    # Explicit API flip (reassert=True) still re-applies the full policy.
+    runner.calls.clear()
+    assert set_device_admin_mode(runner, "RFCNB056WEV", False, reassert=True) is True
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert "pm disable-user --user 0 com.android.chrome" in joined
+    # device_access_mode task honours payload.reassert=false.
+    runner.calls.clear()
+    result = run_device_access_mode(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="j2",
+            task_type="device_access_mode",
+            farm_slot_id=21,
+            payload={"admin": False, "reassert": False},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True and result.details["admin"] is False
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    assert "pm disable-user" not in joined
 
 
 def test_device_access_mode_task_sets_admin_flag():
@@ -397,13 +438,20 @@ def test_live_s20_guard_kicks_sounds_and_vibration_and_holds_mute():
 
     runner.run(S20_SERIAL, ["shell", "settings", "put", "global", "mode_ringer", "1"])
     runner.run(S20_SERIAL, ["shell", "settings", "put", "system", "vibrate_on", "1"])
-    time.sleep(1.5)
-    ringer = runner.run(
-        S20_SERIAL, ["shell", "settings", "get", "global", "mode_ringer"]
-    ).stdout.strip()
-    vibrate = runner.run(
-        S20_SERIAL, ["shell", "settings", "get", "system", "vibrate_on"]
-    ).stdout.strip()
+    # Audio drift is re-pinned every 10 guard ticks (~4-5s); screen kicks stay
+    # on the 0.4s hot path. Poll up to 7s.
+    deadline = time.monotonic() + 7.0
+    ringer = vibrate = "?"
+    while time.monotonic() < deadline:
+        ringer = runner.run(
+            S20_SERIAL, ["shell", "settings", "get", "global", "mode_ringer"]
+        ).stdout.strip()
+        vibrate = runner.run(
+            S20_SERIAL, ["shell", "settings", "get", "system", "vibrate_on"]
+        ).stdout.strip()
+        if ringer == "0" and vibrate == "0":
+            break
+        time.sleep(0.5)
     assert ringer == "0", ringer
     assert vibrate == "0", vibrate
 

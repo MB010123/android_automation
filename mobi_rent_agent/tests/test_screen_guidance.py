@@ -78,10 +78,53 @@ def test_guard_script_writes_screen_state_and_blocked_kick():
     assert "blocked_security" in script
     assert "blocked_reset" in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
-    assert "sleep 1" in script
+    assert "sleep 0.4" in script
     assert "dumpsys window displays" in script
     assert "is_settings_home" in script
     assert "settingshomepage" in script
+    # Atomic state write: readers never see a torn line.
+    assert f'> "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"' in script
+    # Hot path order inside the loop: focus read happens before enforce_audio.
+    loop = script[script.index("while true; do") :]
+    assert loop.index("dumpsys window displays") < loop.index("enforce_audio")
+
+
+def test_screen_guidance_coalesces_concurrent_polls_and_keeps_last_known():
+    import threading
+
+    clear_screen_guidance_caches()
+
+    class SlowRunner(FakeRunner):
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:  # noqa: D401
+            if arguments[:3] == ["shell", "cat", SCREEN_STATE_REMOTE]:
+                time.sleep(0.15)
+            return super().run(serial, arguments)
+
+    runner = SlowRunner("dialer||0")
+    results: list[str] = []
+
+    def poll() -> None:
+        results.append(
+            cached_device_screen_guidance(runner, S20_SERIAL, slot_id=S20_SLOT)["screen_key"]
+        )
+
+    threads = [threading.Thread(target=poll) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    cats = sum(1 for _serial, args in runner.calls if args[:2] == ["shell", "cat"])
+    assert cats == 1, runner.calls
+    assert results == [SCREEN_KEY_DIALER] * 8
+
+    # Empty / timed-out cat => last known state, never a dumpsys fallback.
+    time.sleep(0.45)
+    runner.state_line = ""
+    again = cached_device_screen_guidance(runner, S20_SERIAL, slot_id=S20_SLOT)
+    assert again["screen_key"] == SCREEN_KEY_DIALER
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "dumpsys" not in joined
+    assert "getprop" not in joined
 
 
 def test_catalog_covers_every_screen_key_with_do_and_dont():

@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,9 @@ FARM_STATUS_PATH = "/farm/status"
 _SESSION_QUERY_RE = re.compile(r"([?&]session=)[0-9a-fA-F-]{8,36}", re.IGNORECASE)
 # Upper bound per background thread when shutting down (never indefinite).
 SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
+# Farm `/agent/status` (one `adb devices` on the host) is shared across all
+# dashboard polls for this long instead of being re-fetched per request.
+FARM_STATUS_CACHE_SECONDS = 2.0
 DEFAULT_WEBHOOK_PATH = "/voidfix/inbound"
 
 logger = logging.getLogger("vps_backend")
@@ -1513,10 +1517,23 @@ def main() -> int:
     logger.info("farm_known_slots=%s", sorted(known_slots))
     overrides = load_slot_public_id_overrides(os.getenv("SLOT_PUBLIC_ID_MAP_PATH"))
 
+    farm_status_cache: dict[str, Any] = {"at": 0.0, "body": None}
+    farm_status_lock = threading.Lock()
+
     def _farm_status() -> dict[str, Any]:
         if not farm_url or not farm_token:
             return {"ok": False, "error": "farm_agent_not_configured"}
-        return fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
+        # device-status / remote-access GETs are polled by every open dashboard;
+        # coalesce them so the Farm Agent runs `adb devices` at most every 2s.
+        with farm_status_lock:
+            cached = farm_status_cache["body"]
+            if cached is not None and time.monotonic() - farm_status_cache["at"] < FARM_STATUS_CACHE_SECONDS:
+                return dict(cached)
+            body = fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
+            if isinstance(body, dict) and "offline_slots" in body:
+                farm_status_cache["body"] = dict(body)
+                farm_status_cache["at"] = time.monotonic()
+            return body
 
     vps_jobs_db = os.getenv(
         "VPS_JOBS_DB_PATH",

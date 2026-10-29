@@ -632,11 +632,13 @@ class RemoteAccessService:
         """Customer routes always run the phone in client lockdown (``admin=false``).
 
         Best-effort VPS -> Farm flip: removes ``/data/local/tmp/mobirent_admin_mode``
-        and makes sure the 1s guard is running. Never raises, never blocks access.
+        and makes sure the guard is running. ``reassert=False`` so a phone that is
+        already in client mode gets no app-policy churn while a stream may be
+        open. Never raises, never blocks access.
         """
         from application.device_hardware_lockdown import request_device_access_mode
 
-        request_device_access_mode(self._farm, int(slot_id), admin=False)
+        request_device_access_mode(self._farm, int(slot_id), admin=False, reassert=False)
 
     def screen_guidance_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         """Lightweight polling payload for the dashboard instruction bubble."""

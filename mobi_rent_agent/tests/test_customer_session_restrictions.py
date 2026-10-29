@@ -46,7 +46,8 @@ def test_customer_remote_access_always_flips_phone_to_client_mode(tmp_path: Path
     _tenant, _platform, farm, service, _store, rental = _created(tmp_path)
     flips = [t for t in farm.tasks if t["type"] == "device_access_mode"]
     assert flips and flips[-1]["slot"] == 2
-    assert all(t["payload"] == {"admin": False} for t in flips)
+    # Implicit flips never reassert policy (no app churn under a live stream).
+    assert all(t["payload"] == {"admin": False, "reassert": False} for t in flips)
     created_again = service.create_remote_access(CUSTOMER_A, None, rental)
     assert created_again.http_status == 200
     assert created_again.body["admin"] is False
@@ -58,7 +59,7 @@ def test_customer_remote_access_always_flips_phone_to_client_mode(tmp_path: Path
     assert getattr(stream, "device_id") == SLOT2_SERIAL
     flips = [t for t in farm.tasks if t["type"] == "device_access_mode"]
     assert len(flips) == before + 1
-    assert all(t["payload"] == {"admin": False} for t in flips)
+    assert all(t["payload"] == {"admin": False, "reassert": False} for t in flips)
     # Customer `control` with admin=true is clamped to client mode.
     clamped = service.control_session(CUSTOMER_A, rental, {"admin": True})
     assert clamped.http_status == 200

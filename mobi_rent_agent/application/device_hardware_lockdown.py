@@ -34,8 +34,14 @@ DPM_NO_ADJUST_VOLUME = "no_adjust_volume"
 DPM_NO_UNMUTE_MICROPHONE = "no_unmute_microphone"
 DPM_NO_CAMERA = "no_camera"
 
-AUDIO_ENFORCE_INTERVAL_SECONDS = 4.0
-GUARD_CHECK_INTERVAL_SECONDS = 5.0
+# The on-device guard owns mute + kicks. Host-side reasserts are a slow safety
+# net only: they spawn `adb shell` processes that compete with GADS' persistent
+# ADB sockets on the 21-bay hub, so keep them rare.
+AUDIO_ENFORCE_INTERVAL_SECONDS = 30.0
+# Respawn sweep: one `ps` per phone. 60s is plenty for a daemon that only dies
+# on reboot / adbd restart; session start and access-mode flips re-check anyway.
+GUARD_CHECK_INTERVAL_SECONDS = 60.0
+GUARD_TICK_SECONDS = 0.4
 LOCKDOWN_GUARD_REMOTE = "/data/local/tmp/mobirent_lockdown_guard.sh"
 LOCKDOWN_GUARD_PGREP = "mobirent_lockdown_guard.sh"
 ADMIN_MODE_FLAG = "/data/local/tmp/mobirent_admin_mode"
@@ -96,19 +102,24 @@ def build_lockdown_guard_script() -> str:
     settings_pkg = RENTER_SETTINGS_PACKAGE
     template = r"""#!/system/bin/sh
 # On-device Phone/SMS/eSIM allowlist + mute. Independent of GADS/HTTP.
-# Hot path per 1s tick: two `settings get` reads + one `dumpsys window displays`
-# focus grep. `dumpsys activity top` only runs for com.android.settings/.SubSettings.
+# Hot path per 0.4s tick: one `dumpsys window displays` focus grep, then the
+# state file. `settings get` audio checks every 10 ticks; `dumpsys activity top`
+# only for com.android.settings/.SubSettings.
 PIDFILE=/data/local/tmp/mobirent_lockdown_guard.pid
-if [ -f "$PIDFILE" ]; then
-  old=$(cat "$PIDFILE" 2>/dev/null)
-  if [ -n "$old" ] && [ "$old" != "$$" ] && kill -0 "$old" 2>/dev/null; then
-    cmd=$(tr '\0' ' ' < "/proc/$old/cmdline" 2>/dev/null)
-    case "$cmd" in
-      *mobirent_lockdown_guard.sh*) exit 0 ;;
-    esac
-  fi
-fi
+# Single instance: the newest launch wins. One `ps` pass; kill any other live
+# guard whose ARGS is exactly `sh <script>` (never the nohup wrapper shell).
+# Second pass 0.5s later catches a sibling that was still mid-exec.
+kill_siblings() {
+  ps -A -o PID,ARGS 2>/dev/null | while read -r p rest; do
+    if [ "$rest" = "sh /data/local/tmp/mobirent_lockdown_guard.sh" ] && [ "$p" != "$$" ]; then
+      kill -9 "$p" 2>/dev/null
+    fi
+  done
+}
+kill_siblings
 echo $$ > "$PIDFILE"
+sleep 0.5
+kill_siblings
 
 mute_streams() {
   cmd media_session volume --stream 1 --set 0 >/dev/null 2>&1
@@ -240,9 +251,11 @@ classify_focus() {
 STATE=/data/local/tmp/mobirent_screen_state
 cur_line=""
 kick_until=0
+tick=0
 
 write_state() {
-  printf '%s\n' "$1" > "$STATE"
+  # Atomic: readers (`cat`) never see a half-written line.
+  printf '%s\n' "$1" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
   cur_line=$1
 }
 
@@ -279,7 +292,8 @@ write_state "home||0"
 
 while true; do
   if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi
-  enforce_audio
+  # Hot path first: one focus read, then the state file is written by the
+  # classify/kick branches below BEFORE any slower work (audio every ~4s).
   focus=$(dumpsys window displays 2>/dev/null | grep -E 'mCurrentFocus|mFocusedApp' | grep -v '=null' | tail -n 1)
   pkg=$(extract_pkg "$focus")
   act=$(extract_act "$focus")
@@ -331,7 +345,12 @@ while true; do
       kick_and_record blocked_app "$pkg"
       ;;
   esac
-  sleep 1
+  tick=$((tick + 1))
+  if [ "$tick" -ge 10 ]; then
+    tick=0
+    enforce_audio
+  fi
+  sleep 0.4
 done
 """
     return (
@@ -643,10 +662,9 @@ def start_lockdown_guard_process(runner: Any, serial: str) -> bool:
     if runner is None:
         return False
     stop_lockdown_guard_process(runner, serial)
-    launch = (
-        "rm -f /data/local/tmp/mobirent_lockdown_guard.pid; "
-        f"nohup sh {LOCKDOWN_GUARD_REMOTE} >/dev/null 2>&1 &"
-    )
+    # The script kills any surviving sibling itself, so a missed `ps` sweep
+    # can never leave two guards polling the same phone.
+    launch = f"nohup sh {LOCKDOWN_GUARD_REMOTE} >/dev/null 2>&1 &"
     try:
         runner.run(serial, ["shell", launch])
         return True
@@ -721,12 +739,18 @@ def set_device_admin_mode(
     *,
     ensure_guard: bool = True,
     apply_policy: bool = True,
+    reassert: bool = False,
 ) -> bool:
-    """Touch or remove the admin-mode flag. The 1s daemon stays running either way.
+    """Touch or remove the admin-mode flag. The guard daemon stays running either way.
 
     ``apply_policy=True`` (API / live access) restores Quick Settings and hidden
     apps for admin, or re-applies client hardware lockdown. Automated farm
     tasks pass ``apply_policy=False`` so they only pause kicks.
+
+    Policy commands (``pm disable-user`` / ``am force-stop`` / tiles) only run on
+    an actual mode *transition* unless ``reassert`` is set. Re-opening a stream
+    on a phone that is already in the requested mode is then two cheap ADB
+    calls and never disturbs an active GADS session.
     """
     key = str(serial or "").strip()
     if not key or runner is None:
@@ -736,6 +760,8 @@ def set_device_admin_mode(
             ensure_on_device_lockdown_guard(runner, key, redeploy=False)
         except (AdbCommandError, OSError, TypeError):
             logger.info("lockdown_guard_ensure_skipped serial=%s", key)
+    if apply_policy and not reassert:
+        apply_policy = is_device_admin_mode(runner, key) != bool(admin)
     if admin:
         try:
             runner.run(key, ["shell", f"touch {ADMIN_MODE_FLAG}"])
@@ -817,7 +843,12 @@ def run_device_access_mode(
         state = ""
     if state != "device":
         return FarmTaskResult(ok=False, http_status=409, error="device_offline")
-    set_device_admin_mode(runner, serial, admin)
+    # Explicit API flips reassert policy; implicit customer open/stream flips
+    # (`reassert: false`) only act on a real transition.
+    reassert = parse_admin_flag(payload.get("reassert"))
+    set_device_admin_mode(
+        runner, serial, admin, reassert=True if reassert is None else bool(reassert)
+    )
     return FarmTaskResult(
         ok=True,
         http_status=200,
@@ -831,15 +862,20 @@ def run_device_access_mode(
     )
 
 
-def request_device_access_mode(farm_client: Any, slot_id: int, *, admin: bool) -> None:
+def request_device_access_mode(
+    farm_client: Any, slot_id: int, *, admin: bool, reassert: bool = True
+) -> None:
     """Best-effort VPS → Farm admin-mode flip. Never raises."""
     if farm_client is None:
         return
+    payload: dict[str, Any] = {"admin": bool(admin)}
+    if not reassert:
+        payload["reassert"] = False
     try:
         farm_client.run_task(
             task_type=DEVICE_ACCESS_MODE_TASK,
             farm_slot_id=int(slot_id),
-            payload={"admin": bool(admin)},
+            payload=payload,
             job_id=f"access-mode-{int(slot_id)}-{uuid.uuid4().hex[:8]}",
         )
     except Exception:

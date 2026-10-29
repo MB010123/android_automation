@@ -160,7 +160,10 @@ def run_setup_session_inspect(
 
         lock_runner = runner or AdbCommandRunner(adb_path, timeout_seconds=8.0)
         apply_payload_admin_mode(lock_runner, serial, payload)
-        reassert_audio_lockdown(lock_runner, serial, activity=activity, force=True)
+        # The on-device guard owns mute/kicks every 0.4s; this host-side reassert
+        # is rate-limited (30s) so dashboard polling never bursts `adb shell`
+        # next to an active GADS stream.
+        reassert_audio_lockdown(lock_runner, serial, activity=activity, force=False)
     except Exception:
         logger.info("audio_lockdown_inspect_skipped slot=%s", request.farm_slot_id)
     decision = decide_setup_guard(phase=phase, activity=activity, voidfix_package=voidfix_package)
