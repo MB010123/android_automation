@@ -8,12 +8,16 @@ never sends HOME, and brings OEM SIM/eSIM settings to the front.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any, Callable
 
 from application.farm_task_types import FarmTaskRequest, FarmTaskResult
 from application.esim_setup_ui_state import OEM_PIXEL, OEM_SAMSUNG, SETUP_UI_AWAITING
 from application.device_hardware_lockdown import (
+    ADB_UNRESPONSIVE_ERROR,
+    USB_REPLUG_HINT,
+    adb_shell_responsive,
     apply_usb_popup_suppression,
     ensure_on_device_lockdown_guard,
     hardware_lockdown_commands,
@@ -129,6 +133,13 @@ def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
     return serial or None
 
 
+def _run_adb(runner: AdbCommandRunner, serial: str, arguments: list[str], timeout_seconds: float):
+    try:
+        return runner.run(serial, arguments, timeout_seconds=timeout_seconds)
+    except TypeError:
+        return runner.run(serial, arguments)
+
+
 def _wait_boot_completed(
     runner: AdbCommandRunner,
     serial: str,
@@ -136,23 +147,36 @@ def _wait_boot_completed(
     sleep_fn: Callable[[float], None],
     timeout_seconds: float,
 ) -> bool:
+    """Poll until ``sys.boot_completed=1``. Bound by wall clock, not N hung ADB calls.
+
+    After a warm reboot a missing serial used to make each ``get-state`` hang
+    for the full 20s runner timeout, so 90 polls blocked Farm Agent for tens
+    of minutes and the Admin Control Panel live-access request never returned.
+    """
+    budget = max(1.0, float(timeout_seconds))
+    poll_timeout = min(5.0, max(1.5, budget / 18.0))
+    deadline = time.monotonic() + budget
     try:
-        runner.run(serial, ["wait-for-device"])
+        _run_adb(runner, serial, ["wait-for-device"], min(8.0, budget))
     except AdbCommandError as exc:
         warnings.append(f"wait-for-device: {exc.__class__.__name__}")
-    deadline_ticks = max(1, int(timeout_seconds / BOOT_POLL_SECONDS))
-    for _ in range(deadline_ticks):
+    while time.monotonic() < deadline:
         try:
-            state = runner.run(serial, ["get-state"]).stdout.strip()
+            state = _run_adb(runner, serial, ["get-state"], poll_timeout).stdout.strip()
         except AdbCommandError:
             state = ""
         try:
-            boot = runner.run(serial, ["shell", "getprop", "sys.boot_completed"]).stdout.strip()
+            boot = _run_adb(
+                runner, serial, ["shell", "getprop", "sys.boot_completed"], poll_timeout
+            ).stdout.strip()
         except AdbCommandError:
             boot = ""
         if state == "device" and boot == "1":
             return True
-        sleep_fn(BOOT_POLL_SECONDS)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        sleep_fn(min(BOOT_POLL_SECONDS, remaining))
     warnings.append("boot_completed_timeout")
     return False
 
@@ -204,6 +228,25 @@ def run_device_screen_prepare(
                 "warnings": warnings,
             },
         )
+    # `get-state` is answered by the host adb server; a phone whose adbd is
+    # wedged (One UI after a bad USB re-init) still reports `device` while
+    # every shell hangs. Probe once (5s) instead of 8 x 20s timeouts that make
+    # the Admin Control Panel request time out.
+    if not adb_shell_responsive(runner, serial):
+        logger.warning("device_screen_prepare_adb_unresponsive slot=%s serial=%s", slot_id, serial)
+        return FarmTaskResult(
+            ok=False,
+            http_status=409,
+            error=ADB_UNRESPONSIVE_ERROR,
+            details={
+                "ok": False,
+                "slot_id": slot_id,
+                "serial": serial,
+                "status": ADB_UNRESPONSIVE_ERROR,
+                "hint": USB_REPLUG_HINT,
+                "warnings": warnings,
+            },
+        )
     manufacturer = _prop(runner, serial, "ro.product.manufacturer")
     model = _prop(runner, serial, "ro.product.model")
     samsung_s20 = is_samsung_s20(
@@ -241,8 +284,8 @@ def run_device_screen_prepare(
             warnings.append("lockdown_guard: start_failed")
     except (AdbCommandError, OSError, TypeError) as exc:
         warnings.append(f"lockdown_guard: {exc.__class__.__name__}")
-    # USB replug / reboot popups + ADB auth timer. Settings only here; the
-    # runtime `svc usb setFunctions` is startup-only (may bounce USB on AOSP).
+    # USB replug / reboot popups + ADB auth timer (settings + Samsung MTP
+    # re-enable). Never reconfigures the USB gadget.
     try:
         if not apply_usb_popup_suppression(runner, serial, set_functions=False):
             warnings.append("usb_popup_suppression: skipped")

@@ -610,6 +610,12 @@ class AdminLiveAccessService:
                 slot_id,
                 _gads_error_category(exc),
             )
+            if self._adb_online(int(slot_id)) is True:
+                logger.info(
+                    "admin_live_access_ready slot=%s gads_error adb_online=true",
+                    slot_id,
+                )
+                return device_id, self._platform
             return ApiResult(502, error_body("gads_unavailable"))
         logger.info(
             "admin_live_access_ready slot=%s registered=%s online=%s workspace_mapped=%s",
@@ -618,6 +624,16 @@ class AdminLiveAccessService:
             bool(status.online),
             bool(workspace),
         )
+        if status.registered and status.online:
+            return device_id, self._platform
+        if self._adb_online(int(slot_id)) is True:
+            logger.info(
+                "admin_live_access_ready slot=%s registered=%s gads_online=%s adb_online=true",
+                slot_id,
+                bool(status.registered),
+                bool(status.online),
+            )
+            return device_id, self._platform
         if not status.registered:
             return ApiResult(
                 503,
@@ -626,18 +642,10 @@ class AdminLiveAccessService:
                     message="The selected phone is not registered with the screen service",
                 ),
             )
-        if not status.online:
-            if self._adb_online(int(slot_id)) is True:
-                logger.info(
-                    "admin_live_access_ready slot=%s registered=true gads_online=false adb_online=true",
-                    slot_id,
-                )
-                return device_id, self._platform
-            return ApiResult(
-                409,
-                error_body("phone_offline", message="The selected phone is offline"),
-            )
-        return device_id, self._platform
+        return ApiResult(
+            409,
+            error_body("phone_offline", message="The selected phone is offline"),
+        )
 
     def _adb_online(self, slot_id: int) -> bool | None:
         if self._farm_status is None:

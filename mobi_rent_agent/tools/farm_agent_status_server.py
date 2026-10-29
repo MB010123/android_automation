@@ -40,6 +40,22 @@ JOB_PATH_RE = re.compile(r"^/agent/jobs/([^/]+)$")
 
 logger = logging.getLogger("farm_agent_status")
 
+# platform-tools 37 switched Windows to the `libadbusb` backend. On this 21-bay
+# hub it opens each interface exactly once at server start, a random subset
+# fails with "Access is denied" and is never retried (observed 1/21, 7/21, 4/21
+# devices after three restarts). `ADB_USB_LEGACY=1` selects the NATIVE backend
+# that polls every second and re-attaches devices after reboot/replug.
+# Setting it here guarantees any adb server the Farm Agent spawns uses it.
+ADB_USB_LEGACY_ENV = "ADB_USB_LEGACY"
+
+
+def ensure_adb_usb_legacy_env(environ: dict[str, str] | None = None) -> bool:
+    env = os.environ if environ is None else environ
+    if str(env.get(ADB_USB_LEGACY_ENV, "")).strip():
+        return False
+    env[ADB_USB_LEGACY_ENV] = "1"
+    return True
+
 
 def _adb_device_states(adb_path: str) -> dict[str, str]:
     try:
@@ -368,6 +384,8 @@ def main() -> int:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if ensure_adb_usb_legacy_env():
+        logger.info("adb_usb_backend forced=native via %s=1", ADB_USB_LEGACY_ENV)
 
     from infrastructure.adb_slot_status import SlotMapError, load_slot_map
     from infrastructure.config import ConfigError, load_config

@@ -98,6 +98,7 @@ def _mgmt(tmp_path: Path, *, farm: MockFarmTaskClient | None = None, offline: li
         rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
         auth_store=tenant,
         esim_url_prefixes=ESIM_PREFIXES,
+        farm_task_client=farm,
     )
     return svc, worker, farm, jobs, tenant
 
@@ -208,6 +209,19 @@ def test_assign_provisioning_failure_releases_bay(tmp_path: Path):
     assert svc.get_job(job_id).body["state"] == "failed"
     assert svc.get_job(job_id).body["error"] == "provisioning_failed"
     assert not assign.is_assigned(1)
+
+
+def test_reboot_slot_prepares_admin_mode_after_boot(tmp_path: Path):
+    farm = MockFarmTaskClient()
+    svc, _, _, _, _ = _mgmt(tmp_path, farm=farm)
+    result = svc.reboot_slot(1)
+    assert result.http_status == 200
+    assert result.body["rebooted"] is True
+    assert result.body["screen_prepared"] is True
+    assert [c["task_type"] for c in farm.calls] == ["reboot", "device_screen_prepare"]
+    prepare = farm.calls[1]
+    assert prepare["payload"] == {"wait_boot": True, "admin": True}
+    assert prepare.get("timeout_seconds") == 180.0
 
 
 def test_action_reboot_and_unsupported(tmp_path: Path):

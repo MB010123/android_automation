@@ -1168,7 +1168,16 @@ class VpsFarmManagementService:
         rebooted = self._farm_task_result(bay, "reboot", {})
         if rebooted.http_status >= 400:
             return rebooted
-        prepared = self._farm_task_result(bay, "device_screen_prepare", {"wait_boot": True})
+        # Admin Control Panel reboot must come back in admin mode. Default
+        # prepare (admin omitted) would flip the phone into client lockdown.
+        # Wait-boot can take a full Samsung boot (~45-90s); do not use the
+        # short screenshot timeout.
+        prepared = self._farm_task_result(
+            bay,
+            "device_screen_prepare",
+            {"wait_boot": True, "admin": True},
+            timeout_seconds=180.0,
+        )
         body = {
             "ok": prepared.http_status < 400,
             "rebooted": True,

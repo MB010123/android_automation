@@ -514,13 +514,27 @@ def test_adb_online_allows_live_view_when_gads_not_live(tmp_path: Path):
 
     platform.online[SLOT1_SERIAL] = True
     platform.status_error = "gads_unreachable: Timeout"
+    recovered = svc.create_session(_admin(), 1)
+    assert recovered.http_status in {200, 201}
+    assert recovered.body["serial"] == SLOT1_SERIAL
+
+    svc._farm_status = None
     failed = svc.create_session(_admin(), 1)
     assert failed.http_status == 502
     assert failed.body["error"] == "gads_unavailable"
     assert "gads_unreachable" not in json.dumps(failed.body)
 
+    svc._farm_status = lambda: {
+        "ok": True,
+        "offline_slots": [],
+        "mapped_slots": [1, 2],
+    }
     platform.status_error = None
     platform.registered.discard(SLOT1_SERIAL)
+    unregistered = svc.create_session(_admin(), 1)
+    assert unregistered.http_status in {200, 201}
+
+    svc._farm_status = None
     missing = svc.create_session(_admin(), 1)
     assert missing.http_status == 503
     assert missing.body["error"] == "phone_unavailable"

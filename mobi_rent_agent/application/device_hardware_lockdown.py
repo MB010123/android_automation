@@ -312,7 +312,7 @@ subsettings_reason() {
 
 # USB replug / reboot popups ("Allow access to phone data?", USB mode sheet,
 # app-level USB permission). Dismissed in BOTH admin and client mode, before
-# the admin check. UsbDebuggingActivity is left alone on purpose: BACK = Deny.
+# the admin check. The RSA USB-debugging prompt is left alone: BACK = Deny.
 dismiss_usb_popup() {
   case "$1" in
     __USB_POPUP_PKGS__)
@@ -612,17 +612,29 @@ def usb_popup_suppression_commands() -> tuple[str, ...]:
       revocation so the farm host's RSA key never expires.
     * ``usb_mass_storage_enabled 0`` + ``usb_audio_automatic_routing_disabled 1``
       keep the gadget from advertising storage/audio roles.
-    * Samsung MTP app: overlay permission off, disabled, stopped (best-effort;
-      no-ops on Pixel). ``com.sec.usbsettings`` keeps running (it owns the USB
-      notification state) but loses its overlay permission.
+    * ``stay_on_while_plugged_in 7`` + the persist.adb props keep the screen
+      and adbd up after a reboot on USB power (props are best-effort: the shell
+      user may not own them on every build).
+    * Samsung MTP app stays ENABLED. One UI's boot-time gadget composition
+      (``mtp,conn_gadget,adb``) needs ``com.samsung.android.mtp`` to finish USB
+      enumeration; with the package disabled a warm reboot leaves the S20
+      stuck un-enumerated until the cable is physically replugged. We only
+      drop its overlay permission; the on-device guard force-stops it the
+      moment its dialog takes focus (after boot). ``pm enable`` here repairs
+      phones that were disabled by the previous build.
+    * ``com.sec.usbsettings`` keeps running (it owns the USB notification
+      state) but loses its overlay permission.
     """
     return (
         "settings put global adb_allowed_connection_time 0",
         "settings put global usb_mass_storage_enabled 0",
         "settings put secure usb_audio_automatic_routing_disabled 1",
+        "settings put global stay_on_while_plugged_in 7",
+        "settings put global adb_enabled 1",
+        "setprop persist.adb.ysa 1",
+        "setprop persist.service.adb.enable 1",
         *(f"cmd appops set {pkg} SYSTEM_ALERT_WINDOW ignore" for pkg in USB_POPUP_PACKAGES),
-        *(f"pm disable-user --user 0 {pkg}" for pkg in SAMSUNG_MTP_PACKAGES),
-        *(f"am force-stop {pkg}" for pkg in USB_POPUP_PACKAGES),
+        *(f"pm enable {pkg}" for pkg in SAMSUNG_MTP_PACKAGES),
     )
 
 
@@ -639,11 +651,12 @@ def apply_usb_popup_suppression(
 ) -> bool:
     """Apply :func:`usb_popup_suppression_commands` on one phone (best-effort).
 
-    ``set_functions=True`` (Farm Agent startup only) additionally tries
-    ``svc usb setFunctions adb`` when ``sys.usb.config`` still carries mtp/ptp.
-    That call is runtime-only, can re-enumerate USB on AOSP, and is killed by
-    One UI (rc 137, no effect) - so it runs as its own last command and never
-    during session prepare where a GADS stream may be open.
+    ``set_functions=True`` additionally tries ``svc usb setFunctions adb`` when
+    ``sys.usb.config`` still carries mtp/ptp. That call re-configures the USB
+    gadget at runtime (can re-enumerate on AOSP, is killed by One UI with
+    rc 137). Nothing in the Farm Agent passes it any more - reconfiguring the
+    gadget is exactly what wedges adbd on the S20 - it stays available for
+    explicit operator use only.
     """
     key = str(serial or "").strip()
     if not key or runner is None:
@@ -666,6 +679,111 @@ def apply_usb_popup_suppression(
                 logger.info("usb_set_functions_rejected serial=%s", key)
     logger.info("usb_popup_suppression_applied serial=%s", key)
     return True
+
+
+ADB_RESPONSIVE_TIMEOUT_SECONDS = 5.0
+ADB_UNRESPONSIVE_ERROR = "device_adb_unresponsive"
+USB_REPLUG_HINT = "adbd does not answer shell streams; USB replug or port reset required"
+
+
+def adb_shell_responsive(
+    runner: Any, serial: str, *, timeout_seconds: float = ADB_RESPONSIVE_TIMEOUT_SECONDS
+) -> bool:
+    """One cheap ``shell echo`` with a short timeout.
+
+    ``adb get-state`` is answered by the host server and says ``device`` even
+    when adbd on the phone no longer services streams (One UI after a bad USB
+    gadget re-init). Every later ``shell`` would then hang to its timeout, so
+    callers probe once and fail fast with :data:`ADB_UNRESPONSIVE_ERROR`.
+    """
+    key = str(serial or "").strip()
+    if not key or runner is None:
+        return False
+    try:
+        try:
+            runner.run(key, ["shell", "echo", "mobirent_ok"], timeout_seconds=timeout_seconds)
+        except TypeError:
+            runner.run(key, ["shell", "echo", "mobirent_ok"])
+    except (AdbCommandError, OSError):
+        return False
+    return True
+
+
+def _wait_boot_completed_quick(
+    runner: Any, serial: str, *, timeout_seconds: float, poll_seconds: float, stop: threading.Event
+) -> bool:
+    deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+    while not stop.is_set() and time.monotonic() < deadline:
+        try:
+            boot = str(runner.run(serial, ["shell", "getprop", "sys.boot_completed"]).stdout or "").strip()
+        except (AdbCommandError, OSError, TypeError):
+            boot = ""
+        if boot == "1":
+            return True
+        stop.wait(poll_seconds)
+    return False
+
+
+RECONNECT_BOOT_WAIT_SECONDS = 150.0
+RECONNECT_POLL_SECONDS = 2.0
+RECONNECT_WAKE_COMMANDS = (
+    "settings put global stay_on_while_plugged_in 7",
+    "input keyevent KEYCODE_WAKEUP",
+    "wm dismiss-keyguard",
+    "input keyevent 82",
+)
+
+
+def recover_device_after_reconnect(
+    runner: Any,
+    serial: str,
+    *,
+    stop: threading.Event | None = None,
+    boot_wait_seconds: float = RECONNECT_BOOT_WAIT_SECONDS,
+    poll_seconds: float = RECONNECT_POLL_SECONDS,
+) -> dict[str, Any]:
+    """Post-reboot / replug recovery for one phone.
+
+    Waits for ``sys.boot_completed=1``, then wakes the screen, dismisses the
+    keyguard, restarts the on-device guard and re-pins USB popup suppression.
+    Never raises; the result dict is for logs/tests.
+    """
+    key = str(serial or "").strip()
+    stop = stop or threading.Event()
+    result: dict[str, Any] = {"serial": key, "booted": False, "responsive": False, "guard": False}
+    if not key or runner is None:
+        return result
+    started = time.monotonic()
+    result["booted"] = _wait_boot_completed_quick(
+        runner, key, timeout_seconds=boot_wait_seconds, poll_seconds=poll_seconds, stop=stop
+    )
+    result["boot_wait_seconds"] = round(time.monotonic() - started, 1)
+    if not result["booted"]:
+        logger.warning("device_reconnect_boot_timeout serial=%s", key)
+        return result
+    result["responsive"] = adb_shell_responsive(runner, key)
+    if not result["responsive"]:
+        logger.warning("device_reconnect_adb_unresponsive serial=%s hint=%s", key, USB_REPLUG_HINT)
+        return result
+    try:
+        runner.run(key, ["shell", best_effort_lockdown_script(RECONNECT_WAKE_COMMANDS)])
+    except (AdbCommandError, OSError, TypeError):
+        logger.info("device_reconnect_wake_skipped serial=%s", key)
+    try:
+        result["guard"] = bool(ensure_on_device_lockdown_guard(runner, key, redeploy=True))
+    except (AdbCommandError, OSError, TypeError):
+        result["guard"] = False
+    try:
+        apply_usb_popup_suppression(runner, key, set_functions=False)
+    except (AdbCommandError, OSError, TypeError):
+        pass
+    logger.info(
+        "device_reconnect_recovered serial=%s boot_wait=%ss guard=%s",
+        key,
+        result["boot_wait_seconds"],
+        result["guard"],
+    )
+    return result
 
 
 class AudioLockdownEnforcer:
@@ -952,6 +1070,14 @@ def run_device_access_mode(
         state = ""
     if state != "device":
         return FarmTaskResult(ok=False, http_status=409, error="device_offline")
+    if not adb_shell_responsive(runner, serial):
+        logger.warning("device_access_mode_adb_unresponsive slot=%s serial=%s", slot_id, serial)
+        return FarmTaskResult(
+            ok=False,
+            http_status=409,
+            error=ADB_UNRESPONSIVE_ERROR,
+            details={"ok": False, "slot_id": slot_id, "serial": serial, "hint": USB_REPLUG_HINT},
+        )
     # Explicit API flips reassert policy; implicit customer open/stream flips
     # (`reassert: false`) only act on a real transition.
     reassert = parse_admin_flag(payload.get("reassert"))
@@ -1033,6 +1159,29 @@ def reassert_audio_lockdown(
     return applied
 
 
+RECONNECT_POLL_INTERVAL_SECONDS = 5.0
+
+
+def adb_device_states(adb_path: str, *, timeout_seconds: float = 10.0) -> dict[str, str] | None:
+    """``adb devices`` → ``{serial: state}``; ``None`` when the host server failed."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            [adb_path, "devices"], capture_output=True, text=True, timeout=timeout_seconds, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    states: dict[str, str] = {}
+    for line in proc.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2:
+            states[parts[0]] = parts[1]
+    return states
+
+
 def start_audio_lockdown_loop(
     *,
     adb_path: str,
@@ -1040,10 +1189,26 @@ def start_audio_lockdown_loop(
     interval_seconds: float = GUARD_CHECK_INTERVAL_SECONDS,
     stop_event: threading.Event | None = None,
     command_runner: AdbCommandRunner | None = None,
+    device_states: Callable[[], dict[str, str] | None] | None = None,
+    reconnect_poll_seconds: float = RECONNECT_POLL_INTERVAL_SECONDS,
+    recover: Callable[..., Any] | None = None,
 ) -> threading.Thread:
-    """Deploy the on-device guard and respawn it when ``pgrep`` finds it dead."""
+    """Deploy the on-device guard, respawn it when ``ps`` finds it dead, and
+    recover phones that come back from a reboot / USB replug.
+
+    Two cadences on one thread: every ``reconnect_poll_seconds`` a single
+    host-side ``adb devices`` (no per-phone stream) looks for serials that
+    went missing/offline → ``device``; each such phone gets
+    :func:`recover_device_after_reconnect` on its own short-lived thread
+    (boot wait, wake, keyguard, guard, popup suppression). Every
+    ``interval_seconds`` the usual guard sweep runs for all phones.
+    """
     stop = stop_event or threading.Event()
     runner = command_runner or AdbCommandRunner(adb_path, timeout_seconds=8.0)
+    states_fn = device_states or (lambda: adb_device_states(adb_path))
+    recover_fn = recover or recover_device_after_reconnect
+    recovering: set[str] = set()
+    recovering_lock = threading.Lock()
 
     def _serials() -> list[str]:
         seen: list[str] = []
@@ -1053,24 +1218,55 @@ def start_audio_lockdown_loop(
                 seen.append(text)
         return seen
 
+    def _recover(serial: str) -> None:
+        try:
+            recover_fn(runner, serial, stop=stop)
+        except Exception:  # noqa: BLE001 - daemon thread must never die loudly
+            logger.exception("device_reconnect_recover_failed serial=%s", serial)
+        finally:
+            with recovering_lock:
+                recovering.discard(serial)
+
+    def _poll_reconnects(previous: dict[str, str]) -> dict[str, str]:
+        states = states_fn()
+        if states is None:
+            return previous
+        current = {serial: states.get(serial, "missing") for serial in _serials()}
+        for serial, state in current.items():
+            before = previous.get(serial)
+            if state == "device" and before is not None and before != "device":
+                with recovering_lock:
+                    if serial in recovering:
+                        continue
+                    recovering.add(serial)
+                logger.info("device_reconnect_detected serial=%s previous=%s", serial, before)
+                threading.Thread(
+                    target=_recover, args=(serial,), name=f"reconnect-{serial}", daemon=True
+                ).start()
+        return current
+
     def _loop() -> None:
         first = True
+        previous: dict[str, str] = {}
+        next_sweep = 0.0
         while not stop.is_set():
-            for serial in _serials():
-                if stop.is_set():
-                    return
-                try:
-                    ensure_on_device_lockdown_guard(
-                        runner, serial, redeploy=first
-                    )
-                    if first:
-                        # Farm Agent startup: pin USB/ADB popup suppression on
-                        # every connected phone (one shell call per serial).
-                        apply_usb_popup_suppression(runner, serial, set_functions=True)
-                except (AdbCommandError, OSError, TypeError):
-                    logger.info("lockdown_guard_loop_skipped serial=%s", serial)
-            first = False
-            if stop.wait(interval_seconds):
+            now = time.monotonic()
+            if now >= next_sweep:
+                for serial in _serials():
+                    if stop.is_set():
+                        return
+                    try:
+                        ensure_on_device_lockdown_guard(runner, serial, redeploy=first)
+                        if first:
+                            # Farm Agent startup: pin USB/ADB popup suppression
+                            # (settings + MTP re-enable) on every connected phone.
+                            apply_usb_popup_suppression(runner, serial, set_functions=False)
+                    except (AdbCommandError, OSError, TypeError):
+                        logger.info("lockdown_guard_loop_skipped serial=%s", serial)
+                first = False
+                next_sweep = time.monotonic() + interval_seconds
+            previous = _poll_reconnects(previous)
+            if stop.wait(min(reconnect_poll_seconds, interval_seconds)):
                 return
 
     thread = threading.Thread(target=_loop, name="lockdown-guard", daemon=True)

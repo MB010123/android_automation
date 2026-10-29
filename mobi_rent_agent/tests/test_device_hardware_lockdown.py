@@ -266,12 +266,19 @@ def test_usb_popup_suppression_commands_and_guard_branch():
     assert "settings put secure usb_audio_automatic_routing_disabled 1" in joined
     assert "cmd appops set com.samsung.android.mtp SYSTEM_ALERT_WINDOW ignore" in joined
     assert "cmd appops set com.samsung.android.MtpApplication SYSTEM_ALERT_WINDOW ignore" in joined
-    assert "pm disable-user --user 0 com.samsung.android.mtp" in joined
-    assert "pm disable-user --user 0 com.samsung.android.MtpApplication" in joined
-    # usbsettings owns the USB notification state: stopped + overlay off, not disabled.
-    assert "pm disable-user --user 0 com.sec.usbsettings" not in joined
-    assert "am force-stop com.sec.usbsettings" in joined
-    assert "svc usb" not in joined  # runtime-only, applied separately at startup
+    # One UI needs com.samsung.android.mtp at boot to finish USB enumeration:
+    # a disabled MTP package left the S20 un-enumerated after `adb reboot`
+    # until a physical replug. Never disable it; repair phones that were.
+    assert "pm disable-user" not in joined
+    assert "pm enable com.samsung.android.mtp" in joined
+    assert "pm enable com.samsung.android.MtpApplication" in joined
+    assert "pm enable com.sec.usbsettings" not in joined
+    assert "am force-stop" not in joined  # only the guard stops them, after boot
+    assert "settings put global stay_on_while_plugged_in 7" in joined
+    assert "settings put global adb_enabled 1" in joined
+    assert "setprop persist.adb.ysa 1" in joined
+    assert "setprop persist.service.adb.enable 1" in joined
+    assert "svc usb" not in joined  # never reconfigure the gadget from here
     assert usb_config_has_mtp("mtp,conn_gadget,adb") is True
     assert usb_config_has_mtp("adb") is False
 
@@ -314,6 +321,151 @@ def test_usb_popup_suppression_commands_and_guard_branch():
     assert apply_usb_popup_suppression(runner, "RFCNB056WEV", set_functions=False) is True
     flat = " || ".join(" ".join(args) for args in runner.calls)
     assert "svc usb setFunctions" not in flat and "getprop" not in flat
+
+
+def test_adb_shell_responsive_fails_only_on_timeout_or_error():
+    from application.device_hardware_lockdown import adb_shell_responsive
+
+    runner = _GuardRunner()
+    assert adb_shell_responsive(runner, "RFCNB056WEV") is True
+    assert runner.calls[-1][:2] == ["shell", "echo"]
+
+    class _Wedged(_GuardRunner):
+        def run(self, serial, arguments, **kw):
+            if arguments[:2] == ["shell", "echo"]:
+                raise AdbCommandError("ADB command timed out for serial X")
+            return super().run(serial, arguments, **kw)
+
+    assert adb_shell_responsive(_Wedged(), "RFCNB056WEV") is False
+    assert adb_shell_responsive(None, "RFCNB056WEV") is False
+
+
+def test_access_mode_and_prepare_fail_fast_when_adbd_wedged():
+    """`get-state` says device but every shell hangs → one 5s probe, 409, hint."""
+    from application.device_hardware_lockdown import (
+        ADB_UNRESPONSIVE_ERROR,
+        run_device_access_mode,
+    )
+    from application.device_screen_prepare import run_device_screen_prepare
+    from application.farm_task_types import FarmTaskRequest
+
+    class _Wedged(_GuardRunner):
+        def run(self, serial, arguments, **kw):
+            self.calls.append(list(arguments))
+            if arguments == ["get-state"]:
+                return AdbCommandResult(stdout="device", stderr="")
+            raise AdbCommandError(f"ADB command timed out for serial {serial}")
+
+    runner = _Wedged()
+    req = FarmTaskRequest(
+        job_id="j", task_type="device_access_mode", farm_slot_id=21, payload={"admin": True}
+    )
+    result = run_device_access_mode(
+        adb_path="adb", slot_map={21: "RFCNB056WEV"}, request=req, command_runner=runner
+    )
+    assert result.ok is False and result.http_status == 409
+    assert result.error == ADB_UNRESPONSIVE_ERROR
+    assert "replug" in result.details["hint"]
+    assert len(runner.calls) == 2  # get-state + one probe, nothing else
+
+    runner = _Wedged()
+    req = FarmTaskRequest(
+        job_id="j2", task_type="device_screen_prepare", farm_slot_id=21, payload={"admin": True}
+    )
+    result = run_device_screen_prepare(
+        adb_path="adb", slot_map={21: "RFCNB056WEV"}, request=req, command_runner=runner
+    )
+    assert result.ok is False and result.http_status == 409
+    assert result.error == ADB_UNRESPONSIVE_ERROR
+    assert result.details["status"] == ADB_UNRESPONSIVE_ERROR
+    assert len(runner.calls) == 2
+
+
+def test_recover_device_after_reconnect_waits_boot_then_wakes_and_redeploys():
+    from application.device_hardware_lockdown import recover_device_after_reconnect
+
+    class _Booting(_GuardRunner):
+        def __init__(self):
+            super().__init__()
+            self.boot_polls = 0
+
+        def run(self, serial, arguments, **kw):
+            if arguments[:2] == ["shell", "getprop"] and "sys.boot_completed" in arguments:
+                self.calls.append(list(arguments))
+                self.boot_polls += 1
+                return AdbCommandResult(stdout="1" if self.boot_polls >= 3 else "0", stderr="")
+            return super().run(serial, arguments, **kw)
+
+    runner = _Booting()
+    result = recover_device_after_reconnect(
+        runner, "RFCNB056WEV", boot_wait_seconds=10.0, poll_seconds=0.01
+    )
+    assert result["booted"] is True and result["responsive"] is True and result["guard"] is True
+    assert runner.boot_polls == 3
+    joined = " ".join(" ".join(args) for args in runner.calls)
+    wake_idx = joined.index("wm dismiss-keyguard")
+    assert "input keyevent KEYCODE_WAKEUP" in joined
+    assert "stay_on_while_plugged_in 7" in joined
+    assert wake_idx < joined.index(f"nohup sh {LOCKDOWN_GUARD_REMOTE}")
+    assert "pm enable com.samsung.android.mtp" in joined
+    assert "pm disable-user" not in joined
+
+    class _NeverBoots(_GuardRunner):
+        def run(self, serial, arguments, **kw):
+            if arguments[:2] == ["shell", "getprop"]:
+                return AdbCommandResult(stdout="0", stderr="")
+            return super().run(serial, arguments, **kw)
+
+    runner = _NeverBoots()
+    result = recover_device_after_reconnect(
+        runner, "RFCNB056WEV", boot_wait_seconds=1.0, poll_seconds=0.05
+    )
+    assert result["booted"] is False
+    assert not any(args and args[0] == "push" for args in runner.calls)
+
+
+def test_lockdown_loop_recovers_serial_that_comes_back_online():
+    stop = threading.Event()
+    runner = _GuardRunner()
+    runner.running = True
+    states = {"value": {"RFCNB056WEV": "missing"}}
+    recovered: list[str] = []
+
+    def _recover(_runner, serial, **_kw):
+        recovered.append(serial)
+
+    thread = start_audio_lockdown_loop(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        interval_seconds=5.0,
+        stop_event=stop,
+        command_runner=runner,
+        device_states=lambda: dict(states["value"]),
+        reconnect_poll_seconds=0.02,
+        recover=_recover,
+    )
+    time.sleep(0.15)
+    assert recovered == []  # missing → nothing to do yet
+    states["value"] = {"RFCNB056WEV": "device"}
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not recovered:
+        time.sleep(0.02)
+    states["value"] = {"RFCNB056WEV": "device"}
+    time.sleep(0.1)
+    stop.set()
+    thread.join(2.0)
+    assert recovered == ["RFCNB056WEV"]  # exactly once per transition
+
+
+def test_farm_agent_forces_native_adb_usb_backend():
+    from tools.farm_agent_status_server import ADB_USB_LEGACY_ENV, ensure_adb_usb_legacy_env
+
+    env: dict[str, str] = {}
+    assert ensure_adb_usb_legacy_env(env) is True
+    assert env[ADB_USB_LEGACY_ENV] == "1"
+    env = {ADB_USB_LEGACY_ENV: "0"}
+    assert ensure_adb_usb_legacy_env(env) is False  # operator override respected
+    assert env[ADB_USB_LEGACY_ENV] == "0"
 
 
 def test_pause_renter_lockdown_restores_previous_mode():
