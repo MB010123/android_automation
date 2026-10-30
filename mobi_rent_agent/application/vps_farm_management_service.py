@@ -165,6 +165,7 @@ class VpsFarmManagementService:
         self._tenant_row_cache: dict[int, dict[str, Any]] = {}
         self._tenant_row_lock = threading.Lock()
         self._tenant_cache_enabled = False
+        self._last_good_tenant_row: dict[int, dict[str, Any]] = {}
 
     def start_inventory_snapshot(self, interval_seconds: float = DEFAULT_REFRESH_SECONDS) -> None:
         """Pre-warm and refresh the full admin phone list every ``interval_seconds``."""
@@ -1765,9 +1766,20 @@ class VpsFarmManagementService:
             row = getter(farm_slot_id)
         except (TypeError, ValueError, OSError, requests.RequestException):
             logger.warning("tenant_slot_lookup_failed bay=%s", farm_slot_id)
-            return {}
+            with self._tenant_row_lock:
+                good = self._last_good_tenant_row.get(bay)
+            return dict(good) if good else {}
         out = row if isinstance(row, dict) else {}
+        status = str(out.get("status") or "").strip().lower()
+        owner = str(out.get("user_id") or "").strip()
+        ended = status in {"expired", "cancelled", "canceled", "ended", "released", "revoked"}
         with self._tenant_row_lock:
+            if owner and not ended:
+                self._last_good_tenant_row[bay] = dict(out)
+            else:
+                good = self._last_good_tenant_row.get(bay)
+                if good:
+                    out = dict(good)
             if self._tenant_cache_enabled:
                 self._tenant_row_cache[bay] = dict(out)
         return dict(out)
@@ -1947,6 +1959,9 @@ class VpsFarmManagementService:
         if not ok or owner:
             logger.warning("tenant_unclaim_incomplete bay=%s", bay)
             return ApiResult(503, error_body("auth_unavailable"))
+        with self._tenant_row_lock:
+            self._last_good_tenant_row.pop(int(bay), None)
+            self._tenant_row_cache.pop(int(bay), None)
         self._events.append(bay, "slot_unclaimed", f"rental_id={rental_id}")
         return None
 

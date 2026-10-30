@@ -121,6 +121,10 @@ AIRPLANE_MODE_UNSUPPORTED_MESSAGE = (
 )
 
 _RENTAL_END_KEYS = ("ends_at", "end_at", "rental_end", "rental_ends_at", "expires_at", "end_time")
+ENDED_RENTAL_STATUSES = frozenset(
+    {"expired", "cancelled", "canceled", "ended", "released", "revoked"}
+)
+OWNERSHIP_CACHE_TTL_SECONDS = 60.0
 
 
 @dataclass
@@ -136,6 +140,12 @@ class AuthorizedRental:
     slot_id: int
     device_id: str
     rental_end: float | None
+
+
+@dataclass
+class _CachedOwnership:
+    auth: AuthorizedRental
+    cached_at: float
 
 
 _CUSTOMER_AUTH_ERRORS: dict[str, tuple[int, str]] = {
@@ -275,6 +285,8 @@ class RemoteAccessService:
         self._troubleshoot_cooldown = 10.0
         self._troubleshoot_last: dict[int, float] = {}
         self._discovered_workspaces: dict[int, str] = {}
+        self._ownership_cache: dict[tuple[str, str], _CachedOwnership] = {}
+        self._ownership_lock = threading.Lock()
         reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
         if callable(reconcile):
             interrupted = reconcile()
@@ -362,6 +374,31 @@ class RemoteAccessService:
             return ApiResult(503, error_body("auth_unavailable"))
         return row if isinstance(row, dict) and row else None
 
+    def _cached_ownership(self, rental_id: str, customer_id: str) -> _CachedOwnership | None:
+        key = (str(rental_id), str(customer_id))
+        with self._ownership_lock:
+            rec = self._ownership_cache.get(key)
+        if rec is None:
+            return None
+        if rec.auth.rental_end is not None and rec.auth.rental_end <= self._clock():
+            self._forget_ownership(rental_id, customer_id)
+            return None
+        return rec
+
+    def _remember_ownership(self, auth: AuthorizedRental) -> None:
+        key = (auth.rental_id, auth.customer_id)
+        with self._ownership_lock:
+            self._ownership_cache[key] = _CachedOwnership(auth=auth, cached_at=float(self._clock()))
+
+    def _forget_ownership(self, rental_id: str, customer_id: str | None = None) -> None:
+        rental = str(rental_id or "").strip()
+        with self._ownership_lock:
+            if customer_id is not None:
+                self._ownership_cache.pop((rental, str(customer_id)), None)
+                return
+            for key in [item for item in self._ownership_cache if item[0] == rental]:
+                self._ownership_cache.pop(key, None)
+
     def _farm_bay_is_mapped(self, bay: int) -> bool | ApiResult:
         """True when Farm health lists this bay in mapped_slots. Fail closed."""
         fetcher = self._farm_status
@@ -393,33 +430,66 @@ class RemoteAccessService:
         rental = str(rental_id or "").strip()
         if not rental:
             return _forbidden("rental_not_found")
-        row = self._rental_row(rental)
-        if isinstance(row, ApiResult):
-            return row
-        if row is None:
-            return _forbidden("rental_not_found")
-        owner = str(row.get("user_id") or "").strip()
-        if not owner or owner != customer:
-            return _forbidden("rental_not_owned")
-        row_rental = str(row.get("rental_id") or row.get("id") or "").strip()
-        if row_rental and row_rental != rental:
-            return _forbidden("rental_not_owned")
-        row_slot = _slot_from_row(row)
+        cached = self._cached_ownership(rental, customer)
+        fresh_cache = (
+            cached is not None
+            and (self._clock() - cached.cached_at) < OWNERSHIP_CACHE_TTL_SECONDS
+        )
+        row: dict[str, Any] | None = None
+        row_slot: int | None = None
+        rental_end: float | None = None
+        if not fresh_cache:
+            fetched = self._rental_row(rental)
+            if isinstance(fetched, ApiResult):
+                if cached is None:
+                    return fetched
+            elif fetched is None:
+                if cached is None:
+                    return _forbidden("rental_not_found")
+            else:
+                status = str(fetched.get("status") or "").strip().lower()
+                owner = str(fetched.get("user_id") or "").strip()
+                row_rental = str(fetched.get("rental_id") or fetched.get("id") or "").strip()
+                ended = status in ENDED_RENTAL_STATUSES
+                if owner and owner != customer:
+                    self._forget_ownership(rental, customer)
+                    return _forbidden("rental_not_owned")
+                stale = bool(ended or not owner or (row_rental and row_rental != rental))
+                if stale:
+                    if cached is None:
+                        if ended:
+                            return _forbidden("rental_expired")
+                        return _forbidden("rental_not_owned")
+                else:
+                    resolved_slot = _slot_from_row(fetched)
+                    if resolved_slot is None:
+                        if cached is None:
+                            return _forbidden("rental_slot_mismatch")
+                    else:
+                        row = fetched
+                        row_slot = resolved_slot
+                        rental_end = rental_end_from_row(fetched)
+        if row_slot is None and cached is not None:
+            row_slot = cached.auth.slot_id
+            rental_end = cached.auth.rental_end
         if row_slot is None:
             return _forbidden("rental_slot_mismatch")
         if slot_id is not None and int(slot_id) != row_slot:
             return _forbidden("rental_slot_mismatch")
-        # Bay-keyed authority must agree with the rental row: the slot's current
-        # owner (Lovable "slot by bay") has to be this customer.
-        owner_lookup = getattr(self._tenant, "owner_of_slot", None)
-        if callable(owner_lookup):
-            try:
-                bay_owner = owner_lookup(row_slot)
-            except Exception:  # noqa: BLE001
-                logger.warning("remote_access_tenant_owner_lookup_failed")
-                return ApiResult(503, error_body("auth_unavailable"))
-            if str(bay_owner or "").strip() != customer:
-                return _forbidden("rental_not_owned")
+        # Bay-keyed authority should agree, but a failed/empty by-bay lookup
+        # must not flap an already-verified rental_id ownership into 403/503.
+        if not fresh_cache:
+            owner_lookup = getattr(self._tenant, "owner_of_slot", None)
+            if callable(owner_lookup):
+                try:
+                    bay_owner = owner_lookup(row_slot)
+                except Exception:  # noqa: BLE001
+                    logger.warning("remote_access_tenant_owner_lookup_failed")
+                    bay_owner = None
+                bay_owner_text = str(bay_owner or "").strip()
+                if bay_owner_text and bay_owner_text != customer:
+                    if cached is None:
+                        return _forbidden("rental_not_owned")
         if require_poc_slot:
             if feature_slots is not None:
                 if int(row_slot) not in {int(s) for s in feature_slots}:
@@ -440,21 +510,23 @@ class RemoteAccessService:
             if not mapped:
                 return _forbidden("slot_not_mapped")
             device_id = ""
-        rental_end = rental_end_from_row(row)
         if rental_end is not None and rental_end <= self._clock():
+            self._forget_ownership(rental, customer)
             if require_poc_slot:
                 self._revoke_if_active_session(rental, row_slot)
             return _forbidden("rental_expired")
         cleanup = self._cleanup
         if cleanup is not None and getattr(cleanup, "is_disabled", lambda _bay: False)(row_slot):
             return _forbidden("rental_disabled")
-        return AuthorizedRental(
+        auth = AuthorizedRental(
             customer_id=customer,
             rental_id=rental,
             slot_id=row_slot,
-            device_id=device_id,
+            device_id=str(device_id or ""),
             rental_end=rental_end,
         )
+        self._remember_ownership(auth)
+        return auth
 
     def _active_session(self, auth: AuthorizedRental) -> RemoteAccessSession | ApiResult:
         session = self._store.get(auth.rental_id)
@@ -2565,6 +2637,7 @@ class RemoteAccessService:
                 logger.warning("remote_access_revoke_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
                 revoked = False
         ended = self._store.end(rental_id, status=status, now=self._clock())
+        self._forget_ownership(str(rental_id))
         self._activity_kind_by_rental.pop(str(rental_id or "").strip(), None)
         if status == STATUS_REVOKED:
             logger.info("remote_access_revoked slot=%s", slot_id)

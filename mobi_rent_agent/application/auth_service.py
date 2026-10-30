@@ -1,10 +1,13 @@
 """VPS auth front door: proxy Supabase Auth; never issue a second user JWT."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import threading
+import time
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Callable
 
 from application.admin_identity import resolve_admin_role
 from application.vps_api_contract import error_body, iso_ts
@@ -13,6 +16,9 @@ from infrastructure.supabase_gateway import SupabaseAuthError, SupabaseGateway, 
 from infrastructure.supabase_jwt import verify_supabase_access_token
 
 logger = logging.getLogger("vps_backend.auth")
+
+TOKEN_CACHE_TTL_SECONDS = 300.0
+TOKEN_CACHE_MAX_ENTRIES = 4096
 
 EMAIL_RE = re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$")
 MAX_EMAIL_LEN = 254
@@ -37,6 +43,14 @@ class AuthResult:
     access_token: str | None = None
 
 
+@dataclass
+class _CachedToken:
+    user: AuthUser
+    claims: dict[str, Any] | None
+    verified_at: float
+    token_expires_at: float
+
+
 class AuthService:
     def __init__(
         self,
@@ -46,6 +60,7 @@ class AuthService:
         jwt_secret: str = "",
         access_ttl_seconds: int = 3600,
         admin_user_ids: frozenset[str] | set[str] | tuple[str, ...] = (),
+        clock: Callable[[], float] | None = None,
     ) -> None:
         if supabase is None:
             raise ValueError("supabase_required")
@@ -54,6 +69,9 @@ class AuthService:
         self._jwt_secret = (jwt_secret or "").strip()
         self._ttl = int(access_ttl_seconds)
         self._admin_user_ids = frozenset(str(uid).strip() for uid in admin_user_ids if str(uid).strip())
+        self._clock = clock or time.time
+        self._token_cache: dict[str, _CachedToken] = {}
+        self._token_lock = threading.Lock()
 
     @property
     def access_ttl_seconds(self) -> int:
@@ -102,18 +120,38 @@ class AuthService:
     def validate_user_token(self, token: str | None) -> AuthContext | None:
         if not token:
             return None
+        now = float(self._clock())
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        cached = self._cached_token(digest, now)
+        if cached is not None and (now - cached.verified_at) < TOKEN_CACHE_TTL_SECONDS:
+            user = self._with_admin_role(cached.user, cached.claims)
+            return AuthContext(kind="user", user=user, session_id=user.user_id, access_token=token)
         user, claims = self._user_from_local_jwt(token)
+        transient = False
         if user is None:
-            user = self._supabase.get_user(token)
+            user, transient = self._user_from_gotrue(token)
             claims = None
-        if user is None or not user.is_active:
+            if user is None and transient:
+                user, transient = self._user_from_gotrue(token)
+        if user is None:
+            if transient and cached is not None:
+                user = cached.user
+                claims = cached.claims
+            else:
+                return None
+        if not user.is_active:
             return None
         user = self._with_admin_role(user, claims)
+        self._remember_token(digest, user, claims, now)
         return AuthContext(kind="user", user=user, session_id=user.user_id, access_token=token)
 
     def logout(self, ctx: AuthContext) -> AuthResult:
         if ctx.kind != "user" or not ctx.session_id:
             return AuthResult(401, error_body("unauthorized"))
+        if ctx.access_token:
+            digest = hashlib.sha256(ctx.access_token.encode("utf-8")).hexdigest()
+            with self._token_lock:
+                self._token_cache.pop(digest, None)
         self._supabase.logout(ctx.access_token)
         return AuthResult(200, {"ok": True})
 
@@ -180,6 +218,60 @@ class AuthService:
         if not self._supabase.verify_email(token):
             return AuthResult(400, error_body("invalid_request"))
         return AuthResult(200, {"ok": True})
+
+    def _cached_token(self, digest: str, now: float) -> _CachedToken | None:
+        with self._token_lock:
+            rec = self._token_cache.get(digest)
+            if rec is None:
+                return None
+            if now >= rec.token_expires_at:
+                self._token_cache.pop(digest, None)
+                return None
+            return rec
+
+    def _remember_token(
+        self,
+        digest: str,
+        user: AuthUser,
+        claims: dict[str, Any] | None,
+        now: float,
+    ) -> None:
+        token_exp = now + TOKEN_CACHE_TTL_SECONDS
+        if isinstance(claims, dict):
+            try:
+                exp = float(claims.get("exp"))
+            except (TypeError, ValueError):
+                exp = 0.0
+            if exp > now:
+                token_exp = max(token_exp, exp)
+        with self._token_lock:
+            if len(self._token_cache) >= TOKEN_CACHE_MAX_ENTRIES:
+                expired = [key for key, rec in self._token_cache.items() if rec.token_expires_at <= now]
+                for key in expired:
+                    self._token_cache.pop(key, None)
+                if len(self._token_cache) >= TOKEN_CACHE_MAX_ENTRIES:
+                    oldest = min(self._token_cache, key=lambda k: self._token_cache[k].verified_at)
+                    self._token_cache.pop(oldest, None)
+            self._token_cache[digest] = _CachedToken(
+                user=replace(user),
+                claims=dict(claims) if isinstance(claims, dict) else None,
+                verified_at=now,
+                token_expires_at=token_exp,
+            )
+
+    def _user_from_gotrue(self, token: str) -> tuple[AuthUser | None, bool]:
+        try_get = getattr(self._supabase, "try_get_user", None)
+        if callable(try_get):
+            try:
+                user, err = try_get(token)
+            except (OSError, ConnectionError, TimeoutError):
+                return None, True
+            return user, err == "unavailable"
+        try:
+            user = self._supabase.get_user(token)
+        except (OSError, ConnectionError, TimeoutError):
+            return None, True
+        return user, False
 
     def _user_from_local_jwt(self, token: str) -> tuple[AuthUser | None, dict[str, Any] | None]:
         if not self._jwt_secret:

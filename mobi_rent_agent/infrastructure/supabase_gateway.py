@@ -112,12 +112,20 @@ class SupabaseGateway:
         )
 
     def get_user(self, access_token: str | None) -> AuthUser | None:
+        user, _err = self.try_get_user(access_token)
+        return user
+
+    def try_get_user(self, access_token: str | None) -> tuple[AuthUser | None, str | None]:
+        """Return ``(user, error_code)``. ``unavailable`` is a transient upstream failure."""
         if not access_token:
-            return None
+            return None, "invalid_credentials"
         payload = self._gotrue("GET", "/auth/v1/user", user_token=access_token)
         if isinstance(payload, SupabaseAuthError):
-            return None
-        return _user_from_gotrue(payload)
+            return None, payload.code
+        user = _user_from_gotrue(payload)
+        if user is None:
+            return None, "invalid_credentials"
+        return user, None
 
     def logout(self, access_token: str | None) -> bool:
         if not access_token:

@@ -7,6 +7,7 @@ keeps list requests under 50ms.
 """
 from __future__ import annotations
 
+import copy
 import logging
 import threading
 from typing import Any, Callable
@@ -35,10 +36,10 @@ class FarmStatusSnapshot:
     def get(self) -> dict[str, Any]:
         with self._lock:
             if self._body is not None:
-                return dict(self._body)
+                return copy.deepcopy(self._body)
         self.refresh_once()
         with self._lock:
-            return dict(self._body or {"ok": False, "error": "farm_status_unavailable"})
+            return copy.deepcopy(self._body or {"ok": False, "error": "farm_status_unavailable"})
 
     def refresh_once(self) -> None:
         try:
@@ -51,8 +52,9 @@ class FarmStatusSnapshot:
             return
         if not isinstance(body, dict):
             body = {"ok": False, "error": "invalid_farm_response"}
+        snapshot = copy.deepcopy(body)
         with self._lock:
-            self._body = dict(body)
+            self._body = snapshot
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
