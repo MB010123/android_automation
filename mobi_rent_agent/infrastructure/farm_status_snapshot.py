@@ -1,8 +1,9 @@
 """Background-refreshed in-memory snapshot for farm /admin list APIs.
 
 `adb devices` across a 21-bay hub can take several seconds. Serving
-`/agent/health`, `/farm/status`, and `/admin/devices` from a snapshot that
-a daemon refreshes every 3–5s keeps list requests under 100ms.
+`/agent/health`, `/farm/status`, `/farm/slots`, `/slots`, `/admin/devices`,
+and `/admin/phones` from a snapshot that a daemon refreshes every 3–5s
+keeps list requests under 50ms.
 """
 from __future__ import annotations
 

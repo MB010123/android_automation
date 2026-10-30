@@ -31,7 +31,9 @@ from application.samsung_one_ui import (
     hijack_escape_args,
     is_samsung_game_package,
     package_from_component,
+    pixel_settings_args,
     samsung_settings_args,
+    samsung_settings_homepage_args,
     samsung_setup_relaunch_args,
 )
 from application.setup_activity_guard import (
@@ -449,13 +451,12 @@ def run_setup_session_input(
                 samsung = _is_samsung_renter_device(int(request.farm_slot_id), serial, None)
             if samsung:
                 _shell(runner, adb_path, serial, samsung_settings_args())
+                try:
+                    _shell(runner, adb_path, serial, samsung_settings_homepage_args())
+                except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+                    pass
             else:
-                _shell(
-                    runner,
-                    adb_path,
-                    serial,
-                    ["am", "start", "-a", "android.settings.SETTINGS", "--activity-clear-task"],
-                )
+                _shell(runner, adb_path, serial, pixel_settings_args())
         else:
             return FarmTaskResult(ok=False, http_status=400, error="invalid_control")
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):

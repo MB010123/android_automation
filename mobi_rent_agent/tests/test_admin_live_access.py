@@ -388,6 +388,13 @@ def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
         _admin(), 1, {"session_id": sid, "action": "settings"}
     )
     assert settings.http_status == 200
+    settings_tasks = [
+        t
+        for t in farm.tasks
+        if t["type"] == "setup_session_input" and t["payload"].get("kind") == "settings"
+    ]
+    assert settings_tasks
+    assert settings_tasks[-1]["payload"].get("admin") is True
     airplane = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "airplane_mode", "state": "on"}
     )

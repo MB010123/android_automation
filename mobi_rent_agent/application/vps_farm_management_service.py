@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,6 +44,7 @@ from application.remote_access_service import rental_end_from_row
 from infrastructure.esim_qr_security import extract_authoritative_esim_ref, validate_authoritative_esim_ref
 from infrastructure.about_phone_screenshot_store import AboutPhoneScreenshotStore
 from infrastructure.device_cleanup_store import DeviceCleanupStore
+from infrastructure.farm_status_snapshot import DEFAULT_REFRESH_SECONDS, FarmStatusSnapshot
 from application.preferred_slots import (
     DEFAULT_PREFERRED_NEXT_SLOT_IDS,
     sort_available_bays,
@@ -159,6 +161,45 @@ class VpsFarmManagementService:
             for s in (preferred_next_slot_ids or DEFAULT_PREFERRED_NEXT_SLOT_IDS)
             if 1 <= int(s) <= MAX_FARM_SLOT_ID
         ) or DEFAULT_PREFERRED_NEXT_SLOT_IDS
+        self._inventory_snapshot: FarmStatusSnapshot | None = None
+        self._tenant_row_cache: dict[int, dict[str, Any]] = {}
+        self._tenant_row_lock = threading.Lock()
+        self._tenant_cache_enabled = False
+
+    def start_inventory_snapshot(self, interval_seconds: float = DEFAULT_REFRESH_SECONDS) -> None:
+        """Pre-warm and refresh the full admin phone list every ``interval_seconds``."""
+        if self._inventory_snapshot is None:
+            self._inventory_snapshot = FarmStatusSnapshot(
+                self._inventory_snapshot_body,
+                interval_seconds=interval_seconds,
+            )
+        self._inventory_snapshot.start()
+
+    def stop_inventory_snapshot(self, join_timeout: float = 5.0) -> None:
+        snap = self._inventory_snapshot
+        if snap is not None:
+            snap.stop(join_timeout=join_timeout)
+
+    def _inventory_snapshot_body(self) -> dict[str, Any]:
+        result = self._compute_list_all_slots()
+        if result.http_status != 200 or not isinstance(result.body, dict):
+            raise RuntimeError("inventory_unavailable")
+        return dict(result.body)
+
+    def _inventory_slot(self, farm_slot: int) -> dict[str, Any] | None:
+        snap = self._inventory_snapshot
+        if snap is None:
+            return None
+        body = snap.get()
+        for item in body.get("slots") or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                if int(item.get("bay")) == int(farm_slot):
+                    return dict(item)
+            except (TypeError, ValueError):
+                continue
+        return None
 
     def set_remote_access(self, remote_access: Any) -> None:
         self._remote_access = remote_access
@@ -242,6 +283,10 @@ class VpsFarmManagementService:
         farm_slot = self.resolve_farm_slot(slot_public_id)
         if farm_slot is None:
             return ApiResult(404, error_body("slot_not_found"))
+        if mapped is None:
+            cached = self._inventory_slot(farm_slot)
+            if cached is not None:
+                return ApiResult(200, cached)
         physical = mapped
         farm_body: dict[str, Any] | None = None
         if physical is None:
@@ -354,15 +399,30 @@ class VpsFarmManagementService:
 
     def list_all_slots(self) -> ApiResult:
         """Inventory of every Farm-mapped bay (dashboard / hardware-feed)."""
-        farm = self._load_farm()
-        if isinstance(farm, ApiResult):
-            return farm
-        slots = []
-        for bay in sorted(mapped_farm_slots(farm)):
-            result = self.get_slot_status(public_id_for_farm_slot(bay), mapped=mapped_farm_slots(farm))
-            if result.http_status == 200:
-                slots.append(result.body)
-        return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
+        snap = self._inventory_snapshot
+        if snap is not None:
+            return ApiResult(200, snap.get())
+        return self._compute_list_all_slots()
+
+    def _compute_list_all_slots(self) -> ApiResult:
+        with self._tenant_row_lock:
+            self._tenant_row_cache.clear()
+            self._tenant_cache_enabled = True
+        try:
+            farm = self._load_farm()
+            if isinstance(farm, ApiResult):
+                return farm
+            mapped = mapped_farm_slots(farm)
+            slots = []
+            for bay in sorted(mapped):
+                result = self.get_slot_status(public_id_for_farm_slot(bay), mapped=mapped)
+                if result.http_status == 200:
+                    slots.append(result.body)
+            return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
+        finally:
+            with self._tenant_row_lock:
+                self._tenant_cache_enabled = False
+                self._tenant_row_cache.clear()
 
     def get_slot_record(self, slot_public_id: str) -> ApiResult:
         """Lovable public.slots-shaped view. Unobserved fields stay null/unknown."""
@@ -426,6 +486,27 @@ class VpsFarmManagementService:
     def list_slots_for_user(self, user_id: str) -> ApiResult:
         if self._auth_store is None:
             return ApiResult(200, {"ok": True, "slots": [], "count": 0})
+        if self._inventory_snapshot is not None:
+            owned_bays = {
+                int(owned.farm_slot_id) for owned in self._auth_store.list_owned_slots(user_id)
+            }
+            listed = self.list_all_slots()
+            if listed.http_status != 200:
+                return listed
+            slots = []
+            for item in listed.body.get("slots") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    bay = int(item.get("bay"))
+                except (TypeError, ValueError):
+                    continue
+                if bay not in owned_bays:
+                    continue
+                row = dict(item)
+                row["last_heartbeat"] = row.get("last_seen_at") or row.get("last_heartbeat")
+                slots.append(row)
+            return ApiResult(200, {"ok": True, "slots": slots, "count": len(slots)})
         slots = []
         for owned in self._auth_store.list_owned_slots(user_id):
             result = self.get_slot_status(public_id_for_farm_slot(owned.farm_slot_id))
@@ -1673,6 +1754,10 @@ class VpsFarmManagementService:
         return None
 
     def _tenant_slot_row(self, farm_slot_id: int) -> dict[str, Any]:
+        bay = int(farm_slot_id)
+        with self._tenant_row_lock:
+            if self._tenant_cache_enabled and bay in self._tenant_row_cache:
+                return dict(self._tenant_row_cache[bay])
         getter = getattr(self._auth_store, "get_slot_row", None)
         if not callable(getter):
             return {}
@@ -1681,7 +1766,11 @@ class VpsFarmManagementService:
         except (TypeError, ValueError, OSError, requests.RequestException):
             logger.warning("tenant_slot_lookup_failed bay=%s", farm_slot_id)
             return {}
-        return row if isinstance(row, dict) else {}
+        out = row if isinstance(row, dict) else {}
+        with self._tenant_row_lock:
+            if self._tenant_cache_enabled:
+                self._tenant_row_cache[bay] = dict(out)
+        return dict(out)
 
     def _tenant_radio_fields(self, farm_slot_id: int) -> dict[str, str | None]:
         row = self._tenant_slot_row(farm_slot_id)
@@ -1703,13 +1792,8 @@ class VpsFarmManagementService:
         cleanup_required = cleanup_hold is not None
         cleanup_state = "required" if cleanup_required else "none"
         owner = tenant_owner
-        if not owner and self._auth_store is not None:
-            lookup = getattr(self._auth_store, "owner_of_slot", None)
-            if callable(lookup):
-                try:
-                    owner = lookup(farm_slot)
-                except (TypeError, ValueError, OSError):
-                    owner = None
+        if not owner:
+            owner = self._tenant_slot_row(farm_slot).get("user_id")
         rented = bool(str(owner or "").strip())
         if assignment is not None and reservation is not None:
             occupancy_source = "assignment_and_reservation"

@@ -84,6 +84,7 @@ def test_guard_script_writes_screen_state_and_blocked_kick():
     assert "dumpsys window displays" in script
     assert "is_settings_home" in script
     assert "settingshomepage" in script
+    assert "com.android.settings.settings" in script
     # Atomic state write: readers never see a torn line.
     assert f'> "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"' in script
     # Hot path order inside the loop: focus read happens before enforce_audio.

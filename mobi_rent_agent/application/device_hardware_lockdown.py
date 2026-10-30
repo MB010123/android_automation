@@ -220,7 +220,7 @@ kick_pkg() {
 is_settings_home() {
   act=$1
   case "$act" in
-    .settings|settings|com.android.settings.settings|*settingshomepage*)
+    .settings|settings|com.android.settings.settings|com.android.settings|*settingshomepage*)
       return 0 ;;
   esac
   return 1

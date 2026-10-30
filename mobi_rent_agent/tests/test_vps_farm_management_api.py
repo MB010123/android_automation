@@ -347,3 +347,103 @@ def test_auth_required(tmp_path: Path):
         assert exc.value.code == 401
     finally:
         server.shutdown()
+
+
+def test_admin_phone_list_http_routes_return_under_50ms(tmp_path: Path):
+    path = ROOT / "tools" / "vps_backend_server.py"
+    spec = importlib.util.spec_from_file_location("vps_backend_server_list", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(mod)
+    Handler = mod.Handler
+    mapped = list(range(1, 22))
+
+    class SlowTenant(MemoryTenant):
+        def get_slot_row(self, farm_slot_id: int):
+            time.sleep(0.01)
+            return super().get_slot_row(farm_slot_id)
+
+    jobs = VpsJobStore(tmp_path / "jobs.sqlite")
+    assign = SlotAssignmentStore(tmp_path / "assign.sqlite")
+    events = SlotEventStore(tmp_path / "events.sqlite")
+    tenant = SlowTenant()
+    worker = VpsJobWorker(
+        job_store=jobs,
+        assignment_store=assign,
+        event_store=events,
+        farm_task_client=None,
+        poll_interval_seconds=3600.0,
+        auth_store=tenant,
+    )
+    svc = VpsFarmManagementService(
+        job_store=jobs,
+        assignment_store=assign,
+        event_store=events,
+        job_worker=worker,
+        farm_status_fetcher=lambda: {
+            "ok": True,
+            "offline_slots": [],
+            "mapped_slots": mapped,
+            "slot_count": 21,
+            "adb_online": 21,
+        },
+        known_farm_slots=set(mapped),
+        rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        auth_store=tenant,
+    )
+    svc.start_inventory_snapshot(interval_seconds=60)
+    Handler.farm_service_token = "service-secret"
+    Handler.farm_management_service = svc
+    Handler.slot_sms_service = None
+    Handler.farm_agent_url = "http://127.0.0.1:8790"
+    Handler.farm_agent_token = "farm-secret"
+    def _farm_status_body(*_args: object) -> dict:
+        return {
+            "ok": True,
+            "offline_slots": [],
+            "mapped_slots": mapped,
+            "slot_count": 21,
+            "adb_online": 21,
+            "slots": [{"slot_id": bay, "serial": f"S{bay}", "online": True} for bay in mapped],
+        }
+
+    Handler.farm_status_fetcher = _farm_status_body
+    Handler.slot_serial_map = {bay: f"S{bay}" for bay in mapped}
+    Handler.auth_service = None
+    Handler.auth_rate_limiter = None
+    Handler.allowed_origins = frozenset()
+    Handler.auth_cookie_name = None
+    Handler.webhook_secret = None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        paths = (
+            "/farm/slots",
+            "/slots",
+            "/admin/devices",
+            "/admin/phones",
+            "/admin/overview",
+            "/devices",
+            "/farm/status",
+        )
+        for route in paths:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}{route}",
+                headers={"Authorization": "Bearer service-secret"},
+                method="GET",
+            )
+            t0 = time.perf_counter()
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                body = json.loads(resp.read().decode())
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            assert resp.status == 200, route
+            assert elapsed_ms < 50, f"{route} took {elapsed_ms:.1f}ms"
+            if route == "/farm/status":
+                assert body.get("ok") is True
+            else:
+                assert body.get("count") == 21
+    finally:
+        server.shutdown()
+        svc.stop_inventory_snapshot()

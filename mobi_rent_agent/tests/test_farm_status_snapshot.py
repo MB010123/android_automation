@@ -110,3 +110,74 @@ def test_farm_health_http_serves_warm_snapshot():
         server.shutdown()
         snap.stop()
         FarmHandler.status_snapshot = None
+
+
+def test_list_all_slots_snapshot_returns_under_50ms(tmp_path: Path):
+    from application.vps_farm_management_service import VpsFarmManagementService
+    from application.vps_job_worker import VpsJobWorker
+    from infrastructure.slot_assignment_store import SlotAssignmentStore
+    from infrastructure.slot_event_store import SlotEventStore
+    from infrastructure.vps_job_store import VpsJobStore
+    from infrastructure.vps_rate_limiter import VpsRateLimiter
+    from tests.fakes_supabase import MemoryTenant
+
+    class SlowTenant(MemoryTenant):
+        def __init__(self) -> None:
+            super().__init__()
+            self.row_calls = 0
+
+        def get_slot_row(self, farm_slot_id: int):
+            self.row_calls += 1
+            time.sleep(0.015)
+            return super().get_slot_row(farm_slot_id)
+
+    mapped = list(range(1, 22))
+    tenant = SlowTenant()
+    jobs = VpsJobStore(tmp_path / "jobs.sqlite")
+    assign = SlotAssignmentStore(tmp_path / "assign.sqlite")
+    events = SlotEventStore(tmp_path / "events.sqlite")
+    worker = VpsJobWorker(
+        job_store=jobs,
+        assignment_store=assign,
+        event_store=events,
+        farm_task_client=None,
+        poll_interval_seconds=3600.0,
+        auth_store=tenant,
+    )
+    svc = VpsFarmManagementService(
+        job_store=jobs,
+        assignment_store=assign,
+        event_store=events,
+        job_worker=worker,
+        farm_status_fetcher=lambda: {
+            "ok": True,
+            "offline_slots": [],
+            "mapped_slots": mapped,
+            "slot_count": len(mapped),
+            "adb_online": len(mapped),
+        },
+        known_farm_slots=set(mapped),
+        rate_limiter=VpsRateLimiter(per_slot_limit=100, global_limit=1000),
+        auth_store=tenant,
+    )
+    svc.start_inventory_snapshot(interval_seconds=60)
+    try:
+        assert tenant.row_calls == len(mapped)
+        t0 = time.perf_counter()
+        listed = svc.list_all_slots()
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        assert listed.http_status == 200
+        assert listed.body["count"] == 21
+        assert elapsed_ms < 50
+        calls_after = tenant.row_calls
+        again = svc.list_all_slots()
+        assert again.body["count"] == 21
+        assert tenant.row_calls == calls_after
+        from infrastructure.slot_public_id import public_id_for_farm_slot
+
+        status = svc.get_slot_status(public_id_for_farm_slot(21))
+        assert status.http_status == 200
+        assert status.body["bay"] == 21
+        assert tenant.row_calls == calls_after
+    finally:
+        svc.stop_inventory_snapshot()

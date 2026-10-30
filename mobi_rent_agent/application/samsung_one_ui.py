@@ -20,6 +20,9 @@ SAMSUNG_GAME_PACKAGES = (
 )
 
 ANDROID_SETTINGS_COMPONENT = "com.android.settings/.Settings"
+SAMSUNG_SETTINGS_HOMEPAGE_COMPONENT = (
+    "com.android.settings/.homepage.SettingsHomepageActivity"
+)
 NETWORK_DASHBOARD_COMPONENT = "com.android.settings/.Settings$NetworkDashboardActivity"
 SAMSUNG_SIM_MGR_COMPONENT = (
     "com.samsung.android.app.telephonyui/"
@@ -80,7 +83,49 @@ def samsung_sim_manager_args() -> list[str]:
 
 
 def samsung_settings_args() -> list[str]:
-    return ["am", "start", "-n", ANDROID_SETTINGS_COMPONENT, "--activity-clear-task"]
+    """Bring the One UI Settings homepage to the front.
+
+    ``FLAG_ACTIVITY_CLEAR_TASK`` without ``FLAG_ACTIVITY_NEW_TASK`` (0x10000000)
+    is ignored on Android, so a previous force-stop leaves the S20 on Home.
+    Game Launcher steals generic ``android.settings.SETTINGS`` intents — keep
+    the explicit component.
+    """
+    return [
+        "am",
+        "start",
+        "-W",
+        "-n",
+        ANDROID_SETTINGS_COMPONENT,
+        "--activity-clear-top",
+        "-f",
+        "0x10000000",
+    ]
+
+
+def samsung_settings_homepage_args() -> list[str]:
+    return [
+        "am",
+        "start",
+        "-W",
+        "-n",
+        SAMSUNG_SETTINGS_HOMEPAGE_COMPONENT,
+        "--activity-clear-top",
+        "-f",
+        "0x10000000",
+    ]
+
+
+def pixel_settings_args() -> list[str]:
+    return [
+        "am",
+        "start",
+        "-W",
+        "-a",
+        "android.settings.SETTINGS",
+        "--activity-clear-top",
+        "-f",
+        "0x10000000",
+    ]
 
 
 def samsung_network_args() -> list[str]:

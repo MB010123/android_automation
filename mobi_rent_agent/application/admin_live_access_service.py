@@ -737,7 +737,7 @@ class AdminLiveAccessService:
         runner = getattr(self._farm, "run_task", None)
         if not callable(runner):
             return False
-        payload: dict[str, Any] = {"kind": kind}
+        payload: dict[str, Any] = {"kind": kind, "admin": True}
         if kind in {"tap", "swipe"}:
             payload.update({"x": command.x, "y": command.y})
         if kind == "swipe":

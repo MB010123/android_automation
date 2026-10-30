@@ -845,6 +845,19 @@ class Handler(BaseHTTPRequestHandler):
         out["count"] = len(slots)
         return out
 
+    def _list_slots_for_request(self):
+        """Admin / farm-service: full inventory snapshot. Customer: owned slots only."""
+        assert self.farm_management_service is not None
+        ctx = self._auth_context()
+        if (
+            ctx is not None
+            and ctx.kind == "user"
+            and ctx.user is not None
+            and not is_admin_user(ctx.user)
+        ):
+            return self.farm_management_service.list_slots_for_user(ctx.user.user_id)
+        return self.farm_management_service.list_all_slots()
+
     def _handle_service_get(self, route) -> bool:
         query = parse_qs(urlparse(self.path).query)
         if route.kind == "farm_about_phone" or route.kind == "admin_device_about_phone":
@@ -862,12 +875,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "farm_slots":
-            assert self.farm_management_service is not None
-            ctx = self._auth_context()
-            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
-                result = self.farm_management_service.list_slots_for_user(ctx.user.user_id)
-            else:
-                result = self.farm_management_service.list_all_slots()
+            result = self._list_slots_for_request()
+            body = result.body if result.http_status != 200 else self._integer_slot_list(result.body)
+            self._send_json(result.http_status, body)
+            return True
+        if route.kind in {"admin_devices_list", "admin_phones", "admin_overview", "devices_list"}:
+            result = self._list_slots_for_request()
             body = result.body if result.http_status != 200 else self._integer_slot_list(result.body)
             self._send_json(result.http_status, body)
             return True
@@ -933,12 +946,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "slots_list":
-            assert self.farm_management_service is not None
-            ctx = self._auth_context()
-            if ctx is not None and ctx.kind == "user" and ctx.user is not None:
-                result = self.farm_management_service.list_slots_for_user(ctx.user.user_id)
-            else:
-                result = self.farm_management_service.list_all_slots()
+            result = self._list_slots_for_request()
             self._send_json(result.http_status, result.body)
             return True
         if route.kind == "slot_detail" and route.slot_public_id:
@@ -1692,6 +1700,9 @@ def main() -> int:
     Handler.farm_status_fetcher = _farm_status
     Handler.farm_service_token = os.getenv("FARM_SERVICE_TOKEN") or None
     Handler.slot_sms_service = slot_sms_service
+    farm_management_service.start_inventory_snapshot(
+        interval_seconds=float(os.getenv("FARM_STATUS_REFRESH_SECONDS") or FARM_STATUS_REFRESH_SECONDS),
+    )
     Handler.farm_management_service = farm_management_service
     Handler.slot_serial_map = slot_serial_map
     Handler.auth_service = auth_service
@@ -1761,6 +1772,7 @@ def main() -> int:
         heartbeat_poller.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         job_worker.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         farm_status_snapshot.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+        farm_management_service.stop_inventory_snapshot(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         store.close()
         job_store.close()
         message_store.close()

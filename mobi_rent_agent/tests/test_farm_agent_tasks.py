@@ -415,7 +415,45 @@ def test_setup_session_input_settings_uses_explicit_component_on_samsung():
     joined = " ".join(starts[0])
     assert "com.android.settings/.Settings" in joined
     assert "-n" in starts[0]
+    assert "-W" in starts[0]
+    assert "--activity-clear-top" in starts[0]
+    assert "0x10000000" in starts[0]
+    assert "--activity-clear-task" not in joined
     assert "android.settings.SETTINGS" not in joined
+    homepage = [
+        args
+        for args in starts
+        if any("SettingsHomepageActivity" in str(part) for part in args)
+    ]
+    assert homepage
+    assert "0x10000000" in homepage[0]
+
+
+def test_setup_session_input_settings_uses_new_task_clear_top_on_pixel():
+    slot_map = {2: "PIXEL2SERIAL"}
+    runner = FakeRunner()
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_input",
+        farm_slot_id=2,
+        payload={"kind": "settings"},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    starts = [args for _serial, args in runner.calls if args[:3] == ["shell", "am", "start"]]
+    assert starts
+    joined = " ".join(starts[0])
+    assert "android.settings.SETTINGS" in joined
+    assert "-W" in starts[0]
+    assert "--activity-clear-top" in starts[0]
+    assert "0x10000000" in starts[0]
+    assert "--activity-clear-task" not in joined
+    assert "com.android.settings/.Settings" not in joined
 
 
 def test_setup_session_inspect_skips_recover_after_qr_walk():

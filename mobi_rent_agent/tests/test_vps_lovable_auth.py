@@ -41,6 +41,11 @@ def test_route_auth_and_slots():
     assert session is not None and session.kind == "auth_session"
     listed = parse_route("/slots")
     assert listed is not None and listed.kind == "slots_list"
+    assert parse_route("/admin/devices").kind == "admin_devices_list"
+    assert parse_route("/admin/phones").kind == "admin_phones"
+    assert parse_route("/admin/overview").kind == "admin_overview"
+    assert parse_route("/devices").kind == "devices_list"
+    assert parse_route("/farm/slots").kind == "farm_slots"
     detail = parse_route(f"/slots/{SLOT1}")
     assert detail is not None and detail.kind == "slot_detail"
     esim = parse_route(f"/slots/{SLOT1}/esim")

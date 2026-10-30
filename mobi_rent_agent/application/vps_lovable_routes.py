@@ -17,6 +17,10 @@ RE_SLOT_DETAIL = re.compile(rf"^/slots/({_UUID})$")
 RE_SLOTS_LIST = re.compile(r"^/slots$")
 RE_JOB = re.compile(rf"^/jobs/({_UUID})$")
 RE_FARM_SLOTS = re.compile(r"^/farm/slots$")
+RE_ADMIN_DEVICES_LIST = re.compile(r"^/admin/devices$")
+RE_ADMIN_PHONES = re.compile(r"^/admin/phones$")
+RE_ADMIN_OVERVIEW = re.compile(r"^/admin/overview$")
+RE_DEVICES_LIST = re.compile(r"^/devices$")
 RE_FARM_AVAILABLE = re.compile(r"^/farm/slots/available$")
 RE_FARM_ASSIGN = re.compile(r"^/farm/slots/(\d{1,2})/assign$")
 RE_FARM_AUTO_CLEANUP = re.compile(r"^/farm/slots/(\d{1,2})/auto-cleanup$")
@@ -139,6 +143,10 @@ FARM_OR_ADMIN_KINDS = frozenset(
         "farm_access_mode_slot",
         "admin_device_access_mode",
         "farm_screen_guidance",
+        "admin_devices_list",
+        "admin_phones",
+        "admin_overview",
+        "devices_list",
     }
 )
 
@@ -173,6 +181,14 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="farm_access_mode")
     if RE_FARM_SLOTS.match(path):
         return ParsedRoute(kind="farm_slots")
+    if RE_ADMIN_DEVICES_LIST.match(path):
+        return ParsedRoute(kind="admin_devices_list")
+    if RE_ADMIN_PHONES.match(path):
+        return ParsedRoute(kind="admin_phones")
+    if RE_ADMIN_OVERVIEW.match(path):
+        return ParsedRoute(kind="admin_overview")
+    if RE_DEVICES_LIST.match(path):
+        return ParsedRoute(kind="devices_list")
     if m := RE_FARM_AVAILABLE.match(path):
         return ParsedRoute(kind="farm_available")
     if m := RE_FARM_AUTO_CLEANUP.match(path):
