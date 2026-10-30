@@ -274,6 +274,7 @@ class RemoteAccessService:
         self._reconnect_last: dict[int, float] = {}
         self._troubleshoot_cooldown = 10.0
         self._troubleshoot_last: dict[int, float] = {}
+        self._discovered_workspaces: dict[int, str] = {}
         reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
         if callable(reconcile):
             interrupted = reconcile()
@@ -301,7 +302,41 @@ class RemoteAccessService:
         return self._devices.get(int(slot_id))
 
     def _workspace_for(self, slot_id: int) -> str | None:
-        return self._workspaces.get(int(slot_id)) or None
+        bay = int(slot_id)
+        mapped = self._workspaces.get(bay)
+        if mapped:
+            return mapped
+        cached = self._discovered_workspaces.get(bay)
+        if cached:
+            return cached
+        found = self._discover_workspace(bay)
+        if found:
+            self._discovered_workspaces[bay] = found
+        return found
+
+    def _discover_workspace(self, slot_id: int) -> str | None:
+        """GADS-registered workspace when gads_workspaces.json omitted this bay."""
+        device_id = self._devices.get(int(slot_id))
+        platform = self._platform
+        if not device_id or platform is None:
+            return None
+        finder = getattr(platform, "workspace_for_device", None)
+        if not callable(finder):
+            return None
+        try:
+            found = str(finder(device_id) or "").strip()
+        except RemoteAccessPlatformError:
+            return None
+        if not found:
+            return None
+        owners = {int(bay): ws for bay, ws in self._workspaces.items()}
+        owners.update(self._discovered_workspaces)
+        for bay, workspace in owners.items():
+            if workspace == found and bay != int(slot_id):
+                logger.warning("gads_workspace_discover_shared_rejected slot=%s", slot_id)
+                return None
+        logger.info("gads_workspace_discovered slot=%s", slot_id)
+        return found
 
     def _gads_slot_allowed(self, slot_id: int) -> bool:
         if not self._enabled:
@@ -892,6 +927,7 @@ class RemoteAccessService:
                 slot_id=slot,
                 device_id=device_id,
                 workspace_id=self._workspace_for(slot),
+                require_workspace=False,
             )
         except RemoteAccessPlatformError as exc:
             logger.warning("remote_access_status_failed slot=%s reason=%s", slot, exc.__class__.__name__)
@@ -915,6 +951,10 @@ class RemoteAccessService:
             return ApiResult(502, error_body("gads_unavailable"))
         body = {"ok": True, **status.to_public_dict()}
         body["adb_online"] = adb_online
+        # ADB-online phones stay "online" for the owning customer even when
+        # GADS has not yet listed the serial in the mapped workspace.
+        if adb_online is True and body.get("state") == "unregistered":
+            body["state"] = "online"
         return ApiResult(200, body)
 
     def reboot_device(self, slot_id: int, *, wait: bool = True) -> ApiResult:
@@ -970,10 +1010,10 @@ class RemoteAccessService:
         registered_state = str(base.get("state") or "")
         if adb_online is False and not gads_online:
             state = "offline"
-        elif registered_state == "unregistered":
-            state = "unavailable"
         elif gads_online or adb_online is True:
             state = "online"
+        elif registered_state == "unregistered":
+            state = "unavailable"
         else:
             state = "offline"
         requires_manual = False

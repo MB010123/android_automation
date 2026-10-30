@@ -66,3 +66,19 @@ def test_missing_workspace_map_path_is_empty():
 def test_missing_workspace_map_file_raises(tmp_path: Path):
     with pytest.raises(GadsWorkspaceMapError):
         load_gads_workspace_map(tmp_path / "missing.json")
+
+
+def test_resolve_falls_back_to_gads_secrets_dir(tmp_path: Path, monkeypatch):
+    from infrastructure.gads_workspaces import resolve_gads_workspace_map
+
+    missing = tmp_path / "missing.json"
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    (secrets / "gads_workspaces.json").write_text(
+        json.dumps({"21": "ws-s20", "1": "ws-one"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GADS_SECRETS_DIR", str(secrets))
+    mapping = resolve_gads_workspace_map(missing)
+    assert mapping[21] == "ws-s20"
+    assert mapping[1] == "ws-one"

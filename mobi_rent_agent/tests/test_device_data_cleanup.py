@@ -774,7 +774,9 @@ def test_device_screen_prepare_wait_boot_then_unlock():
     assert result.ok is True
     assert ("RFCNB056WEV", ["wait-for-device"]) in runner.calls
     assert any(args[:3] == ["shell", "getprop", "sys.boot_completed"] for _s, args in runner.calls)
-    assert slept == []
+    echo_calls = [args for _s, args in runner.calls if args[:2] == ["shell", "echo"]]
+    assert len(echo_calls) >= 3
+    assert slept == [1.0, 1.0]
 
 
 def test_mjpeg_sniffs_samsung_boundary_and_wraps_raw_jpeg():

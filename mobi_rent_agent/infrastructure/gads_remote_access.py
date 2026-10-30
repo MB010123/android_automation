@@ -342,6 +342,16 @@ class GadsRemoteAccessPlatform:
     def release_device(self, *, device_id: str) -> bool:
         return bool(self._client.release_device(device_id))
 
+    def workspace_for_device(self, device_id: str) -> str | None:
+        needle = str(device_id or "").strip()
+        if not needle:
+            return None
+        for device in self._client.registered_devices():
+            if str(device.get("udid") or "") == needle:
+                text = str(device.get("workspace_id") or "").strip()
+                return text or None
+        return None
+
     def device_status(
         self,
         *,

@@ -51,14 +51,12 @@ class FakeRunner(AdbCommandRunner):
             elif "false" in joined.split("state")[-1]:
                 self._airplane_on = False
             return AdbCommandResult(stdout="Broadcast completed: result=0", stderr="")
-        if arguments and arguments[0] == "shell" and "airplane-mode" in joined:
-            if arguments[-1].endswith("enable") or "enable" in joined:
-                self._airplane_on = True
-                return AdbCommandResult(stdout="enabled", stderr="")
-            if arguments[-1].endswith("disable") or "disable" in joined:
-                self._airplane_on = False
-                return AdbCommandResult(stdout="disabled", stderr="")
+        if arguments[:4] == ["shell", "cmd", "connectivity", "airplane-mode"]:
+            if len(arguments) >= 5 and arguments[4] in {"enable", "disable"}:
+                self._airplane_on = arguments[4] == "enable"
             return AdbCommandResult(stdout="enabled" if self._airplane_on else "disabled", stderr="")
+        if "set-wifi-enabled" in joined or arguments[:3] == ["shell", "svc", "wifi"]:
+            return AdbCommandResult(stdout="", stderr="")
         return AdbCommandResult(stdout="", stderr="")
 
     def run_bytes(self, serial: str, arguments: list[str]) -> bytes:
@@ -548,3 +546,84 @@ def test_setup_session_input_scales_normalized_tap_to_wm_size():
     assert result.ok is True
     taps = [args for _s, args in sized.calls if args[:3] == ["shell", "input", "tap"]]
     assert taps == [["shell", "input", "tap", "540", "1200"]]
+
+
+def test_airplane_mode_uses_cmd_connectivity_and_keeps_wifi():
+    from application.device_airplane_mode import run_airplane_mode as airplane
+
+    runner = FakeRunner()
+    result = airplane(
+        adb_path="adb",
+        slot_map={20: "PIXEL-SLOT20"},
+        request=FarmTaskRequest(
+            job_id="j",
+            task_type="airplane_mode",
+            farm_slot_id=20,
+            payload={"state": "on"},
+        ),
+        command_runner=runner,
+    )
+    assert result.ok is True
+    assert result.http_status == 200
+    assert result.details["state"] == "on"
+    assert result.details["enabled"] is True
+    assert result.details["wifi_preserved"] is True
+    joined = " ".join(" ".join(args) for _s, args in runner.calls)
+    assert "cmd connectivity airplane-mode enable" in joined
+    assert "cmd wifi set-wifi-enabled enabled" in joined
+    assert "svc wifi enable" in joined
+    assert "settings get global airplane_mode_on" in joined
+    cmd_gets = [
+        args
+        for _s, args in runner.calls
+        if args[:4] == ["shell", "cmd", "connectivity", "airplane-mode"] and len(args) == 4
+    ]
+    assert cmd_gets, "must read back cmd connectivity airplane-mode"
+
+    off = airplane(
+        adb_path="adb",
+        slot_map={20: "PIXEL-SLOT20"},
+        request=FarmTaskRequest(
+            job_id="j2",
+            task_type="airplane_mode",
+            farm_slot_id=20,
+            payload={"state": "off"},
+        ),
+        command_runner=runner,
+    )
+    assert off.ok is True
+    assert off.details["state"] == "off"
+    assert off.details["enabled"] is False
+    assert "cmd connectivity airplane-mode disable" in " ".join(" ".join(args) for _s, args in runner.calls)
+
+
+def test_airplane_mode_fails_when_readback_does_not_match():
+    from application.device_airplane_mode import run_airplane_mode as airplane
+
+    class SplitBrain(FakeRunner):
+        def run(self, serial: str, arguments: list[str]) -> AdbCommandResult:
+            self.calls.append((serial, arguments))
+            if arguments == ["get-state"]:
+                return AdbCommandResult(stdout="device", stderr="")
+            if arguments[:4] == ["shell", "cmd", "connectivity", "airplane-mode"]:
+                if len(arguments) >= 5 and arguments[4] == "enable":
+                    self._airplane_on = True
+                return AdbCommandResult(stdout="enabled" if self._airplane_on else "disabled", stderr="")
+            if "settings get global airplane_mode_on" in " ".join(arguments):
+                return AdbCommandResult(stdout="0", stderr="")
+            return AdbCommandResult(stdout="", stderr="")
+
+    result = airplane(
+        adb_path="adb",
+        slot_map={20: "PIXEL-SLOT20"},
+        request=FarmTaskRequest(
+            job_id="j",
+            task_type="airplane_mode",
+            farm_slot_id=20,
+            payload={"state": "on"},
+        ),
+        command_runner=SplitBrain(),
+    )
+    assert result.ok is False
+    assert result.http_status == 502
+    assert result.error == "airplane_mode_failed"

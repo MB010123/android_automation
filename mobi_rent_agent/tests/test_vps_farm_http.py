@@ -45,6 +45,7 @@ def test_farm_status_server_requires_auth():
     FarmHandler.api_token = "secret"
     FarmHandler.adb_path = "adb"
     FarmHandler.slot_map = {1: "X"}
+    FarmHandler.status_snapshot = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), FarmHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -72,6 +73,7 @@ def test_farm_access_mode_accepts_query_and_json_admin_flag():
     FarmHandler.adb_path = "adb-missing-for-test"
     FarmHandler.slot_map = {21: "RFCNB056WEV"}
     FarmHandler.agent_config = None
+    FarmHandler.status_snapshot = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), FarmHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)

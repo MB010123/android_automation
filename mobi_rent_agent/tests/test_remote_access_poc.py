@@ -255,6 +255,10 @@ class FakePlatform:
         self._require_control_user(device_id, platform_username)
         return FakeMjpeg(device_id)
 
+    def workspace_for_device(self, device_id: str) -> str | None:
+        text = str(self.device_workspace.get(device_id) or "").strip()
+        return text or None
+
 
 # Side-effect-free Farm tasks customer routes may issue alongside the real action:
 # inspect, screen prepare, and the admin=false access-mode flip (1s guard stays on).
@@ -695,7 +699,10 @@ def test_d_browser_supplied_device_or_slot_is_ignored(tmp_path: Path):
     assert service.create_remote_access(CUSTOMER_A, None, rental_a).http_status == 201
     status = service.device_status_for_customer(CUSTOMER_A, rental_a)
     assert status.http_status == 200 and status.body["slot_id"] == 1
-    assert platform.calls[-1] == ("status", {"device_id": SLOT1_SERIAL, "workspace_id": "ws-poc"})
+    assert platform.calls[-1] == (
+        "status",
+        {"device_id": SLOT1_SERIAL, "workspace_id": "ws-poc", "require_workspace": False},
+    )
 
 
 def test_d_http_body_device_id_is_ignored(tmp_path: Path):
@@ -841,6 +848,49 @@ def test_device_status_gads_error_stays_online_when_adb_up(tmp_path: Path):
     assert customer.body["state"] == "online"
     assert customer.body["online"] is True
     assert not any(call[0] in {"revoke", "release"} for call in platform.calls)
+
+
+def test_missing_workspace_map_discovers_gads_workspace_for_mapped_serial(tmp_path: Path):
+    tenant = MemoryTenant()
+    serial = "RFCNB056WEV"
+    platform = FakePlatform(registered={serial})
+    platform.device_workspace = {serial: "ws-s20-discovered"}
+    platform.online[serial] = True
+    farm = FakeFarm()
+    service, _, _ = _service(
+        tmp_path,
+        tenant=tenant,
+        platform=platform,
+        farm=farm,
+        allowed=(21,),
+        gads_slot_ids=(21,),
+        slot_map={21: serial},
+        workspace_map={},
+        prepare_slot_ids=None,
+        observe_slot_ids=None,
+    )
+    rental = _rental(tenant, bay=21, user_id=CUSTOMER_A)
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["state"] == "online"
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status == 201
+    grants = [c[1] for c in platform.calls if c[0] == "grant"]
+    assert grants and grants[-1]["workspace_id"] == "ws-s20-discovered"
+
+
+def test_device_status_adb_online_is_not_unavailable_when_gads_unregistered(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform(registered=set())
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    status = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert status.http_status == 200
+    assert status.body["state"] == "online"
+    assert status.body["online"] is True
+    assert status.body["adb_online"] is True
+    assert status.body["remote_access_available"] is True
 
 
 # ---------------------------------------------------------------------------

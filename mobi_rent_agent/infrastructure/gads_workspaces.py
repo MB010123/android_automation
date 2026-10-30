@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from domain.farm import MAX_FARM_SLOT_ID
@@ -16,6 +17,36 @@ logger = logging.getLogger("vps_backend.gads_workspaces")
 
 class GadsWorkspaceMapError(ValueError):
     """Workspace map file is missing or invalid."""
+
+
+def resolve_gads_workspace_map(path: str | Path | None) -> dict[int, str]:
+    """Configured map, then ``GADS_SECRETS_DIR/gads_workspaces.json``.
+
+    A missing or unreadable configured path must not leave Slot 21 (or any
+    other bay) without a workspace: that is customer ``unavailable``.
+    """
+    candidates: list[Path] = []
+    if path and str(path).strip():
+        candidates.append(Path(str(path).strip()))
+    secrets_dir = str(os.getenv("GADS_SECRETS_DIR") or r"C:\gads\secrets").strip()
+    if secrets_dir:
+        candidates.append(Path(secrets_dir) / "gads_workspaces.json")
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not candidate.is_file():
+            continue
+        try:
+            mapping = load_gads_workspace_map(candidate)
+        except GadsWorkspaceMapError:
+            logger.warning("gads_workspace_map_unreadable")
+            continue
+        if mapping:
+            return mapping
+    return {}
 
 
 def load_gads_workspace_map(path: str | Path | None) -> dict[int, str]:

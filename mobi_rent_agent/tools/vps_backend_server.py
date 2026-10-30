@@ -13,7 +13,6 @@ import os
 import re
 import sys
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -80,6 +79,7 @@ from infrastructure.vps_job_store import VpsJobStore
 from infrastructure.outbound_job_store import OutboundJobStore
 from infrastructure.outbound_message_store import OutboundMessageStore
 from infrastructure.slot_public_id import load_slot_public_id_overrides
+from infrastructure.farm_status_snapshot import DEFAULT_REFRESH_SECONDS, FarmStatusSnapshot
 from infrastructure.vps_rate_limiter import VpsRateLimiter
 from infrastructure.vps_openapi_spec import build_vps_openapi_document
 from infrastructure.vps_api_docs import (
@@ -100,9 +100,11 @@ FARM_STATUS_PATH = "/farm/status"
 _SESSION_QUERY_RE = re.compile(r"([?&]session=)[0-9a-fA-F-]{8,36}", re.IGNORECASE)
 # Upper bound per background thread when shutting down (never indefinite).
 SHUTDOWN_JOIN_TIMEOUT_SECONDS = 5.0
-# Farm `/agent/status` (one `adb devices` on the host) is shared across all
-# dashboard polls for this long instead of being re-fetched per request.
-FARM_STATUS_CACHE_SECONDS = 2.0
+# Background-refreshed snapshot of Farm `/agent/health`. List APIs serve
+# from memory; the daemon refreshes every 3–5s so `/farm/status` and
+# `/admin/devices` stay under 100ms instead of blocking on `adb devices`.
+FARM_STATUS_CACHE_SECONDS = DEFAULT_REFRESH_SECONDS
+FARM_STATUS_REFRESH_SECONDS = DEFAULT_REFRESH_SECONDS
 DEFAULT_WEBHOOK_PATH = "/voidfix/inbound"
 
 logger = logging.getLogger("vps_backend")
@@ -231,6 +233,7 @@ class Handler(BaseHTTPRequestHandler):
     farm_service_token: str | None = None
     slot_sms_service: VpsSlotSmsService | None = None
     farm_management_service: VpsFarmManagementService | None = None
+    farm_status_fetcher: Any = None
     slot_serial_map: dict[int, str] = {}
     auth_service: AuthService | None = None
     auth_rate_limiter: AuthRateLimiter | None = None
@@ -1237,13 +1240,23 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             try:
-                farm = fetch_farm_status(
-                    self.farm_agent_url,
-                    self.farm_agent_token,
-                    self.request_timeout,
-                )
+                fetcher = self.farm_status_fetcher
+                if callable(fetcher):
+                    farm = fetcher()
+                else:
+                    farm = fetch_farm_status(
+                        self.farm_agent_url,
+                        self.farm_agent_token,
+                        self.request_timeout,
+                    )
             except requests.RequestException as exc:
                 self._send_json(502, {"ok": False, "error": "farm_unreachable", "detail": str(exc)})
+                return
+            if not isinstance(farm, dict):
+                self._send_json(502, {"ok": False, "error": "farm_unreachable"})
+                return
+            if farm.get("error") == "farm_unreachable" and farm.get("ok") is False:
+                self._send_json(502, {"ok": False, "error": "farm_unreachable", "detail": farm.get("detail")})
                 return
             farm = overlay_farm_slot_identity(farm, self.slot_serial_map)
             self._send_json(200, {"ok": True, "role": "vps", "farm": farm})
@@ -1517,23 +1530,25 @@ def main() -> int:
     logger.info("farm_known_slots=%s", sorted(known_slots))
     overrides = load_slot_public_id_overrides(os.getenv("SLOT_PUBLIC_ID_MAP_PATH"))
 
-    farm_status_cache: dict[str, Any] = {"at": 0.0, "body": None}
-    farm_status_lock = threading.Lock()
-
-    def _farm_status() -> dict[str, Any]:
+    def _fetch_farm_status_safe() -> dict[str, Any]:
         if not farm_url or not farm_token:
             return {"ok": False, "error": "farm_agent_not_configured"}
-        # device-status / remote-access GETs are polled by every open dashboard;
-        # coalesce them so the Farm Agent runs `adb devices` at most every 2s.
-        with farm_status_lock:
-            cached = farm_status_cache["body"]
-            if cached is not None and time.monotonic() - farm_status_cache["at"] < FARM_STATUS_CACHE_SECONDS:
-                return dict(cached)
-            body = fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
-            if isinstance(body, dict) and "offline_slots" in body:
-                farm_status_cache["body"] = dict(body)
-                farm_status_cache["at"] = time.monotonic()
-            return body
+        try:
+            return fetch_farm_status(farm_url, farm_token, config.request_timeout_seconds)
+        except (requests.RequestException, OSError, ConnectionError) as exc:
+            logger.warning("farm_status_fetch_failed")
+            return {"ok": False, "error": "farm_unreachable", "detail": str(exc)}
+
+    farm_status_snapshot = FarmStatusSnapshot(
+        _fetch_farm_status_safe,
+        interval_seconds=float(os.getenv("FARM_STATUS_REFRESH_SECONDS") or FARM_STATUS_REFRESH_SECONDS),
+        log=logger,
+    )
+    if farm_url and farm_token:
+        farm_status_snapshot.start()
+
+    def _farm_status() -> dict[str, Any]:
+        return farm_status_snapshot.get()
 
     vps_jobs_db = os.getenv(
         "VPS_JOBS_DB_PATH",
@@ -1674,6 +1689,7 @@ def main() -> int:
     Handler.outbound_dispatcher = dispatcher
     Handler.farm_agent_url = farm_url
     Handler.farm_agent_token = farm_token
+    Handler.farm_status_fetcher = _farm_status
     Handler.farm_service_token = os.getenv("FARM_SERVICE_TOKEN") or None
     Handler.slot_sms_service = slot_sms_service
     Handler.farm_management_service = farm_management_service
@@ -1744,6 +1760,7 @@ def main() -> int:
         # Stop background workers (bounded join) before closing the stores they write to.
         heartbeat_poller.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         job_worker.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
+        farm_status_snapshot.stop(join_timeout=SHUTDOWN_JOIN_TIMEOUT_SECONDS)
         store.close()
         job_store.close()
         message_store.close()
@@ -1780,7 +1797,7 @@ def _build_remote_access_service(
         return None, None
     from infrastructure.adb_slot_status import SlotMapError, load_slot_map
     from infrastructure.gads_remote_access import gads_platform_from_config
-    from infrastructure.gads_workspaces import GadsWorkspaceMapError, load_gads_workspace_map, merge_workspace_map
+    from infrastructure.gads_workspaces import merge_workspace_map, resolve_gads_workspace_map
     from infrastructure.remote_access_store import RemoteAccessSessionStore
 
     allowed = tuple(getattr(config, "remote_access_poc_slot_ids", ()) or ())
@@ -1790,14 +1807,7 @@ def _build_remote_access_service(
     except SlotMapError as exc:
         logger.error("remote_access: slot map unavailable (%s); POC routes will return 403", exc)
         full_map = {}
-    file_map: dict[int, str] = {}
-    workspace_map_path = getattr(config, "remote_access_workspace_map_path", None)
-    if workspace_map_path:
-        try:
-            file_map = load_gads_workspace_map(workspace_map_path)
-        except GadsWorkspaceMapError as exc:
-            logger.error("remote_access: workspace map unavailable (%s)", exc)
-            file_map = {}
+    file_map = resolve_gads_workspace_map(getattr(config, "remote_access_workspace_map_path", None))
     workspaces = merge_workspace_map(
         file_map,
         fallback_slot1=getattr(config, "remote_access_workspace_id", None),
@@ -1867,7 +1877,7 @@ def _build_admin_live_access_service(
     from infrastructure.adb_slot_status import SlotMapError, load_slot_map
     from infrastructure.admin_live_access_store import AdminLiveAccessStore
     from infrastructure.gads_remote_access import gads_platform_from_config
-    from infrastructure.gads_workspaces import GadsWorkspaceMapError, load_gads_workspace_map, merge_workspace_map
+    from infrastructure.gads_workspaces import merge_workspace_map, resolve_gads_workspace_map
 
     map_path = Path(config.slot_map_path) if config.slot_map_path else ROOT / "slot_map.json"
     try:
@@ -1875,14 +1885,7 @@ def _build_admin_live_access_service(
     except SlotMapError as exc:
         logger.error("admin_live_access: slot map unavailable (%s)", exc)
         full_map = {}
-    file_map: dict[int, str] = {}
-    workspace_map_path = getattr(config, "remote_access_workspace_map_path", None)
-    if workspace_map_path:
-        try:
-            file_map = load_gads_workspace_map(workspace_map_path)
-        except GadsWorkspaceMapError as exc:
-            logger.error("admin_live_access: workspace map unavailable (%s)", exc)
-            file_map = {}
+    file_map = resolve_gads_workspace_map(getattr(config, "remote_access_workspace_map_path", None))
     workspaces = merge_workspace_map(
         file_map,
         fallback_slot1=getattr(config, "remote_access_workspace_id", None),

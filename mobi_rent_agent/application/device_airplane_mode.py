@@ -2,12 +2,15 @@
 
 Sequence:
 
-1. ``settings put global airplane_mode_on 0|1``
-2. ``am broadcast -a android.intent.action.AIRPLANE_MODE --ez state true|false``
-   (denied for shell uid 2000; kept because callers expect it)
-3. ``cmd connectivity airplane-mode enable|disable`` to flip radios
-4. Confirm with ``settings get global airplane_mode_on`` — never trust
-   ``cmd connectivity`` stdout as the API result.
+1. ``cmd connectivity airplane-mode enable|disable`` — this is the command
+   that actually flips the radio stack on modern Android.
+2. Immediately after enable, keep Wi-Fi up (``cmd wifi set-wifi-enabled
+   enabled`` and ``svc wifi enable``) so GADS / remote control does not drop.
+3. ``settings put global airplane_mode_on 0|1`` plus the AIRPLANE_MODE
+   broadcast as fallback (broadcast is usually denied for shell uid 2000).
+4. Read back BOTH ``cmd connectivity airplane-mode`` (enabled/disabled)
+   AND ``settings get global airplane_mode_on`` (1/0). Report success only
+   when both agree with the requested state.
 """
 from __future__ import annotations
 
@@ -29,6 +32,11 @@ AIRPLANE_TIMEOUT_SECONDS = 20.0
 _RENTAL_DISABLED_PATH = Path(__file__).resolve().parents[1] / "logs" / "rental_disabled_slots.json"
 _RENTAL_DISABLED_LOCK = threading.Lock()
 AIRPLANE_SETTING_GET = ["shell", "settings", "get", "global", "airplane_mode_on"]
+AIRPLANE_CMD_GET = ["shell", "cmd", "connectivity", "airplane-mode"]
+WIFI_ENABLE_COMMANDS = (
+    ["shell", "cmd", "wifi", "set-wifi-enabled", "enabled"],
+    ["shell", "svc", "wifi", "enable"],
+)
 
 
 def _serial_for_slot(slot_map: dict[int, str], farm_slot_id: int) -> str | None:
@@ -132,19 +140,68 @@ def parse_airplane_state(stdout: str) -> str | None:
     return None
 
 
-def _read_state(runner: AdbCommandRunner, serial: str) -> str | None:
-    try:
-        out = runner.run(serial, list(AIRPLANE_SETTING_GET)).stdout
-        parsed = parse_airplane_state(out)
-        if parsed is not None:
-            return parsed
-    except AdbCommandError:
-        logger.info("airplane_mode_settings_get_failed serial_suffix=%s", serial[-4:])
-    return None
-
-
 def _short_adb_error(exc: AdbCommandError) -> str:
     return str(exc).replace("\n", " ").strip()[:180]
+
+
+def _run_optional(
+    runner: AdbCommandRunner,
+    serial: str,
+    arguments: list[str],
+    warnings: list[str],
+    label: str,
+) -> None:
+    try:
+        runner.run(serial, list(arguments))
+    except AdbCommandError as exc:
+        warnings.append(f"{label}: {_short_adb_error(exc)}")
+        logger.info("airplane_mode_%s_failed serial_suffix=%s", label.replace(" ", "_"), serial[-4:])
+
+
+def _ensure_wifi_enabled(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> None:
+    """Airplane ON must not drop the Wi-Fi path GADS uses for remote control."""
+    for arguments in WIFI_ENABLE_COMMANDS:
+        _run_optional(runner, serial, arguments, warnings, "wifi enable")
+
+
+def _read_settings_state(runner: AdbCommandRunner, serial: str) -> str | None:
+    try:
+        out = runner.run(serial, list(AIRPLANE_SETTING_GET)).stdout
+        return parse_airplane_state(out)
+    except AdbCommandError:
+        logger.info("airplane_mode_settings_get_failed serial_suffix=%s", serial[-4:])
+        return None
+
+
+def _read_cmd_state(runner: AdbCommandRunner, serial: str) -> str | None:
+    try:
+        out = runner.run(serial, list(AIRPLANE_CMD_GET)).stdout
+        return parse_airplane_state(out)
+    except AdbCommandError:
+        logger.info("airplane_mode_cmd_get_failed serial_suffix=%s", serial[-4:])
+        return None
+
+
+def _read_state(runner: AdbCommandRunner, serial: str) -> str | None:
+    """Settings-only read used for the pre-toggle snapshot."""
+    return _read_settings_state(runner, serial)
+
+
+def _read_verified_state(runner: AdbCommandRunner, serial: str) -> str | None:
+    """Both radios of truth must agree before the API reports on/off."""
+    cmd_state = _read_cmd_state(runner, serial)
+    settings_state = _read_settings_state(runner, serial)
+    if cmd_state is None or settings_state is None:
+        return None
+    if cmd_state != settings_state:
+        logger.info(
+            "airplane_mode_readback_mismatch cmd=%s settings=%s serial_suffix=%s",
+            cmd_state,
+            settings_state,
+            serial[-4:],
+        )
+        return None
+    return cmd_state
 
 
 def _apply_settings_and_broadcast(
@@ -156,31 +213,41 @@ def _apply_settings_and_broadcast(
     flag = "1" if desired == "on" else "0"
     ez_state = "true" if desired == "on" else "false"
     verb = "enable" if desired == "on" else "disable"
-    runner.run(serial, ["shell", "settings", "put", "global", "airplane_mode_on", flag])
-    try:
-        runner.run(
-            serial,
-            [
-                "shell",
-                "am",
-                "broadcast",
-                "-a",
-                "android.intent.action.AIRPLANE_MODE",
-                "--ez",
-                "state",
-                ez_state,
-            ],
-        )
-    except AdbCommandError as exc:
-        warnings.append(f"AIRPLANE_MODE broadcast: {_short_adb_error(exc)}")
-        logger.info("airplane_mode_broadcast_failed serial_suffix=%s", serial[-4:])
-    # Unrooted shell cannot send AIRPLANE_MODE. cmd connectivity is the
-    # privileged path that actually flips radios on Pixel and Samsung One UI.
-    try:
-        runner.run(serial, ["shell", "cmd", "connectivity", "airplane-mode", verb])
-    except AdbCommandError as exc:
-        warnings.append(f"cmd connectivity airplane-mode: {_short_adb_error(exc)}")
-        logger.info("airplane_mode_cmd_connectivity_failed serial_suffix=%s", serial[-4:])
+    # Privileged connectivity command is what actually actuates radios.
+    _run_optional(
+        runner,
+        serial,
+        ["shell", "cmd", "connectivity", "airplane-mode", verb],
+        warnings,
+        "cmd connectivity airplane-mode",
+    )
+    if desired == "on":
+        _ensure_wifi_enabled(runner, serial, warnings)
+    _run_optional(
+        runner,
+        serial,
+        ["shell", "settings", "put", "global", "airplane_mode_on", flag],
+        warnings,
+        "settings put",
+    )
+    _run_optional(
+        runner,
+        serial,
+        [
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.AIRPLANE_MODE",
+            "--ez",
+            "state",
+            ez_state,
+        ],
+        warnings,
+        "AIRPLANE_MODE broadcast",
+    )
+    if desired == "on":
+        _ensure_wifi_enabled(runner, serial, warnings)
 
 
 def apply_airplane_mode(
@@ -190,7 +257,35 @@ def apply_airplane_mode(
     warnings: list[str],
 ) -> str | None:
     _apply_settings_and_broadcast(runner, serial, desired, warnings)
-    return _read_state(runner, serial)
+    verified = _read_verified_state(runner, serial)
+    if verified == desired:
+        return verified
+    verb = "enable" if desired == "on" else "disable"
+    _run_optional(
+        runner,
+        serial,
+        ["shell", "cmd", "connectivity", "airplane-mode", verb],
+        warnings,
+        "cmd connectivity airplane-mode retry",
+    )
+    if desired == "on":
+        _ensure_wifi_enabled(runner, serial, warnings)
+        _run_optional(
+            runner,
+            serial,
+            ["shell", "settings", "put", "global", "airplane_mode_on", "1"],
+            warnings,
+            "settings put retry",
+        )
+    else:
+        _run_optional(
+            runner,
+            serial,
+            ["shell", "settings", "put", "global", "airplane_mode_on", "0"],
+            warnings,
+            "settings put retry",
+        )
+    return _read_verified_state(runner, serial)
 
 
 def run_airplane_mode(
@@ -236,20 +331,34 @@ def run_airplane_mode(
         )
     if "rental_disabled" in payload:
         persist_farm_rental_disabled(slot_id, bool(payload.get("rental_disabled")))
-    reported = applied if applied is not None else "unknown"
-    logger.info("airplane_mode_ok slot=%s desired=%s applied=%s", slot_id, desired, reported)
-    return FarmTaskResult(
-        ok=True,
-        http_status=200,
-        details={
-            **public_airplane_body(slot_id=slot_id, state=applied, serial=serial),
-            "requested": requested,
-            "desired": desired,
-            "method": "settings_put_broadcast",
-            "setting": "settings get global airplane_mode_on",
-            "warnings": warnings,
-        },
-    )
+    if applied != desired:
+        logger.info("airplane_mode_unverified slot=%s desired=%s applied=%s", slot_id, desired, applied)
+        return FarmTaskResult(
+            ok=False,
+            http_status=502,
+            error="airplane_mode_failed",
+            details={
+                "serial": serial,
+                "requested": requested,
+                "desired": desired,
+                "applied": applied,
+                "method": "cmd_connectivity",
+                "warnings": warnings,
+            },
+        )
+    logger.info("airplane_mode_ok slot=%s desired=%s applied=%s", slot_id, desired, applied)
+    details = {
+        **public_airplane_body(slot_id=slot_id, state=applied, serial=serial),
+        "requested": requested,
+        "desired": desired,
+        "method": "cmd_connectivity",
+        "setting": "settings get global airplane_mode_on",
+        "connectivity": "cmd connectivity airplane-mode",
+        "warnings": warnings,
+    }
+    if desired == "on":
+        details["wifi_preserved"] = True
+    return FarmTaskResult(ok=True, http_status=200, details=details)
 
 
 def run_airplane_cycle(

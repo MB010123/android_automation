@@ -29,6 +29,7 @@ from application.slot_identity import farm_slot_entries
 from infrastructure.config import AgentConfig
 from infrastructure.farm_agent_auth import authorize_farm_request, extract_bearer_token
 from infrastructure.farm_job_result_cache import FarmJobResultCache, should_reuse_assign_result
+from infrastructure.farm_status_snapshot import DEFAULT_REFRESH_SECONDS, FarmStatusSnapshot
 
 HEALTH_PATH = "/agent/health"
 STATUS_PATH = "/agent/status"
@@ -118,6 +119,7 @@ class Handler(BaseHTTPRequestHandler):
     slot_map: dict[int, str] = {}
     agent_config: AgentConfig | None = None
     job_cache: FarmJobResultCache | None = None
+    status_snapshot: FarmStatusSnapshot | None = None
 
     def log_message(self, fmt: str, *args) -> None:
         logger.info("%s - %s", self.address_string(), fmt % args)
@@ -256,7 +258,11 @@ class Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._send_json(401, {"ok": False, "error": "unauthorized"})
             return
-        body = build_farm_status(adb_path=self.adb_path, slot_map=self.slot_map)
+        snapshot = self.status_snapshot
+        if snapshot is not None:
+            body = snapshot.get()
+        else:
+            body = build_farm_status(adb_path=self.adb_path, slot_map=self.slot_map)
         self._send_json(200, body)
 
     def do_POST(self) -> None:
@@ -412,6 +418,13 @@ def main() -> int:
     Handler.agent_config = config
     cache_path = Path(os.getenv("FARM_JOB_RESULT_CACHE_PATH") or (ROOT / "logs" / "farm_job_results.json"))
     Handler.job_cache = FarmJobResultCache(cache_path)
+    status_snapshot = FarmStatusSnapshot(
+        lambda: build_farm_status(adb_path=config.adb_path, slot_map=slot_map),
+        interval_seconds=float(os.getenv("FARM_STATUS_REFRESH_SECONDS") or DEFAULT_REFRESH_SECONDS),
+        log=logger,
+    )
+    status_snapshot.start()
+    Handler.status_snapshot = status_snapshot
 
     from application.device_hardware_lockdown import start_audio_lockdown_loop
 
@@ -431,6 +444,8 @@ def main() -> int:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("shutting down")
+    finally:
+        status_snapshot.stop()
     return 0
 
 
