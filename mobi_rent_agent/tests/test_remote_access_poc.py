@@ -824,6 +824,25 @@ def test_g_release_makes_slot1_available_for_next_rental(tmp_path: Path):
     assert service.get_remote_access(CUSTOMER_A, None, rental_a).http_status == 404
 
 
+def test_device_status_gads_error_stays_online_when_adb_up(tmp_path: Path):
+    tenant = MemoryTenant()
+    platform = FakePlatform()
+    platform.status_error = "gads_timeout"
+    farm = FakeFarm()
+    service, _, _ = _service(tmp_path, tenant=tenant, platform=platform, farm=farm)
+    rental = _rental(tenant, bay=1, user_id=CUSTOMER_A)
+    created = service.create_remote_access(CUSTOMER_A, None, rental)
+    assert created.http_status in {200, 201}
+    status = service.get_device_status(1)
+    assert status.http_status == 200
+    assert status.body["adb_online"] is True
+    customer = service.device_status_for_customer(CUSTOMER_A, rental)
+    assert customer.http_status == 200
+    assert customer.body["state"] == "online"
+    assert customer.body["online"] is True
+    assert not any(call[0] in {"revoke", "release"} for call in platform.calls)
+
+
 # ---------------------------------------------------------------------------
 # H. Reboot only operates on authorized Slot 1
 # ---------------------------------------------------------------------------

@@ -449,6 +449,8 @@ class RemoteAccessService:
             )
         except RemoteAccessPlatformError as exc:
             logger.warning("remote_access_readiness_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            if self._adb_online(auth.slot_id) is True:
+                return None
             return ApiResult(502, error_body("gads_unavailable"))
         if not status.registered:
             return ApiResult(503, error_body("phone_unavailable"))
@@ -884,6 +886,7 @@ class RemoteAccessService:
         platform = self._require_platform()
         if isinstance(platform, ApiResult):
             return platform
+        adb_online = self._adb_online(slot)
         try:
             status = platform.device_status(
                 slot_id=slot,
@@ -892,9 +895,26 @@ class RemoteAccessService:
             )
         except RemoteAccessPlatformError as exc:
             logger.warning("remote_access_status_failed slot=%s reason=%s", slot, exc.__class__.__name__)
+            # eUICC radio reset can make GADS SSE miss a beat. ADB up means
+            # the phone is still on the hub — never 502 / never revoke the lease.
+            if adb_online is True:
+                return ApiResult(
+                    200,
+                    {
+                        "ok": True,
+                        "slot_id": slot,
+                        "serial": device_id,
+                        "state": "online",
+                        "online": False,
+                        "available": False,
+                        "busy": False,
+                        "adb_online": True,
+                        "coordinate_space": "native_device_pixels",
+                    },
+                )
             return ApiResult(502, error_body("gads_unavailable"))
         body = {"ok": True, **status.to_public_dict()}
-        body["adb_online"] = self._adb_online(slot)
+        body["adb_online"] = adb_online
         return ApiResult(200, body)
 
     def reboot_device(self, slot_id: int, *, wait: bool = True) -> ApiResult:

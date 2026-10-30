@@ -165,6 +165,13 @@ def test_on_device_guard_script_enforces_silent_and_kicks_sec_sound():
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
     assert "euiccmanager" not in script.lower()
     assert "wipe_esims" not in script.lower()
+    assert "is_sim_esim_screen" in script
+    assert "sleep 1.5" in script
+    assert "*telephonyui*" in script
+    loop = script[script.index("while true; do") :]
+    assert loop.index("is_sim_esim_screen") < loop.index("subsettings_reason")
+    assert loop.index("sleep 1.5") < loop.index("subsettings_reason")
+    assert loop.index("is_sim_esim_screen") < loop.index("enforce_audio")
 
 
 def test_parse_admin_flag_query_and_body():

@@ -916,7 +916,10 @@ def run_remote_access_activation_status(
     serial = str(slot_map.get(slot_id) or "").strip()
     if not serial:
         return FarmTaskResult(ok=False, http_status=404, error="slot_not_found")
-    timeout = float(getattr(agent_config, "provisioning_timeout_seconds", 30.0) or 30.0)
+    # Live dashboard polls this while an eSIM may be switching. Telephony
+    # dumpsys (isub / registry) hangs 10–15s on Binder; keep the budget short
+    # so a slow observe never looks like a stream disconnect.
+    timeout = min(5.0, float(getattr(agent_config, "provisioning_timeout_seconds", 30.0) or 30.0))
     runner = command_runner or AdbCommandRunner(adb_path, timeout)
     try:
         state = runner.run(serial, ["get-state"]).stdout

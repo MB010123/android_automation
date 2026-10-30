@@ -125,9 +125,9 @@ def _catalog_entry(screen_key: str, family: str) -> dict[str, Any]:
         }
     if screen_key == SCREEN_KEY_SETTINGS_NETWORK:
         sim_step = (
-            "Tap **SIM manager → Add eSIM** to add or manage your eSIM."
+            "Tap **SIM manager** to view eSIM 1 / eSIM 2."
             if samsung
-            else "Tap **SIMs → Add SIM** to add or manage your eSIM."
+            else "Tap **SIMs** to view your eSIM profiles."
         )
         return {
             "title": "SIM & Network Setup",
@@ -135,6 +135,9 @@ def _catalog_entry(screen_key: str, family: str) -> dict[str, Any]:
             "severity": SEVERITY_INFO,
             "do_list": [
                 sim_step,
+                "Toggle the switch next to an eSIM to change active providers (wait 5–10s for the carrier switch popup to finish).",
+                "To delete a provider: tap the eSIM name/number (not the switch), then tap Remove / Erase.",
+                "Tap Add eSIM to install a new eSIM profile.",
                 "Use 'Upload eSIM QR' in the dashboard first, then select 'Scan QR from photo/gallery'.",
                 "Keep Wi-Fi turned ON at all times.",
             ],

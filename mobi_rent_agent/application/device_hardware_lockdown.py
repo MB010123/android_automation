@@ -42,6 +42,9 @@ AUDIO_ENFORCE_INTERVAL_SECONDS = 30.0
 # on reboot / adbd restart; session start and access-mode flips re-check anyway.
 GUARD_CHECK_INTERVAL_SECONDS = 60.0
 GUARD_TICK_SECONDS = 0.4
+# SIM manager / eUICC profile switch freezes WindowManager for 5–12s.
+# Slow the focus poll so dumpsys does not contend with GADS injectInputEvent.
+SIM_ESIM_TICK_SECONDS = 1.5
 LOCKDOWN_GUARD_REMOTE = "/data/local/tmp/mobirent_lockdown_guard.sh"
 LOCKDOWN_GUARD_PGREP = "mobirent_lockdown_guard.sh"
 ADMIN_MODE_FLAG = "/data/local/tmp/mobirent_admin_mode"
@@ -79,6 +82,12 @@ ALLOWED_SETTINGS_ACTIVITY_MARKERS = (
     "tethersettings",
     "airplane",
     "euicc",
+    "euiccdisabling",
+    "euiccdeletion",
+    "simcardmgr",
+    "simcardmanager",
+    "spaactivity",
+    "settings.spa",
     "mydeviceinfo",
     "deviceinfosettings",
     "aboutdevice",
@@ -217,6 +226,22 @@ is_settings_home() {
   return 1
 }
 
+# Samsung SIM manager, Pixel SIMs, eUICC LPA, and switch/delete dialogs.
+# Never kick these; never dumpsys activity top / settings get while here.
+is_sim_esim_screen() {
+  pkg=$1
+  act=$2
+  case "$pkg" in
+    *telephonyui*|*euicc*|*com.android.phone*)
+      return 0 ;;
+  esac
+  case "$act" in
+    *simsettings*|*mobilenetwork*|*networkdashboard*|*connectionssettings*|*euicc*|*simcardmgr*|*simcardmanager*|*euiccdisabling*|*euiccdeletion*|*managesim*|*spaactivity*|*settings.spa*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 allowed_settings_act() {
   act=$1
   case "$act" in
@@ -261,7 +286,7 @@ classify_focus() {
       case "$act" in
         *mydeviceinfo*|*deviceinfosettings*|*aboutdevice*|*aboutphone*|*statusactivity*)
           echo about_phone; return ;;
-        *connectionssettings*|*networkdashboard*|*mobilenetwork*|*simsettings*|*wirelesssettings*|*wifisettings*|*tethersettings*|*euicc*|*airplane*)
+        *connectionssettings*|*networkdashboard*|*mobilenetwork*|*simsettings*|*wirelesssettings*|*wifisettings*|*tethersettings*|*euicc*|*airplane*|*spaactivity*|*settings.spa*|*simcardmgr*|*simcardmanager*)
           echo settings_network; return ;;
         *)
           echo settings_main; return ;;
@@ -341,6 +366,11 @@ while true; do
   act=$(extract_act "$focus")
   if dismiss_usb_popup "$pkg" "$act"; then sleep 0.4; continue; fi
   if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi
+  if is_sim_esim_screen "$pkg" "$act"; then
+    maybe_record "$(classify_focus "$pkg" "$act")"
+    sleep 1.5
+    continue
+  fi
   case "$pkg" in
     "")
       ;;

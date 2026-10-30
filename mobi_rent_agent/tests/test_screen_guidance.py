@@ -79,6 +79,8 @@ def test_guard_script_writes_screen_state_and_blocked_kick():
     assert "blocked_reset" in script
     assert "if [ -f /data/local/tmp/mobirent_admin_mode ]; then sleep 1; continue; fi" in script
     assert "sleep 0.4" in script
+    assert "sleep 1.5" in script
+    assert "is_sim_esim_screen" in script
     assert "dumpsys window displays" in script
     assert "is_settings_home" in script
     assert "settingshomepage" in script
@@ -148,6 +150,12 @@ def test_catalog_covers_every_screen_key_with_do_and_dont():
     pixel = guidance_for(SCREEN_KEY_SETTINGS_NETWORK, device_family="pixel")
     assert "SIM manager" in s20["do_list"][0]
     assert "SIMs" in pixel["do_list"][0]
+    joined_s20 = " ".join(s20["do_list"])
+    joined_px = " ".join(pixel["do_list"])
+    for joined in (joined_s20, joined_px):
+        assert "Toggle the switch next to an eSIM" in joined
+        assert "tap the eSIM name/number" in joined
+        assert "Tap Add eSIM to install a new eSIM profile." in joined
 
 
 def test_catalog_source_has_no_device_control_verbs():

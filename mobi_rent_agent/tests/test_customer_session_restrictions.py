@@ -444,6 +444,8 @@ def test_source_does_not_restart_gads_or_use_lock_task():
     assert "device owner" not in source.lower()
     assert "force-stop" not in source
     assert "pm disable" not in source
+    assert "dumpsys isub" not in source
+    assert "telephony.registry" not in source
     assert "pm hide" not in source
     assert "pm uninstall" not in source
     assert "_launch_add_esim" in source

@@ -448,6 +448,76 @@ def test_setup_session_inspect_skips_recover_after_qr_walk():
     assert SAMSUNG_SIM_MGR_COMPONENT not in joined
 
 
+def test_setup_session_inspect_skips_telephony_dumpsys_and_role_without_voidfix():
+    slot_map = {21: "RFCNB056WEV"}
+    runner = FakeRunner()
+    runner.dumpsys_activity = (
+        "mResumedActivity: ActivityRecord{abc u0 "
+        "com.samsung.android.app.telephonyui/.netsettings.ui.simcardmanager.SimCardMgrActivity t1}"
+    )
+    req = FarmTaskRequest(
+        job_id="j",
+        task_type="setup_session_inspect",
+        farm_slot_id=21,
+        payload={"phase": "esim", "recover": False},
+    )
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map=slot_map,
+        request=req,
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "dumpsys isub" not in joined
+    assert "telephony.registry" not in joined
+    assert "dumpsys role" not in joined
+    assert "mode_ringer 0" not in joined
+    assert "force-stop com.samsung.android.app.telephonyui" not in joined
+
+
+def test_setup_session_inspect_timeout_is_not_a_disconnect():
+    from infrastructure.adb_companion import AdbCommandError as TimedOut
+
+    class _Hang(FakeRunner):
+        def run(self, serial: str, arguments: list[str], **_kw):
+            if arguments[:3] == ["shell", "dumpsys", "activity"]:
+                self.calls.append((serial, arguments))
+                raise TimedOut("ADB command timed out")
+            return super().run(serial, arguments)
+
+    runner = _Hang()
+    result = execute_farm_task(
+        adb_path="adb",
+        slot_map={21: "RFCNB056WEV"},
+        request=FarmTaskRequest(
+            job_id="j",
+            task_type="setup_session_inspect",
+            farm_slot_id=21,
+            payload={"phase": "esim", "recover": True},
+        ),
+        deps=FarmTaskExecutorDeps(command_runner=runner),
+    )
+    assert result.ok is True
+    assert result.http_status == 200
+    assert result.details["allowed"] is True
+    assert result.details["recovered"] is False
+    assert result.details["reason"] == "inspect_unavailable"
+    joined = " ".join(" ".join(args) for _serial, args in runner.calls)
+    assert "am start" not in joined
+    assert "force-stop" not in joined
+
+
+def test_setup_session_inspect_source_never_dumps_telephony():
+    source = (ROOT / "application" / "setup_session_farm_task.py").read_text(encoding="utf-8")
+    assert "dumpsys isub" not in source
+    assert "telephony.registry" not in source
+    assert "gsm.sim.operator" not in source
+    farm_http = (ROOT / "tools" / "farm_agent_status_server.py").read_text(encoding="utf-8")
+    assert "dumpsys isub" not in farm_http
+    assert "telephony.registry" not in farm_http
+
+
 def test_setup_session_input_scales_normalized_tap_to_wm_size():
     slot_map = {21: "RFCNB056WEV"}
     runner = FakeRunner()

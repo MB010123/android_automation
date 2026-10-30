@@ -69,17 +69,41 @@ def _shell(
     adb_path: str,
     serial: str,
     arguments: list[str],
+    *,
+    timeout: float = 30.0,
 ) -> str:
     if runner is not None:
-        return runner.run(serial, ["shell", *arguments]).stdout or ""
+        try:
+            return runner.run(serial, ["shell", *arguments], timeout_seconds=timeout).stdout or ""
+        except TypeError:
+            return runner.run(serial, ["shell", *arguments]).stdout or ""
     completed = subprocess.run(
         [adb_path, "-s", serial, "shell", *arguments],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=timeout,
         check=False,
     )
     return completed.stdout or ""
+
+
+def _is_sim_esim_activity(activity: str | None) -> bool:
+    text = str(activity or "").lower()
+    return any(
+        marker in text
+        for marker in (
+            "telephonyui",
+            "euicc",
+            "simsettings",
+            "simcardmgr",
+            "simcardmanager",
+            "mobilenetwork",
+            "networkdashboard",
+            "connectionssettings",
+            "spaactivity",
+            "settings.spa",
+        )
+    )
 
 
 def _live_wm_size(
@@ -140,17 +164,52 @@ def run_setup_session_inspect(
     esim_profile_present = bool(payload.get("esim_profile_present", False))
     activation_confirmed = bool(payload.get("activation_confirmed", False))
     runner = command_runner
+    activities = ""
+    role_dump = ""
+    inspect_error = False
     try:
-        activities = _shell(runner, adb_path, serial, ["dumpsys", "activity", "activities"])
-        role_dump = _shell(runner, adb_path, serial, ["dumpsys", "role"])
-    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
-        logger.warning("setup_session_inspect_adb_failed slot=%s", request.farm_slot_id)
-        return FarmTaskResult(
-            ok=False,
-            http_status=422,
-            error="inspect_failed",
-            details={"allowed": False, "reason": "adb_failed"},
+        # Short timeout: eUICC profile switch blocks Binder ~10s. A hung
+        # inspect must not 422 the dashboard or look like a stream drop.
+        activities = _shell(
+            runner, adb_path, serial, ["dumpsys", "activity", "activities"], timeout=5.0
         )
+        if voidfix_package:
+            role_dump = _shell(runner, adb_path, serial, ["dumpsys", "role"], timeout=5.0)
+    except (AdbCommandError, OSError, subprocess.TimeoutExpired):
+        inspect_error = True
+        logger.warning("setup_session_inspect_adb_failed slot=%s", request.farm_slot_id)
+    if inspect_error:
+        details = {
+            "activity": None,
+            "allowed": True,
+            "recovered": False,
+            "reason": "inspect_unavailable",
+            "phase": phase,
+            "sms_role_holder": None,
+            "voidfix_is_default_sms": False,
+            "voidfix_running": False,
+            "qr_walk_completed": qr_walk_completed,
+            "qr_deleted": False,
+            **public_setup_ui_body(
+                classify_setup_ui(
+                    None,
+                    None,
+                    walk_completed=qr_walk_completed,
+                    walk_in_progress=bool(payload.get("walk_in_progress", False)),
+                    activation_confirmed=activation_confirmed,
+                    esim_profile_present=esim_profile_present,
+                )
+            ),
+        }
+        try:
+            from application.screen_guidance import cached_device_screen_guidance
+
+            details["screen_guidance"] = cached_device_screen_guidance(
+                runner, serial, slot_id=int(request.farm_slot_id), adb_path=adb_path
+            )
+        except Exception:
+            logger.warning("setup_session_inspect_screen_guidance_failed slot=%s", request.farm_slot_id)
+        return FarmTaskResult(ok=True, http_status=200, details=details)
     activity = parse_foreground_activity(activities)
     try:
         from application.device_hardware_lockdown import (
@@ -160,10 +219,10 @@ def run_setup_session_inspect(
 
         lock_runner = runner or AdbCommandRunner(adb_path, timeout_seconds=8.0)
         apply_payload_admin_mode(lock_runner, serial, payload)
-        # The on-device guard owns mute/kicks every 0.4s; this host-side reassert
-        # is rate-limited (30s) so dashboard polling never bursts `adb shell`
-        # next to an active GADS stream.
-        reassert_audio_lockdown(lock_runner, serial, activity=activity, force=False)
+        # Never dumpsys / settings get / kick while SIM manager is switching
+        # profiles. The on-device guard already owns mute on other screens.
+        if not _is_sim_esim_activity(activity):
+            reassert_audio_lockdown(lock_runner, serial, activity=activity, force=False)
     except Exception:
         logger.info("audio_lockdown_inspect_skipped slot=%s", request.farm_slot_id)
     decision = decide_setup_guard(phase=phase, activity=activity, voidfix_package=voidfix_package)
