@@ -1303,6 +1303,19 @@ def _paths(webhook_path: str) -> dict[str, Any]:
                 },
             },
         },
+        "/rentals/{rental_id}/release-stream": {
+            "post": {
+                "tags": ["Remote access (in-app setup)"],
+                "summary": "Release a customer live-stream slot so the next queued rental is promoted",
+                "security": user_bearer,
+                "parameters": [_RENTAL_PARAM],
+                "responses": {
+                    "200": {"description": "{ok:true, released:true, queue_status:released}"},
+                    "401": {"$ref": "#/components/responses/Unauthorized"},
+                    "403": {"description": "rental_not_owned"},
+                },
+            },
+        },
         "/rentals/{rental_id}/screen-guidance": {
             "get": {
                 "tags": ["Remote access (in-app setup)"],

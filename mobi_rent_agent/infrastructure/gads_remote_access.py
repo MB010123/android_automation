@@ -29,6 +29,7 @@ from urllib.parse import quote
 
 import requests
 
+from infrastructure.http_pool import pooled_session
 from domain.remote_access import (
     PlatformAccessGrant,
     RemoteAccessPlatformError,
@@ -78,7 +79,7 @@ class GadsHubClient:
         self._admin_username = admin_username
         self._admin_password = admin_password
         self._timeout = timeout_seconds
-        self._session = session or requests.Session()
+        self._session = session or pooled_session()
         self._clock = clock
         self._admin_token: str | None = None
         self._admin_token_at: float = 0.0

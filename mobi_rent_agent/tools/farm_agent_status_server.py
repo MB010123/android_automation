@@ -425,6 +425,9 @@ def main() -> int:
     )
     status_snapshot.start()
     Handler.status_snapshot = status_snapshot
+    from application.stream_bandwidth import register_snapshot
+
+    register_snapshot(status_snapshot)
 
     from application.device_hardware_lockdown import start_audio_lockdown_loop
 

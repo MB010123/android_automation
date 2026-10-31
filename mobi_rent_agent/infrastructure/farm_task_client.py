@@ -8,6 +8,8 @@ from urllib.parse import quote
 
 import requests
 
+from infrastructure.http_pool import pooled_session
+
 logger = logging.getLogger("vps_backend.farm_task")
 
 DEFAULT_TIMEOUT_SECONDS = 180.0
@@ -51,7 +53,7 @@ class FarmTaskClient:
         self._base = farm_agent_url.rstrip("/")
         self._token = api_token
         self._timeout = timeout_seconds
-        self._session = session or requests.Session()
+        self._session = session or pooled_session()
 
     def run_task(
         self,

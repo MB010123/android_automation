@@ -65,6 +65,7 @@ REQUIRED_PATHS = [
     "/farm/slots/{bay}/access-mode",
     "/admin/devices/{bay}/access-mode",
     "/rentals/{rental_id}/screen-guidance",
+    "/rentals/{rental_id}/release-stream",
     "/farm/slots/{bay}/screen-guidance",
     "/farm/slots/{bay}/reboot",
     "/farm/slots/{bay}/airplane-mode",

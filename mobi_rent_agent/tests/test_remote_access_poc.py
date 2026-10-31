@@ -499,6 +499,8 @@ def _service(
             "slot_count": 20,
             "adb_online": 20,
         }
+    from application.customer_stream_queue import CustomerStreamQueue
+
     service = RemoteAccessService(
         enabled=enabled,
         allowed_slot_ids=allowed,
@@ -522,6 +524,7 @@ def _service(
         voidfix_android_package=voidfix_package,
         session_restrictions=session_restrictions,
         slot_msisdn_map_path=slot_msisdn_map_path,
+        stream_queue=CustomerStreamQueue(clock=clock, max_concurrent=32),
     )
     return service, store, clock
 

@@ -204,10 +204,22 @@ def _check_webhook_secret(provided: str | None, expected: str | None) -> None:
         raise ValueError("inbound webhook secret mismatch")
 
 
+_FARM_STATUS_SESSION = None
+
+
+def _farm_status_session():
+    global _FARM_STATUS_SESSION
+    if _FARM_STATUS_SESSION is None:
+        from infrastructure.http_pool import pooled_session
+
+        _FARM_STATUS_SESSION = pooled_session()
+    return _FARM_STATUS_SESSION
+
+
 def fetch_farm_status(farm_agent_url: str, api_token: str, timeout: float) -> dict[str, Any]:
     base = farm_agent_url.rstrip("/")
     url = f"{base}/agent/health"
-    response = requests.get(
+    response = _farm_status_session().get(
         url,
         headers={"Authorization": f"Bearer {api_token}"},
         timeout=timeout,
@@ -509,6 +521,13 @@ class Handler(BaseHTTPRequestHandler):
         # client lockdown. Only /admin/ live-access routes may request admin=true.
         if self._raw_admin_requested(payload) is True:
             logger.info("remote_access_admin_clamped rental=%s", rental_id)
+        if route.kind == "rental_release_stream":
+            if method != "POST":
+                self._send_json(405, {"ok": False, "error": "method_not_allowed"})
+                return True
+            result = service.release_stream(customer_id or "", rental_id)
+            self._send_json(result.http_status, result.body)
+            return True
         if route.kind == "rental_screen_guidance":
             if method != "GET":
                 self._send_json(405, {"ok": False, "error": "method_not_allowed"})
@@ -1678,6 +1697,8 @@ def main() -> int:
         else None,
         slot_public_id_overrides=overrides,
     )
+    if remote_access_service is not None and admin_live_access_service is not None:
+        admin_live_access_service._stream_queue = remote_access_service._stream_queue
 
     def _after_heartbeat_poll() -> None:
         if remote_access_service is not None:
@@ -1703,6 +1724,10 @@ def main() -> int:
     farm_management_service.start_inventory_snapshot(
         interval_seconds=float(os.getenv("FARM_STATUS_REFRESH_SECONDS") or FARM_STATUS_REFRESH_SECONDS),
     )
+    from application.stream_bandwidth import register_snapshot
+
+    register_snapshot(farm_status_snapshot)
+    register_snapshot(getattr(farm_management_service, "_inventory_snapshot", None))
     Handler.farm_management_service = farm_management_service
     Handler.slot_serial_map = slot_serial_map
     Handler.auth_service = auth_service

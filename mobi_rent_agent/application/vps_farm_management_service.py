@@ -181,6 +181,11 @@ class VpsFarmManagementService:
         if snap is not None:
             snap.stop(join_timeout=join_timeout)
 
+    def set_inventory_refresh_seconds(self, interval_seconds: float) -> None:
+        snap = self._inventory_snapshot
+        if snap is not None:
+            snap.set_interval(interval_seconds)
+
     def _inventory_snapshot_body(self) -> dict[str, Any]:
         result = self._compute_list_all_slots()
         if result.http_status != 200 or not isinstance(result.body, dict):

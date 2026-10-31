@@ -41,6 +41,7 @@ RE_REMOTE_ACCESS_ACTION = re.compile(
     r"(revoke|release|device-status|reboot|prepare-esim|activation-status|control|complete|stream|reconnect-cellular|troubleshoot)$"
 )
 RE_RENTAL_SCREEN_GUIDANCE = re.compile(rf"^/rentals/({_UUID})/screen-guidance$")
+RE_RELEASE_STREAM = re.compile(rf"^/rentals/({_UUID})/release-stream$")
 RE_ESIM_UPLOAD = re.compile(rf"^/rentals/({_UUID})/esim/upload$")
 RE_RENTAL_END = re.compile(rf"^/rentals/({_UUID})/end$")
 RE_RENTAL_CANCEL = re.compile(rf"^/rentals/({_UUID})/cancel$")
@@ -69,7 +70,9 @@ RE_WHMCS_WEBHOOK = re.compile(r"^/api/webhooks/whmcs$")
 RE_WHMCS_SSO = re.compile(r"^/api/public/auth/whmcs-sso$")
 RE_BILLING_CONFIG = re.compile(r"^/billing/config$")
 RE_BILLING_CREDITS = re.compile(r"^/billing/credits$")
-REMOTE_ACCESS_KINDS = frozenset({"remote_access", "remote_access_action", "rental_screen_guidance"})
+REMOTE_ACCESS_KINDS = frozenset(
+    {"remote_access", "remote_access_action", "rental_screen_guidance", "rental_release_stream"}
+)
 ADMIN_LIVE_ACCESS_KINDS = frozenset(
     {"admin_live_access", "admin_live_access_action"}
 )
@@ -171,6 +174,8 @@ def parse_route(path: str) -> ParsedRoute | None:
         return ParsedRoute(kind="rental_cancel", rental_id=m.group(1))
     if m := RE_RENTAL_END.match(path):
         return ParsedRoute(kind="rental_end", rental_id=m.group(1))
+    if m := RE_RELEASE_STREAM.match(path):
+        return ParsedRoute(kind="rental_release_stream", rental_id=m.group(1), action="release-stream")
     if m := RE_REMOTE_ACCESS.match(path):
         return ParsedRoute(kind="remote_access", rental_id=m.group(1))
     if m := RE_REMOTE_ACCESS_ACTION.match(path):

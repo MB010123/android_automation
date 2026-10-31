@@ -158,6 +158,13 @@ def _visible_size(ui_xml: str) -> tuple[int, int]:
 
 
 def _dump_ui(runner: AdbCommandRunner, serial: str, warnings: list[str]) -> str:
+    from application.stream_bandwidth import should_skip_any_ui_probe
+
+    # About Phone is admin-only; still refuse dumpsys/uiautomator while a
+    # stream just received a tap so GADS frames keep the USB bus.
+    if should_skip_any_ui_probe():
+        warnings.append("ui_dump: skipped_recent_input")
+        return ""
     try:
         runner.run(serial, ["shell", "uiautomator", "dump", UI_DUMP_PATH])
     except AdbCommandError as exc:

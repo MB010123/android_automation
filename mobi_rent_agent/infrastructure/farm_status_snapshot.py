@@ -33,6 +33,10 @@ class FarmStatusSnapshot:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    def set_interval(self, interval_seconds: float) -> None:
+        with self._lock:
+            self._interval = max(1.0, float(interval_seconds))
+
     def get(self) -> dict[str, Any]:
         with self._lock:
             if self._body is not None:
@@ -76,5 +80,10 @@ class FarmStatusSnapshot:
         self._thread = None
 
     def _loop(self) -> None:
-        while not self._stop.wait(self._interval):
+        while not self._stop.wait(self.interval_seconds):
             self.refresh_once()
+
+    @property
+    def interval_seconds(self) -> float:
+        with self._lock:
+            return float(self._interval)

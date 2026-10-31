@@ -461,6 +461,9 @@ def run_setup_session_input(
             return FarmTaskResult(ok=False, http_status=400, error="invalid_control")
     except (AdbCommandError, OSError, subprocess.TimeoutExpired, KeyError, TypeError, ValueError):
         return FarmTaskResult(ok=False, http_status=422, error="input_failed")
+    from application.stream_bandwidth import note_slot_input
+
+    note_slot_input(int(request.farm_slot_id))
     return FarmTaskResult(ok=True, http_status=200)
 
 

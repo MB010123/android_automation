@@ -175,6 +175,20 @@ def cached_device_screen_guidance(
         return read_device_screen_guidance(
             runner, serial, slot_id=int(slot_id), adb_path=adb_path
         )
+    from application.stream_bandwidth import should_skip_ui_probe
+
+    if should_skip_ui_probe(int(slot_id)):
+        with _adb_lock:
+            cached = _hit()
+            raw = _last_known_raw.get(cache_key, "")
+        if cached is not None:
+            return cached
+        if raw:
+            key, reason = parse_screen_state_line(raw)
+            family = device_family_for(slot_id=int(slot_id), serial=serial)
+            return public_screen_guidance(
+                screen_key=key, device_family=family, blocked_reason=reason
+            )
     with _adb_lock:
         cached = _hit()
     if cached is not None:

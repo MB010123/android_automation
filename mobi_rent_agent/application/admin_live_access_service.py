@@ -102,6 +102,7 @@ class AdminLiveAccessService:
         workspace_map: dict[int, str] | None = None,
         slot_public_id_overrides: dict[str, int] | None = None,
         clock: Callable[[], float] = time.time,
+        stream_queue: Any = None,
     ) -> None:
         self.enabled = bool(enabled)
         self._slots = {int(k): str(v) for k, v in (slot_device_map or {}).items()}
@@ -127,6 +128,7 @@ class AdminLiveAccessService:
         )
         self._public_id_overrides = dict(slot_public_id_overrides or {})
         self._clock = clock
+        self._stream_queue = stream_queue
         self._locks_guard = threading.Lock()
         self._slot_locks: dict[int, threading.Lock] = {}
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
@@ -194,6 +196,7 @@ class AdminLiveAccessService:
                     admin.user_id[:8],
                 )
                 self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
+                self._mark_admin_stream(parsed, True)
                 return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
@@ -206,6 +209,7 @@ class AdminLiveAccessService:
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
         _ = platform
         self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
+        self._mark_admin_stream(parsed, True)
         return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
@@ -226,6 +230,7 @@ class AdminLiveAccessService:
         if device_id != bound.device_id:
             return ApiResult(409, error_body("phone_unavailable"))
         self._prepare_device_screen(bound.slot_id, wait_boot=False, admin_mode=admin_mode)
+        self._mark_admin_stream(bound.slot_id, True)
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))
@@ -373,6 +378,7 @@ class AdminLiveAccessService:
         if isinstance(bound, ApiResult):
             return bound
         ended = self._store.close_session(bound.session_id, now=self._clock()) or bound
+        self._mark_admin_stream(bound.slot_id, False)
         self._audit(bound.slot_id, "admin_live_access_closed", admin.user_id)
         logger.info("admin_live_access_closed slot=%s admin=%s", bound.slot_id, admin.user_id[:8])
         body = ended.to_public_dict(self._clock())
@@ -713,6 +719,9 @@ class AdminLiveAccessService:
                 return self._farm_input(session.slot_id, "swipe", mapped)
             return True
         if command.action in NAV_ACTIONS:
+            from application.stream_bandwidth import note_slot_input
+
+            note_slot_input(session.slot_id)
             method = {
                 "notification_shade": "press_notification_shade",
                 "quick_settings": "press_quick_settings",
@@ -767,6 +776,14 @@ class AdminLiveAccessService:
             self._record(int(slot_id), event, f"admin={admin_user_id}")
         except Exception:
             logger.warning("admin_live_access_audit_failed slot=%s", slot_id)
+
+    def _mark_admin_stream(self, slot_id: int, active: bool) -> None:
+        from application.stream_bandwidth import set_admin_slot
+
+        set_admin_slot(int(slot_id), bool(active))
+        queue = self._stream_queue
+        if queue is not None:
+            queue.mark_admin(int(slot_id), bool(active))
 
     def _lock_for(self, slot_id: int) -> threading.Lock:
         with self._locks_guard:

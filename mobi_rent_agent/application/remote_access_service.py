@@ -233,6 +233,7 @@ class RemoteAccessService:
         session_restrictions: bool = True,
         slot_msisdn_map_path: str | None = None,
         cleanup_store: Any = None,
+        stream_queue: Any = None,
     ) -> None:
         self._enabled = bool(enabled)
         self._allowed = tuple(int(s) for s in allowed_slot_ids)
@@ -287,6 +288,13 @@ class RemoteAccessService:
         self._discovered_workspaces: dict[int, str] = {}
         self._ownership_cache: dict[tuple[str, str], _CachedOwnership] = {}
         self._ownership_lock = threading.Lock()
+        from application.customer_stream_queue import CustomerStreamQueue
+        from application.stream_bandwidth import set_customer_streams_busy
+
+        self._stream_queue = stream_queue or CustomerStreamQueue(
+            clock=self._clock,
+            on_busy_change=set_customer_streams_busy,
+        )
         reconcile = getattr(self._store, "reconcile_interrupted_prepares", None)
         if callable(reconcile):
             interrupted = reconcile()
@@ -608,11 +616,21 @@ class RemoteAccessService:
         auth = self._authorize(customer_id, rental_id, slot_id)
         if isinstance(auth, ApiResult):
             return auth
+        queued = self._queue_if_waiting(auth, claim=True)
+        if queued is not None:
+            return queued
         platform = self._require_platform()
         if isinstance(platform, ApiResult):
+            self._stream_queue.release(auth.rental_id)
             return platform
         with self._slot_op_lock(auth.slot_id):
-            return self._create_remote_access_locked(auth, platform)
+            result = self._create_remote_access_locked(auth, platform)
+        if result.http_status >= 400:
+            self._stream_queue.release(auth.rental_id)
+            return result
+        self._mark_stream_prepared(auth)
+        result.body.update(self._active_queue_fields(auth.rental_id))
+        return result
 
     def initialize_new_rental_state(
         self,
@@ -754,6 +772,9 @@ class RemoteAccessService:
         auth = self._authorize(customer_id, rental_id)
         if isinstance(auth, ApiResult):
             return auth
+        queued = self._queue_if_waiting(auth, claim=False)
+        if queued is not None:
+            return queued
         from application.screen_guidance import (
             device_family_for,
             fetch_screen_guidance_via_farm,
@@ -777,6 +798,7 @@ class RemoteAccessService:
         }
         if stale:
             body["stale"] = True
+        body.update(self._active_queue_fields(auth.rental_id))
         return ApiResult(200, body)
 
     def _attach_screen_guidance(self, slot_id: int, body: dict[str, Any]) -> None:
@@ -790,6 +812,11 @@ class RemoteAccessService:
         auth = self._authorize(customer_id, rental_id, slot_id)
         if isinstance(auth, ApiResult):
             return auth
+        queued = self._queue_if_waiting(auth, claim=False)
+        if queued is not None:
+            return queued
+        if self._should_grant_promoted_stream(auth):
+            return self.create_remote_access(customer_id, slot_id, rental_id)
         session = self._store.get(auth.rental_id)
         now = self._clock()
         if session is None or session.customer_id != auth.customer_id:
@@ -801,7 +828,10 @@ class RemoteAccessService:
                 "active": False,
             }
             self._attach_screen_guidance(auth.slot_id, body)
+            body.update(self._active_queue_fields(auth.rental_id))
             return ApiResult(200, body)
+        lease = self._stream_lease(auth.rental_id)
+        skip_heavy_prepare = lease is not None and lease.prepared
         evidence: dict[str, Any] = {}
         if (
             session.is_active(now)
@@ -812,7 +842,9 @@ class RemoteAccessService:
         body = {"ok": True, **self._session_public(session), "admin": False}
         if evidence:
             body["activation_evidence"] = evidence
-        self._attach_screen_guidance(auth.slot_id, body)
+        if not skip_heavy_prepare or self._should_poll_setup_ui(session):
+            self._attach_screen_guidance(auth.slot_id, body)
+        body.update(self._active_queue_fields(auth.rental_id))
         return ApiResult(200, body)
 
     def control_session(
@@ -827,6 +859,7 @@ class RemoteAccessService:
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
+        self._stream_queue.admit(auth.rental_id, auth.customer_id, auth.slot_id, claim=False)
         raw = payload if isinstance(payload, dict) else {}
         control_body = {key: value for key, value in raw.items() if key != "admin"}
         if "admin" in raw:
@@ -851,6 +884,8 @@ class RemoteAccessService:
         if isinstance(platform, ApiResult):
             return platform
         command = decision.command
+        if command.action in {"home", "recents"}:
+            return self._fast_nav_control(auth, session, platform, secret, command)
         restriction: dict[str, str] = {}
         try:
             with self._lock_for(auth.rental_id):
@@ -874,6 +909,9 @@ class RemoteAccessService:
         auth = self._authorize(customer_id, rental_id, None)
         if isinstance(auth, ApiResult):
             return auth
+        queued = self._queue_if_waiting(auth, claim=False)
+        if queued is not None:
+            return queued
         session = self._active_session(auth)
         if isinstance(session, ApiResult):
             return session
@@ -1064,10 +1102,34 @@ class RemoteAccessService:
     # customer-facing wrappers (device routes never trust browser ids)
     # ------------------------------------------------------------------
 
+    def release_stream(self, customer_id: str, rental_id: str) -> ApiResult:
+        auth = self._authorize(customer_id, rental_id)
+        if isinstance(auth, ApiResult):
+            return auth
+        self._stream_queue.release(auth.rental_id)
+        return ApiResult(
+            200,
+            {
+                "ok": True,
+                "released": True,
+                "rental_id": auth.rental_id,
+                "slot_id": auth.slot_id,
+                "queue_status": "released",
+                "stream_url": None,
+            },
+        )
+
     def device_status_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         auth = self._authorize(customer_id, rental_id)
         if isinstance(auth, ApiResult):
             return auth
+        queued = self._queue_if_waiting(auth, claim=False)
+        if queued is not None:
+            return queued
+        if self._should_grant_promoted_stream(auth):
+            created = self.create_remote_access(customer_id, None, rental_id)
+            if created.http_status >= 400:
+                return created
         platform_result = self.get_device_status(auth.slot_id)
         if platform_result.http_status != 200:
             return platform_result
@@ -1122,6 +1184,7 @@ class RemoteAccessService:
                 own = self._store.get(auth.rental_id) or own
             body.update(self._live_setup_ui_fields(auth.rental_id, auth.slot_id, session=own))
         self._attach_screen_guidance(auth.slot_id, body)
+        body.update(self._active_queue_fields(auth.rental_id))
         return ApiResult(200, body)
 
     def reconnect_cellular_for_customer(
@@ -2303,6 +2366,85 @@ class RemoteAccessService:
         serial = str(details.get("serial") or self._devices.get(int(slot_id)) or "") or None
         return ApiResult(200, public_airplane_body(slot_id=int(slot_id), state=applied, serial=serial))
 
+    def _stream_lease(self, rental_id: str):
+        return self._stream_queue.peek(str(rental_id))
+
+    def _queue_if_waiting(self, auth: AuthorizedRental, *, claim: bool) -> ApiResult | None:
+        decision = self._stream_queue.admit(
+            auth.rental_id,
+            auth.customer_id,
+            auth.slot_id,
+            claim=claim,
+        )
+        if decision.queue_status != "queued":
+            return None
+        return ApiResult(
+            200,
+            self._stream_queue.queued_body(
+                decision, rental_id=auth.rental_id, slot_id=auth.slot_id
+            ),
+        )
+
+    def _active_queue_fields(self, rental_id: str) -> dict[str, Any]:
+        lease = self._stream_lease(rental_id)
+        if lease is None:
+            return {}
+        now = float(self._clock())
+        return {
+            "queue_status": "active",
+            "slot_remaining_seconds": max(0, int(lease.expires_at - now)),
+            "max_concurrent_streams": int(self._stream_queue.max_concurrent),
+            "stream_url": lease.stream_url,
+        }
+
+    def _mark_stream_prepared(self, auth: AuthorizedRental) -> None:
+        self._stream_queue.mark_prepared(
+            auth.rental_id,
+            stream_url=f"/rentals/{auth.rental_id}/remote-access/stream",
+        )
+
+    def _should_grant_promoted_stream(self, auth: AuthorizedRental) -> bool:
+        lease = self._stream_lease(auth.rental_id)
+        if lease is None or not lease.needs_grant:
+            return False
+        session = self._store.get(auth.rental_id)
+        now = self._clock()
+        return session is None or not session.is_active(now)
+
+    def _refresh_guidance_async(self, slot_id: int) -> None:
+        def _refresh() -> None:
+            from application.screen_guidance import fetch_screen_guidance_via_farm
+
+            try:
+                fetch_screen_guidance_via_farm(self._farm, int(slot_id))
+            except Exception:
+                logger.info("screen_guidance_async_refresh_skipped slot=%s", slot_id)
+
+        self._runner(_refresh)
+
+    def _fast_nav_control(
+        self,
+        auth: AuthorizedRental,
+        session: RemoteAccessSession,
+        platform: RemoteAccessPlatform,
+        secret: str,
+        command: Any,
+    ) -> ApiResult:
+        from application.stream_bandwidth import note_slot_input
+
+        note_slot_input(auth.slot_id)
+        try:
+            forwarded = self._forward_control(platform, session, secret, command)
+        except RemoteAccessPlatformError as exc:
+            logger.warning("in_app_fast_nav_failed slot=%s reason=%s", auth.slot_id, exc.__class__.__name__)
+            return ApiResult(502, error_body("gads_unavailable"))
+        if isinstance(forwarded, ApiResult):
+            return forwarded
+        if forwarded is False:
+            return ApiResult(502, error_body("gads_unavailable"))
+        self._refresh_guidance_async(auth.slot_id)
+        return ApiResult(200, {"ok": True, "action": command.action, "forwarded": True})
+
     def _session_public(self, session: RemoteAccessSession, now: float | None = None) -> dict:
         body = session.to_public_dict(
             self._clock() if now is None else now,
@@ -2557,6 +2699,10 @@ class RemoteAccessService:
             "platform_username": session.platform_username,
             "platform_password": secret,
         }
+        if command.action in {"tap", "swipe"}:
+            from application.stream_bandwidth import note_slot_input
+
+            note_slot_input(session.slot_id)
         if command.action == "tap":
             mapped = self._mapped_touch_command(session.slot_id, command) if map_touch else command
             tap = getattr(platform, "tap", None)
@@ -2637,6 +2783,7 @@ class RemoteAccessService:
                 logger.warning("remote_access_revoke_failed slot=%s reason=%s", slot_id, exc.__class__.__name__)
                 revoked = False
         ended = self._store.end(rental_id, status=status, now=self._clock())
+        self._stream_queue.release(str(rental_id))
         self._forget_ownership(str(rental_id))
         self._activity_kind_by_rental.pop(str(rental_id or "").strip(), None)
         if status == STATUS_REVOKED:
