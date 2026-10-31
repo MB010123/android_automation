@@ -56,6 +56,7 @@ from application.remote_access_farm_task import (
 from application.device_airplane_mode import public_airplane_body, requested_airplane_state
 from application.device_display_size import DEVICE_DISPLAY_SIZE_TASK, map_touch_to_native, native_resolution_body
 from application.device_screen_prepare import request_device_screen_prepare
+from application.stream_warmup import MjpegPrimeCache, start_stream_warmup
 from application.in_app_control_policy import (
     FORBIDDEN_PAYLOAD_KEYS,
     NAV_ACTIONS,
@@ -272,6 +273,7 @@ class RemoteAccessService:
         self._clock = clock
         self._sleep = sleep
         self._runner = background_runner or self._thread_runner
+        self._primer = MjpegPrimeCache(clock=clock)
         self._flow_locks: dict[str, threading.Lock] = {}
         self._flow_locks_guard = threading.Lock()
         self._slot_locks: dict[int, threading.RLock] = {}
@@ -687,7 +689,14 @@ class RemoteAccessService:
             and existing.device_id == auth.device_id
         ):
             logger.info("remote_access_reused slot=%s", auth.slot_id)
-            self._enforce_client_mode(auth.slot_id)
+            secret = existing.platform_secret or ""
+            self._start_stream_warmup(
+                auth.slot_id,
+                existing.device_id,
+                platform,
+                existing.platform_username,
+                secret,
+            )
             body = {"ok": True, **self._session_public(existing, now), "admin": False}
             return ApiResult(200, body)
 
@@ -751,7 +760,13 @@ class RemoteAccessService:
         self._store.upsert(session)
         logger.info("remote_access_created slot=%s", auth.slot_id)
         self._record(auth.slot_id, "remote_access_created", f"rental_id={auth.rental_id}")
-        self._enforce_client_mode(auth.slot_id)
+        self._start_stream_warmup(
+            auth.slot_id,
+            session.device_id,
+            platform,
+            session.platform_username,
+            grant.platform_password,
+        )
         body = {"ok": True, **self._session_public(session, now), "admin": False}
         return ApiResult(201, body)
 
@@ -766,6 +781,26 @@ class RemoteAccessService:
         from application.device_hardware_lockdown import request_device_access_mode
 
         request_device_access_mode(self._farm, int(slot_id), admin=False, reassert=False)
+
+    def _start_stream_warmup(
+        self,
+        slot_id: int,
+        device_id: str,
+        platform: Any,
+        username: str,
+        password: str,
+    ) -> None:
+        start_stream_warmup(
+            primer=self._primer,
+            background=self._runner,
+            farm=self._farm,
+            platform=platform,
+            slot_id=int(slot_id),
+            device_id=str(device_id),
+            platform_username=str(username or ""),
+            platform_password=str(password or ""),
+            after=lambda: self._enforce_client_mode(int(slot_id)),
+        )
 
     def screen_guidance_for_customer(self, customer_id: str, rental_id: str) -> ApiResult:
         """Lightweight polling payload for the dashboard instruction bubble."""
@@ -922,7 +957,9 @@ class RemoteAccessService:
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener) or not secret:
             return ApiResult(503, error_body("gads_unavailable"))
-        self._enforce_client_mode(auth.slot_id)
+        primed = self._primer.take(session.device_id)
+        if primed is not None:
+            return primed
         try:
             return opener(
                 device_id=session.device_id,

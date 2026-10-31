@@ -23,6 +23,7 @@ SUPPORTED_TASK_TYPES = {
     "device_about_phone_screenshot",
     "device_access_mode",
     "device_screen_guidance",
+    "device_stream_wake",
 }
 
 

@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -195,6 +196,20 @@ def mjpeg_prefixed_chunk(declared: str | None, first_chunk: bytes) -> tuple[str,
             b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + first_chunk,
         )
     return content_type, first_chunk
+
+
+MJPEG_CHUNK_SIZE = 4096
+MJPEG_CACHE_CONTROL = "no-cache, no-store, must-revalidate"
+
+
+def mjpeg_proxy_headers(content_type: str) -> list[tuple[str, str]]:
+    return [
+        ("Content-Type", content_type),
+        ("Cache-Control", MJPEG_CACHE_CONTROL),
+        ("Pragma", "no-cache"),
+        ("Expires", "0"),
+        ("X-Accel-Buffering", "no"),
+    ]
 
 
 def _check_webhook_secret(provided: str | None, expected: str | None) -> None:
@@ -762,8 +777,12 @@ class Handler(BaseHTTPRequestHandler):
             if status != 200:
                 self._send_json(502, error_body("gads_unavailable"))
                 return
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
             iterator = getattr(upstream, "iter_content", None)
-            raw = iterator(8192) if callable(iterator) else []
+            raw = iterator(MJPEG_CHUNK_SIZE) if callable(iterator) else []
             stream = iter(raw)
             first = b""
             for piece in stream:
@@ -775,9 +794,8 @@ class Handler(BaseHTTPRequestHandler):
                 declared = str(headers.get("Content-Type") or "")
             content_type, first = mjpeg_prefixed_chunk(declared, first)
             self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Accel-Buffering", "no")
+            for name, value in mjpeg_proxy_headers(content_type):
+                self.send_header(name, value)
             self._apply_cors()
             self.end_headers()
             if first:

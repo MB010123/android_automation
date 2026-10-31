@@ -32,6 +32,7 @@ from application.in_app_control_policy import (
     ControlCommand,
     decide_control,
 )
+from application.stream_warmup import MjpegPrimeCache, start_stream_warmup
 from application.vps_api_contract import error_body
 from domain.farm import MAX_FARM_SLOT_ID
 from domain.remote_access import RemoteAccessPlatformError
@@ -103,6 +104,7 @@ class AdminLiveAccessService:
         slot_public_id_overrides: dict[str, int] | None = None,
         clock: Callable[[], float] = time.time,
         stream_queue: Any = None,
+        background_runner: Callable[[Callable[[], None]], None] | None = None,
     ) -> None:
         self.enabled = bool(enabled)
         self._slots = {int(k): str(v) for k, v in (slot_device_map or {}).items()}
@@ -129,6 +131,8 @@ class AdminLiveAccessService:
         self._public_id_overrides = dict(slot_public_id_overrides or {})
         self._clock = clock
         self._stream_queue = stream_queue
+        self._runner = background_runner or self._thread_runner
+        self._primer = MjpegPrimeCache(clock=clock)
         self._locks_guard = threading.Lock()
         self._slot_locks: dict[int, threading.Lock] = {}
         self._native_resolution_cache: dict[int, tuple[int, int]] = {}
@@ -195,8 +199,8 @@ class AdminLiveAccessService:
                     parsed,
                     admin.user_id[:8],
                 )
-                self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
                 self._mark_admin_stream(parsed, True)
+                self._start_stream_warmup(parsed, device_id, platform, admin_mode=admin_mode)
                 return ApiResult(200, self._session_body(existing, parsed))
             session = self._store.create(
                 admin_user_id=admin.user_id,
@@ -207,9 +211,8 @@ class AdminLiveAccessService:
             )
         self._audit(parsed, "admin_live_access_opened", admin.user_id)
         logger.info("admin_live_access_opened slot=%s admin=%s", parsed, admin.user_id[:8])
-        _ = platform
-        self._prepare_device_screen(parsed, wait_boot=False, admin_mode=admin_mode)
         self._mark_admin_stream(parsed, True)
+        self._start_stream_warmup(parsed, device_id, platform, admin_mode=admin_mode)
         return ApiResult(201, self._session_body(session, parsed))
 
     def open_stream(
@@ -229,8 +232,11 @@ class AdminLiveAccessService:
         device_id, platform = ready
         if device_id != bound.device_id:
             return ApiResult(409, error_body("phone_unavailable"))
-        self._prepare_device_screen(bound.slot_id, wait_boot=False, admin_mode=admin_mode)
         self._mark_admin_stream(bound.slot_id, True)
+        primed = self._primer.take(bound.device_id)
+        if primed is not None:
+            logger.info("admin_live_access_stream_open slot=%s first_frame=primed", bound.slot_id)
+            return primed
         opener = getattr(platform, "open_mjpeg_stream", None)
         if not callable(opener):
             return ApiResult(503, error_body("gads_unavailable"))
@@ -473,6 +479,27 @@ class AdminLiveAccessService:
             self._farm, int(slot_id), wait_boot=wait_boot, admin=bool(admin_mode)
         )
         self._native_resolution_cache.pop(int(slot_id), None)
+
+    def _start_stream_warmup(
+        self, slot_id: int, device_id: str, platform: Any, *, admin_mode: bool
+    ) -> None:
+        start_stream_warmup(
+            primer=self._primer,
+            background=self._runner,
+            farm=self._farm,
+            platform=platform,
+            slot_id=int(slot_id),
+            device_id=str(device_id),
+            platform_username=GADS_HUB_ADMIN_USERNAME,
+            platform_password="",
+            after=lambda: self._prepare_device_screen(
+                int(slot_id), wait_boot=False, admin_mode=admin_mode
+            ),
+        )
+
+    @staticmethod
+    def _thread_runner(fn: Callable[[], None]) -> None:
+        threading.Thread(target=fn, name="admin-live-warmup", daemon=True).start()
 
     def _mapped_touch_command(self, slot_id: int, command: ControlCommand) -> ControlCommand:
         if command.action not in {"tap", "swipe"}:

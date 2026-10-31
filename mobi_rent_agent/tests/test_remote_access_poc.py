@@ -263,7 +263,12 @@ class FakePlatform:
 # Side-effect-free Farm tasks customer routes may issue alongside the real action:
 # inspect, screen prepare, and the admin=false access-mode flip (1s guard stays on).
 PASSIVE_FARM_TYPES = frozenset(
-    {"setup_session_inspect", "device_screen_prepare", "device_access_mode"}
+    {
+        "setup_session_inspect",
+        "device_screen_prepare",
+        "device_access_mode",
+        "device_stream_wake",
+    }
 )
 
 
@@ -744,7 +749,8 @@ def test_e_expired_rental_denies_access(tmp_path: Path):
     created = service.create_remote_access(CUSTOMER_A, None, rental)
     assert created.http_status == 201
     # TTL capped by the rental end (20 min), not the configured 60
-    assert platform.calls[-1][1]["ttl"] == 20
+    grants = [c for c in platform.calls if c[0] == "grant"]
+    assert grants[-1][1]["ttl"] == 20
 
     clock.now += 21 * 60
     denied = service.get_remote_access(CUSTOMER_A, None, rental)

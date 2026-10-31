@@ -58,7 +58,7 @@ def test_customer_remote_access_always_flips_phone_to_client_mode(tmp_path: Path
     stream = service.open_stream(CUSTOMER_A, rental)
     assert getattr(stream, "device_id") == SLOT2_SERIAL
     flips = [t for t in farm.tasks if t["type"] == "device_access_mode"]
-    assert len(flips) == before + 1
+    assert len(flips) == before
     assert all(t["payload"] == {"admin": False, "reassert": False} for t in flips)
     # Customer `control` with admin=true is clamped to client mode.
     clamped = service.control_session(CUSTOMER_A, rental, {"admin": True})

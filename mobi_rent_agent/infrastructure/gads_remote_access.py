@@ -94,6 +94,7 @@ class GadsHubClient:
         token: str | None = None,
         json_body: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        timeout: float | tuple[float, float] | None = None,
     ) -> GadsHttpResult:
         headers = {"Accept": "application/json"}
         if token:
@@ -105,7 +106,7 @@ class GadsHubClient:
                 json=json_body,
                 params=params,
                 headers=headers,
-                timeout=self._timeout,
+                timeout=self._timeout if timeout is None else timeout,
             )
         except requests.RequestException as exc:
             raise RemoteAccessPlatformError(f"gads_unreachable: {exc.__class__.__name__}") from exc
@@ -145,6 +146,34 @@ class GadsHubClient:
             self._admin_token = None
             result = self._request(method, path, token=self.admin_token(), **kwargs)
         return result
+
+    def update_global_stream_settings(self, payload: dict[str, Any]) -> GadsHttpResult:
+        result = self._admin_request("POST", "/admin/global-settings", json_body=payload)
+        if not result.ok:
+            raise RemoteAccessPlatformError(
+                f"gads_global_stream_settings_failed status={result.status}"
+            )
+        return result
+
+    def update_device_stream_settings(self, udid: str, payload: dict[str, Any]) -> GadsHttpResult:
+        result = self._admin_request(
+            "POST",
+            f"/device/{quote(udid, safe='')}/update-stream-settings",
+            json_body=payload,
+            timeout=max(float(self._timeout), 20.0),
+        )
+        if not result.ok:
+            raise RemoteAccessPlatformError(
+                f"gads_device_stream_settings_failed status={result.status}"
+            )
+        return result
+
+    def device_info(self, udid: str) -> dict[str, Any]:
+        result = self._admin_request("GET", f"/device/{quote(udid, safe='')}/info")
+        if not result.ok:
+            raise RemoteAccessPlatformError(f"gads_device_info_failed status={result.status}")
+        raw = result.result if isinstance(result.result, dict) else result.body
+        return raw if isinstance(raw, dict) else {}
 
     # -- users ---------------------------------------------------------
 
@@ -223,9 +252,24 @@ class GadsHubClient:
         path = f"/device/{quote(udid, safe='')}/{suffix.lstrip('/')}"
         return self._request(method, path, token=token, json_body=json_body)
 
-    def open_android_mjpeg(self, *, udid: str, token: str, timeout: float = 120.0):
-        """Raw MJPEG from the GADS hub device proxy. Caller must close."""
-        headers = {"Authorization": f"Bearer {token}", "Accept": "multipart/x-mixed-replace"}
+    def open_android_mjpeg(
+        self,
+        *,
+        udid: str,
+        token: str,
+        timeout: float | tuple[float, float] = (5.0, 120.0),
+    ):
+        """Raw MJPEG from the GADS hub device proxy. Caller must close.
+
+        ``stream=True`` plus a short connect timeout so the first JPEG is not
+        held behind a 120s handshake. Nginx buffering is disabled by the VPS
+        proxy headers, not here.
+        """
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "multipart/x-mixed-replace",
+            "Cache-Control": "no-cache",
+        }
         try:
             response = self._session.get(
                 f"{self._base}/device/{quote(udid, safe='')}/android-stream-mjpeg",
@@ -250,6 +294,10 @@ class GadsHubClient:
             status = response.status_code
             response.close()
             raise RemoteAccessPlatformError(f"gads_stream_failed status={status}")
+        try:
+            response.raw.decode_content = False
+        except Exception:
+            pass
         return response
 
 

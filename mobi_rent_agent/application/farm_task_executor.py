@@ -245,6 +245,15 @@ def execute_controlled_farm_task(
             request=request,
             command_runner=deps.command_runner,
         )
+    if request.task_type == "device_stream_wake":
+        from application.device_stream_wake import run_device_stream_wake
+
+        return run_device_stream_wake(
+            adb_path=adb_path,
+            slot_map=slot_map,
+            request=request,
+            command_runner=deps.command_runner,
+        )
     return FarmTaskResult(ok=False, http_status=501, error="action_not_supported")
 
 

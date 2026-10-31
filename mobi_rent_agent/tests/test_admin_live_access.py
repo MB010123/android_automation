@@ -89,6 +89,7 @@ def _admin_service(
         gads_slot_ids=gads_slot_ids,
         workspace_map=workspace_map,
         clock=clock,
+        background_runner=lambda fn: fn(),
     )
     return service, platform, clock, store
 
@@ -327,14 +328,17 @@ def test_non_admin_invalid_slot_and_cross_slot_control_rejected(tmp_path: Path):
 
 def test_live_access_prepares_screen_on_open(tmp_path: Path):
     farm = FakeFarm()
-    svc, _platform, _clock, _store = _admin_service(tmp_path, farm=farm)
+    svc, platform, _clock, _store = _admin_service(tmp_path, farm=farm)
     created = svc.create_session(_admin(), 1)
     assert created.http_status == 201
+    assert any(t["type"] == "device_stream_wake" for t in farm.tasks)
     assert any(t["type"] == "device_screen_prepare" for t in farm.tasks)
+    assert any(c[0] == "stream" for c in platform.calls)
+    prepares_before = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
     stream = svc.open_stream(_admin(), 1, created.body["session_id"])
     assert getattr(stream, "status_code", None) == 200
-    prepares = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
-    assert len(prepares) >= 2
+    prepares_after = [t for t in farm.tasks if t["type"] == "device_screen_prepare"]
+    assert prepares_after == prepares_before
 
 
 def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
@@ -351,8 +355,9 @@ def test_stream_auth_expiry_and_supported_controls(tmp_path: Path):
 
     stream = svc.open_stream(_admin(), 1, sid)
     assert getattr(stream, "status_code", None) == 200
-    assert platform.calls[-1][0] == "stream"
-    assert platform.calls[-1][1]["username"] == GADS_HUB_ADMIN_USERNAME
+    streams = [c for c in platform.calls if c[0] == "stream"]
+    assert streams
+    assert streams[-1][1]["username"] == GADS_HUB_ADMIN_USERNAME
 
     tap = svc.control_session(
         _admin(), 1, {"session_id": sid, "action": "tap", "x": 10, "y": 20}
@@ -747,6 +752,7 @@ def _start_admin_http(tmp_path: Path):
         cleanup_store=cleanup,
         assignment_store=assign,
         gads_slot_ids=(1, 2, 21),
+        background_runner=lambda fn: fn(),
     )
     customer_svc, _, _ = _service(tmp_path, tenant=tenant, platform=platform)
     farm_svc.set_remote_access(customer_svc)
